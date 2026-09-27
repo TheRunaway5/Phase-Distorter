@@ -1,0 +1,17 @@
+/build/
+/build-*/
+__pycache__/
+*.pyc
+*.sfc
+*.smc
+*.ebpak
+*.srm
+*.sav
+*.state
+*.ppm
+*.wav
+*.tmp
+/display.cfg
+/imgui.ini
+.DS_Store
+Thumbs.db

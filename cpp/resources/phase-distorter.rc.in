@@ -1,0 +1,3 @@
+// A configured absolute path lets windres/MSVC locate the icon from any build
+// directory. Resource ID 1 is the executable's default shell/shortcut icon.
+1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/phase-distorter.ico"

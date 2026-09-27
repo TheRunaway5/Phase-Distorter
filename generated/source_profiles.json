@@ -1,0 +1,82 @@
+{
+  "US": {
+    "wram_battle_flag": 38467,
+    "wram_bg_records": [
+      44500,
+      44619
+    ],
+    "wram_map_combo": 17262,
+    "wram_bg_scroll": [
+      49,
+      51,
+      53,
+      55
+    ],
+    "wram_map_arrangements": 98304,
+    "wram_entity_script": 2658,
+    "wram_entity_var0": 3678,
+    "wram_entity_var1": 3738,
+    "wram_lumine_header": 65536,
+    "wram_lumine_maps": [
+      69632,
+      81920
+    ],
+    "rom_map_chunks": [
+      1441792,
+      1452032,
+      1462272,
+      1474560,
+      1484800,
+      1495040,
+      1507328,
+      1517568,
+      1527808,
+      1540096
+    ],
+    "rom_map_sectors": 1550336,
+    "title_event_first": 788,
+    "title_event_last": 798,
+    "file_select_event": 787,
+    "lumine_event": 353
+  },
+  "JP": {
+    "wram_battle_flag": 39227,
+    "wram_bg_records": [
+      44969,
+      45088
+    ],
+    "wram_map_combo": 18164,
+    "wram_bg_scroll": [
+      49,
+      51,
+      53,
+      55
+    ],
+    "wram_map_arrangements": 98304,
+    "wram_entity_script": 2648,
+    "wram_entity_var0": 3668,
+    "wram_entity_var1": 3728,
+    "wram_lumine_header": 65536,
+    "wram_lumine_maps": [
+      73728,
+      81920
+    ],
+    "rom_map_chunks": [
+      1441792,
+      1452032,
+      1462272,
+      1474560,
+      1484800,
+      1495040,
+      1507328,
+      1517568,
+      1527808,
+      1540096
+    ],
+    "rom_map_sectors": 1550336,
+    "title_event_first": 788,
+    "title_event_last": 794,
+    "file_select_event": 787,
+    "lumine_event": 353
+  }
+}
