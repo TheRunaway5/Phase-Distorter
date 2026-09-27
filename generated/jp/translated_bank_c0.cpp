@@ -60374,19 +60374,19 @@ bool translated_bank_c0(Cpu& c, std::uint16_t offset) {
     // src/unknown/C0/C0C6B6.asm:33 LDA @LOCAL00
     // Overlapping static entry reached from 0xC0C74D.
     case 0xC6D4: c.execute<0x0E>(0x00C0C9, 3); return true;
-    // src/unknown/C0/C0C6B6.asm:34 CMP #.LOWORD(-64)
-    case 0xC6D5: if (c.p & 0x20) c.execute<0xC9>(0x0000C0, 2); else c.execute<0xC9>(0x00FFC0, 3); return true;
-    // src/unknown/C0/C0C6B6.asm:34 CMP #.LOWORD(-64)
+    // src/unknown/C0/C0C6B6.asm:34 CMP #.LOWORD(-128)
+    case 0xC6D5: if (c.p & 0x20) c.execute<0xC9>(0x000080, 2); else c.execute<0xC9>(0x00FF80, 3); return true;
+    // src/unknown/C0/C0C6B6.asm:34 CMP #.LOWORD(-128)
     // Overlapping static entry reached from 0xC0C6D5.
     case 0xC6D7: c.execute<0xFF>(0xC905B0, 4); return true;
     // src/unknown/C0/C0C6B6.asm:35 BCS @UNKNOWN1
     case 0xC6D8: c.execute<0xB0>(0x000005, 2); return true;
-    // src/unknown/C0/C0C6B6.asm:36 CMP #320
-    case 0xC6DA: if (c.p & 0x20) c.execute<0xC9>(0x000040, 2); else c.execute<0xC9>(0x000140, 3); return true;
-    // src/unknown/C0/C0C6B6.asm:36 CMP #320
+    // src/unknown/C0/C0C6B6.asm:36 CMP #384
+    case 0xC6DA: if (c.p & 0x20) c.execute<0xC9>(0x000080, 2); else c.execute<0xC9>(0x000180, 3); return true;
+    // src/unknown/C0/C0C6B6.asm:36 CMP #384
     // Overlapping static entry reached from 0xC0C6D7.
-    case 0xC6DB: c.execute<0x40>(0x000000, 1); return true;
-    // src/unknown/C0/C0C6B6.asm:36 CMP #320
+    case 0xC6DB: c.execute<0x80>(0x000001, 2); return true;
+    // src/unknown/C0/C0C6B6.asm:36 CMP #384
     // Overlapping static entry reached from 0xC0C6DA.
     case 0xC6DC: c.execute<0x01>(0x0000B0, 2); return true;
     // src/unknown/C0/C0C6B6.asm:37 BCS @UNKNOWN3
@@ -60394,19 +60394,19 @@ bool translated_bank_c0(Cpu& c, std::uint16_t offset) {
     // src/unknown/C0/C0C6B6.asm:37 BCS @UNKNOWN3
     // Overlapping static entry reached from 0xC0C6DC.
     case 0xC6DE: c.execute<0x0F>(0xFFC0E0, 4); return true;
-    // src/unknown/C0/C0C6B6.asm:39 CPX #.LOWORD(-64)
-    case 0xC6DF: if (c.p & 0x10) c.execute<0xE0>(0x0000C0, 2); else c.execute<0xE0>(0x00FFC0, 3); return true;
-    // src/unknown/C0/C0C6B6.asm:39 CPX #.LOWORD(-64)
+    // src/unknown/C0/C0C6B6.asm:39 CPX #.LOWORD(-128)
+    case 0xC6DF: if (c.p & 0x10) c.execute<0xE0>(0x000080, 2); else c.execute<0xE0>(0x00FF80, 3); return true;
+    // src/unknown/C0/C0C6B6.asm:39 CPX #.LOWORD(-128)
     // Overlapping static entry reached from 0xC0C6DF.
     case 0xC6E1: c.execute<0xFF>(0xE005B0, 4); return true;
     // src/unknown/C0/C0C6B6.asm:40 BCS @UNKNOWN2
     case 0xC6E2: c.execute<0xB0>(0x000005, 2); return true;
-    // src/unknown/C0/C0C6B6.asm:41 CPX #320
-    case 0xC6E4: if (c.p & 0x10) c.execute<0xE0>(0x000040, 2); else c.execute<0xE0>(0x000140, 3); return true;
-    // src/unknown/C0/C0C6B6.asm:41 CPX #320
+    // src/unknown/C0/C0C6B6.asm:41 CPX #384
+    case 0xC6E4: if (c.p & 0x10) c.execute<0xE0>(0x000080, 2); else c.execute<0xE0>(0x000180, 3); return true;
+    // src/unknown/C0/C0C6B6.asm:41 CPX #384
     // Overlapping static entry reached from 0xC0C6E1.
-    case 0xC6E5: c.execute<0x40>(0x000000, 1); return true;
-    // src/unknown/C0/C0C6B6.asm:41 CPX #320
+    case 0xC6E5: c.execute<0x80>(0x000001, 2); return true;
+    // src/unknown/C0/C0C6B6.asm:41 CPX #384
     // Overlapping static entry reached from 0xC0C6E4.
     case 0xC6E6: c.execute<0x01>(0x0000B0, 2); return true;
     // src/unknown/C0/C0C6B6.asm:42 BCS @UNKNOWN3
@@ -66643,9 +66643,9 @@ bool translated_bank_c0(Cpu& c, std::uint16_t offset) {
     case 0xDB0D: c.execute<0xAA>(0x000000, 1); return true;
     // src/unknown/C0/C0DB0F.asm:37 LDA ENTITY_SCREEN_X_TABLE,X
     case 0xDB0E: c.execute<0xBD>(0x000B0C, 3); return true;
-    // src/unknown/C0/C0DB0F.asm:38 CMP #320
-    case 0xDB11: if (c.p & 0x20) c.execute<0xC9>(0x000040, 2); else c.execute<0xC9>(0x000140, 3); return true;
-    // src/unknown/C0/C0DB0F.asm:38 CMP #320
+    // src/unknown/C0/C0DB0F.asm:38 CMP #384
+    case 0xDB11: if (c.p & 0x20) c.execute<0xC9>(0x000080, 2); else c.execute<0xC9>(0x000180, 3); return true;
+    // src/unknown/C0/C0DB0F.asm:38 CMP #384
     // Overlapping static entry reached from 0xC0DB11.
     case 0xDB13: c.execute<0x01>(0x000090, 2); return true;
     // src/unknown/C0/C0DB0F.asm:39 BCC @UNKNOWN3
@@ -66653,12 +66653,12 @@ bool translated_bank_c0(Cpu& c, std::uint16_t offset) {
     // src/unknown/C0/C0DB0F.asm:39 BCC @UNKNOWN3
     // Overlapping static entry reached from 0xC0DB13.
     case 0xDB15: c.execute<0x05>(0x0000C9, 2); return true;
-    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-64)
-    case 0xDB16: if (c.p & 0x20) c.execute<0xC9>(0x0000C0, 2); else c.execute<0xC9>(0x00FFC0, 3); return true;
-    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-64)
+    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-128)
+    case 0xDB16: if (c.p & 0x20) c.execute<0xC9>(0x000080, 2); else c.execute<0xC9>(0x00FF80, 3); return true;
+    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-128)
     // Overlapping static entry reached from 0xC0DB15.
-    case 0xDB17: if (c.p & 0x10) c.execute<0xC0>(0x0000FF, 2); else c.execute<0xC0>(0x0090FF, 3); return true;
-    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-64)
+    case 0xDB17: if (c.p & 0x10) c.execute<0x80>(0x0000FF, 2); else c.execute<0x80>(0x0090FF, 3); return true;
+    // src/unknown/C0/C0DB0F.asm:40 CMP #.LOWORD(-128)
     // Overlapping static entry reached from 0xC0DB16.
     case 0xDB18: c.execute<0xFF>(0x981E90, 4); return true;
     // src/unknown/C0/C0DB0F.asm:41 BCC @UNKNOWN5

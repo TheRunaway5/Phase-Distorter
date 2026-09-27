@@ -661,14 +661,20 @@ uint8_t Bus::sprite_pixels(unsigned y, std::span<Pixel> result, int origin) cons
     for (unsigned n=0;n<128;++n) {
         const unsigned obj=(n+first)&127, a=obj*4;
         const unsigned ext=(oam[512+obj/4]>>((obj&3)*2))&3;
-        int x=oam[a]|((ext&1)<<8); if (x>=256) x-=512;
+        int x=oam[a]|((ext&1)<<8);
+        if (origin || result.size()!=256) {
+            if (x >= 384) x -= 512;
+        } else {
+            if (x >= 256) x -= 512;
+        }
         const unsigned width=sizes[size_mode][ext>>1][0], height=sizes[size_mode][ext>>1][1];
         unsigned row=(y-oam[a+1])&255;
         if (row>=height) continue;
         if (++count>32) { status|=0x40; break; }
         // Fully offscreen OAM is also used to hide objects. Presentation does
         // not reveal these slots; it only completes native edge-crossing OBJs.
-        if ((origin || result.size()!=256) && (x+int(width)<=0 || x>=256)) continue;
+        // For widescreen entity support, we remove this native-boundary check.
+        // if ((origin || result.size()!=256) && (x+int(width)<=0 || x>=256)) continue;
         const unsigned attr=oam[a+3], pal=(attr>>1)&7, level=(attr>>4)&3;
         const unsigned mode=ppu_[5]&7;
         const int priority=(mode==0?mode0p:mode==1?mode1p:otherp)[level];

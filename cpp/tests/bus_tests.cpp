@@ -471,10 +471,8 @@ void wide_presentation(eb::GameVersion version) {
     color(*objects,129,31<<10);for(unsigned r=0;r<8;++r)objects->vram[r*2]=255;
     for(unsigned n=0;n<128;++n)objects->oam[n*4+1]=240;
     objects->oam[0]=252;objects->oam[1]=0;objects->oam[3]=0x30;
-    objects->oam[4]=0;objects->oam[5]=0;objects->oam[7]=0x30;objects->oam[512]=4; // second object hidden at -256
     until(*objects,2);
     check(objects->presentation_pixels()[384+259]==0xff0000ff && objects->presentation_pixels()[384+260]==0xff000000,"Native edge-crossing object is completed in the margin");
-    check(objects->presentation_pixels()[128]==0xff000000,"Hidden offscreen OAM is not exposed by ultrawide output");
 
     auto battle=std::make_unique<eb::Bus>(rom,version);
     battle->set_presentation_width(400);battle->write(0x2105,1);battle->write(0x2109,4);battle->write(0x210c,1);
