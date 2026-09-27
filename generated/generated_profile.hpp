@@ -12,6 +12,13 @@ namespace eb {
 struct SourceProfile {
     std::uint32_t wram_battle_flag;
     std::array<std::uint32_t, 2> wram_bg_records;
+    std::uint32_t wram_psi_animation;
+    std::uint32_t wram_psi_targets;
+    std::uint32_t wram_swirl_timer;
+    std::uint32_t wram_palettes;
+    std::array<std::uint32_t, 4> wram_flash_timers;
+    std::uint32_t wram_current_layer_config;
+    std::uint32_t rom_layer_config;
     std::uint32_t wram_map_combo;
     std::array<std::uint32_t, 4> wram_bg_scroll;
     std::uint32_t wram_map_arrangements;
@@ -24,6 +31,12 @@ struct SourceProfile {
     std::uint32_t rom_map_sectors;
     std::uint32_t title_event_first;
     std::uint32_t title_event_last;
+    std::uint32_t title_bg_mode;
+    std::array<std::uint32_t, 2> title_bg_maps;
+    std::array<std::uint32_t, 3> lightning_events;
+    std::uint32_t gas_flash_event;
+    std::uint32_t wram_gas_base_palette;
+    std::array<std::uint32_t, 2> rom_gas_palettes;
     std::uint32_t file_select_event;
     std::uint32_t lumine_event;
 };

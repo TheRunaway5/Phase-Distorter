@@ -99,6 +99,7 @@ void presentation_frame_observer() {
             word(*plain,base+2,0);plain->write(base+4,0x7e);word(*plain,base+5,0);
         }
         auto observed=std::make_unique<eb::Bus>(*plain);
+        observed->set_presentation_effects_enabled(true);
         std::vector<unsigned> plain_apu,observed_apu;
         plain->apu_tick=[&](unsigned clocks){plain_apu.push_back(clocks);};
         observed->apu_tick=[&](unsigned clocks){observed_apu.push_back(clocks);};
@@ -106,6 +107,8 @@ void presentation_frame_observer() {
         observed->on_presentation_frame=[&](std::span<const uint32_t> pixels,unsigned actual_width,uint64_t frame) {
             frame_indices.push_back(frame);frame_clocks.push_back(observed->master_clocks());
             check(actual_width==width && pixels.size()==width*224,"Frame observer receives the current complete native or wide canvas");
+            check(observed->presentation_effect_mask().size()==pixels.size() &&
+                  observed->presentation_effect_reference().size()==pixels.size(),"Every DMA-crossed frame carries matching effect metadata dimensions");
             check(std::all_of(pixels.begin(),pixels.end(),[](auto pixel){return pixel==0xffff0000;}),"Frame observer runs only after every visible scanline is ready");
             check(observed->scanline()==0 && observed->hclock()==0 && observed->frames==frame,"Frame observer runs exactly at the completed-frame boundary");
         };
@@ -137,6 +140,156 @@ void presentation_frame_observer() {
         observed->on_presentation_frame={};
         while (observed->frames<frame_indices.back()+1) observed->tick(1);
         check(frame_indices.size()==calls,"Removing the observer stops frame notifications");
+    }
+}
+
+void selective_effects(eb::GameVersion version) {
+    const auto& source=eb::source_profile(version);
+    const auto ram=[](eb::Bus& b,unsigned address,uint16_t value) { word(b,0x7e0000+address,value); };
+    const auto make=[&]() {
+        auto b=std::make_unique<eb::Bus>(rom,version);
+        b->set_presentation_effects_enabled(true);b->write(0x2100,15);
+        return b;
+    };
+    const auto bg1=[](eb::Bus& b) {
+        b.write(0x2105,1);b.write(0x210b,1);b.write(0x212c,1);
+        for(unsigned row=0;row<8;++row) b.vram[0x2000+row*2]=255;
+    };
+    const auto psi=[&](eb::Bus& b) {
+        ram(b,source.wram_battle_flag,1);
+        b.wram[source.wram_psi_animation]=4;b.wram[source.wram_psi_animation+10]=2;
+        b.wram[source.wram_psi_animation+7]=1;b.wram[source.wram_psi_animation+8]=2;
+        ram(b,source.wram_psi_animation+44,uint16_t(source.wram_palettes));
+        b.wram[source.wram_bg_records[0]+1]=4;
+    };
+
+    auto ordinary=make();bg1(*ordinary);color(*ordinary,1,0x03e0);
+    ram(*ordinary,source.wram_battle_flag,1);
+    until(*ordinary,2);
+    check(ordinary->presentation_effect_mask()[0]==0 && ordinary->presentation_effect_reference()[0]==ordinary->framebuffer[0],"Ordinary battle colors are unmarked and bit-exact");
+    color(*ordinary,1,0x7c00);until(*ordinary,3);
+    check(ordinary->presentation_effect_mask()[256]==0 && ordinary->presentation_effect_reference()[256]==ordinary->framebuffer[256],"Ordinary animated battle palettes are not treated as flashes");
+    ordinary->set_presentation_effects_enabled(false);
+    check(ordinary->presentation_effect_mask().empty() && ordinary->presentation_effect_reference().empty(),"Disabled metadata exposes empty spans");
+
+    auto overlay=make();bg1(*overlay);psi(*overlay);
+    color(*overlay,0,0x7c00);color(*overlay,1,0x7fff);color(*overlay,3,0x03e0);
+    for(unsigned row=0;row<8;++row) overlay->vram[0x2001+row*2]=0xf0;
+    until(*overlay,2);
+    check(overlay->presentation_effect_mask()[0]==0 && overlay->presentation_effect_reference()[0]==0xff00ff00,"Static PSI palette entries retain their original color");
+    check(overlay->presentation_effect_mask()[4]==1 && overlay->presentation_effect_reference()[4]==0xff0000ff,"Cycling PSI overlay pixels reveal the current underlying scene in reference");
+    overlay->wram[source.wram_psi_animation+10]=0;until(*overlay,3);
+    check(overlay->presentation_effect_mask()[260]==0,"A noncycling overlay does not trigger effect filtering");
+
+    auto sprite=make();psi(*sprite);sprite->write(0x212c,16);sprite->write(0x2101,1);
+    for(unsigned obj=0;obj<128;++obj) sprite->oam[obj*4+1]=240;
+    sprite->oam[1]=0;sprite->oam[3]=0x38; // high-priority OBJ palette 12
+    for(unsigned row=0;row<8;++row) sprite->vram[0x4000+row*2]=255;
+    color(*sprite,193,0x7fff);color(*sprite,129,0x001f);ram(*sprite,source.wram_psi_targets,1);
+    until(*sprite,2);
+    check(sprite->presentation_effect_mask()[0]==1 && sprite->presentation_effect_reference()[0]==0xffff0000,"PSI enemy highlight uses its paired original OBJ palette");
+    sprite->wram[source.wram_psi_animation]=0;until(*sprite,3);
+    check(sprite->presentation_effect_mask()[256]==0,"Stale PSI targets cannot alter a subsequent KO or revive fade");
+    sprite->set_presentation_effects_enabled(false);sprite->set_presentation_effects_enabled(true);until(*sprite,4);
+    check(sprite->presentation_effect_mask()[512]==0,"Re-enabling during an unrelated palette fade stays unmarked");
+
+    auto reflected=make();bg1(*reflected);ram(*reflected,source.wram_battle_flag,1);
+    const unsigned record=source.wram_bg_records[0];
+    reflected->wram[record]=1;reflected->wram[record+1]=4;
+    ram(*reflected,record+76,uint16_t(source.wram_palettes));ram(*reflected,record+46,0x001f);
+    ram(*reflected,source.wram_flash_timers[2],2);color(*reflected,1,0x7fff);
+    until(*reflected,2);
+    check(reflected->presentation_effect_mask()[0]==1 && reflected->presentation_effect_reference()[0]==0xffff0000,"Reflected battle flash restores the original background palette contribution");
+    ram(*reflected,source.wram_flash_timers[2],4);until(*reflected,3);
+    check(reflected->presentation_effect_mask()[256]==0,"Reflection's clean phase preserves natural white entries exactly");
+    ram(*reflected,source.wram_flash_timers[3],2);color(*reflected,1,0);until(*reflected,4);
+    check(reflected->presentation_effect_mask()[512]==1 && reflected->presentation_effect_reference()[512]==0xffff0000,"Green-background black flash uses the original background palette");
+
+    auto fixed=make();ram(*fixed,source.wram_battle_flag,1);ram(*fixed,source.wram_flash_timers[1],24);
+    color(*fixed,0,0x7c00);fixed->write(0x2131,0x3f);fixed->write(0x2132,0x3f);
+    until(*fixed,2);
+    check(fixed->framebuffer[0]==0xffff00ff && fixed->presentation_effect_mask()[0]==1 && fixed->presentation_effect_reference()[0]==0xff0000ff,"Red flash reference removes fixed addition without grading the blue scene");
+    ram(*fixed,source.wram_flash_timers[1],0);fixed->write(0x2131,0);until(*fixed,3);
+    check(fixed->presentation_effect_mask()[256]==0,"Ending a flash immediately restores identity");
+    fixed->wram[source.wram_swirl_timer]=4;fixed->write(0x2130,0x10);fixed->write(0x2131,0x3f);
+    fixed->write(0x2125,0x20);fixed->write(0x2126,0);fixed->write(0x2127,255);
+    until(*fixed,4);
+    check(fixed->presentation_effect_mask()[512]==1 && fixed->presentation_effect_reference()[512]==0xff0000ff,"Enemy PSI colored swirl has a fixed-color-only reference");
+
+    auto lightning=make();bg1(*lightning);color(*lightning,1,0x7fff);color(*lightning,2,0x03e0);
+    lightning->write(0x2105,9);lightning->write(0x2109,4);lightning->write(0x210c,2);lightning->write(0x212c,5);
+    for(unsigned row=0;row<8;++row) {lightning->vram[0x2000+row*2]=0;lightning->vram[0x2001+row*2]=255;lightning->vram[0x4000+row*2]=255;}
+    for(unsigned tile=0;tile<1024;++tile) lightning->vram[0x801+tile*2]=0x20;
+    ram(*lightning,source.wram_entity_script,uint16_t(source.lightning_events[0]));ram(*lightning,source.wram_entity_var0,1);
+    until(*lightning,2);
+    check(lightning->framebuffer[0]==0xffffffff && lightning->presentation_effect_mask()[0]==1 && lightning->presentation_effect_reference()[0]==0xff00ff00,"Carpainter reflected lightning excludes only its BG3 overlay");
+    ram(*lightning,source.wram_entity_var0,0);until(*lightning,3);
+    check(lightning->presentation_effect_mask()[256]==0,"Ordinary BG3 text outside the lightning phase is untouched");
+    ram(*lightning,source.wram_entity_script,uint16_t(source.lightning_events[1]));ram(*lightning,source.wram_entity_var0,2);
+    lightning->write(0x2130,0x10);lightning->write(0x2131,0x33);lightning->write(0x2132,0xff);
+    lightning->write(0x2125,0x20);lightning->write(0x2126,0);lightning->write(0x2127,255);
+    until(*lightning,4);
+    check(lightning->presentation_effect_mask()[512]==1 && lightning->presentation_effect_reference()[512]==0xff00ff00,"Lightning strike reference removes overlay and its fixed-color flash together");
+}
+
+void title_and_gas_effects(eb::GameVersion version) {
+    const auto& source=eb::source_profile(version);
+    auto image=rom;
+    // Synthetic compressed palettes contain no donor data: one extended word
+    // run produces exactly 256 colors, followed by the DECOMP terminator.
+    for(unsigned which=0;which<2;++which) {
+        const unsigned p=source.rom_gas_palettes[which];
+        const uint16_t value=which?0x7fff:0x03e0;
+        image[p]=0xe8;image[p+1]=0xff;image[p+2]=uint8_t(value);image[p+3]=uint8_t(value>>8);image[p+4]=0xff;
+    }
+    auto gas=std::make_unique<eb::Bus>(image,version);
+    gas->set_presentation_width(400);gas->set_presentation_effects_enabled(true);
+    gas->write(0x2100,15);gas->write(0x2105,3);gas->write(0x2107,0x78);gas->write(0x2108,0x7c);
+    word(*gas,0x7e0000+source.wram_entity_script,uint16_t(source.gas_flash_event));color(*gas,0,0x7fff);
+    until(*gas,2);
+    check(gas->presentation_width()==256 && gas->presentation_fixed_aspect()==4.0/3,"First visible gas row uses the complete native-width 4:3 card");
+    check(gas->presentation_effect_mask().size()==256*224 && gas->presentation_effect_reference()[0]==0xff00ff00 && gas->presentation_effect_mask()[0]==1,"Gas flash uses bounded decoded imported palette reference at the active canvas size");
+    color(*gas,0,0x03e0);until(*gas,3);
+    check(gas->presentation_effect_mask()[256]==0 && gas->presentation_effect_reference()[256]==gas->framebuffer[256],"Normal gas colors remain exact during the flash sequence");
+    std::vector<std::pair<unsigned,double>> completed;
+    gas->on_presentation_frame=[&](auto pixels,unsigned width,auto) {
+        check(pixels.size()==width*224 && gas->presentation_effect_mask().size()==pixels.size(),"Title transition observer sees matching complete canvas and metadata");
+        completed.emplace_back(width,gas->presentation_fixed_aspect());
+    };
+    // Change next-scene registers after row zero. The current picture keeps its
+    // latched width/aspect through its callback; the next row zero restores wide.
+    gas->write(0x2105,1);gas->write(0x2107,0);gas->write(0x2108,0);
+    until(*gas,0);until(*gas,2);
+    check(completed.size()==1 && completed[0].first==256 && completed[0].second==4.0/3,"Changing next-scene registers cannot relabel a completed gas picture");
+    check(gas->presentation_width()==400 && gas->presentation_fixed_aspect()==0 && gas->presentation_effect_mask().size()==400*224,"First following scene restores the requested widescreen canvas and metadata together");
+    check(gas->presentation_effect_mask()[0]==0,"Stale gas event outside its PPU scene cannot affect ordinary colors");
+
+    image[source.rom_gas_palettes[0]]=0xfc; // backward reference before any output
+    auto malformed=std::make_unique<eb::Bus>(image,version);
+    malformed->set_presentation_effects_enabled(true);malformed->write(0x2100,15);
+    malformed->write(0x2105,3);malformed->write(0x2107,0x78);malformed->write(0x2108,0x7c);
+    word(*malformed,0x7e0000+source.wram_entity_script,uint16_t(source.gas_flash_event));color(*malformed,0,0x7fff);
+    until(*malformed,2);
+    check(malformed->presentation_effect_mask()[0]==0 && malformed->presentation_effect_reference()[0]==0xffffffff,"Invalid compressed reference disables only optional gas metadata without touching pixels");
+    auto tiny=std::make_unique<eb::Bus>(std::array<uint8_t,1>{0},version);
+    tiny->set_presentation_effects_enabled(true);
+    check(tiny->presentation_effect_mask().size()==256*224,"Palette decoding remains bounded when a synthetic cartridge lacks referenced data");
+
+    if(version==eb::GameVersion::JP) {
+        auto title=std::make_unique<eb::Bus>(rom,version);
+        title->set_presentation_width(1024);title->set_presentation_effects_enabled(true);
+        title->write(0x2100,15);title->write(0x2105,1);title->write(0x2107,0x38);title->write(0x2108,0x3c);title->write(0x210b,1);title->write(0x212c,17);
+        word(*title,0x7e0000+source.wram_entity_script,uint16_t(source.title_event_first));
+        color(*title,1,0x001f);color(*title,2,0x03e0);color(*title,129,0x7c00);
+        for(unsigned row=0;row<8;++row) {title->vram[0x2000+row*2]=255;title->vram[0x2021+row*2]=255;title->vram[0x4000+row*2]=255;}
+        title->vram[0x7020]=1; // distinct centered logo tile
+        title->write(0x2101,1);
+        for(unsigned obj=0;obj<128;++obj) title->oam[obj*4+1]=240;
+        title->oam[1]=0;title->oam[3]=0x30;
+        until(*title,2);const auto pixels=title->presentation_pixels();
+        check(pixels[0]==0xffff0000 && pixels[256]==0xffff0000 && pixels[1023]==0xffff0000,"Japanese title extends edge background colors without repeating logo tiles");
+        check(pixels[384]==0xff0000ff && pixels[512]==0xff00ff00 && pixels[384]==title->framebuffer[0],"Japanese logo and OBJ retain their exact centered native placement");
+        check(title->presentation_effect_mask()[0]==0 && title->presentation_fixed_aspect()==0,"Japanese logo continuation does not activate flash filtering or fixed-card aspect");
     }
 }
 
@@ -456,6 +609,6 @@ void world_map_presentation(eb::GameVersion version) {
 
 int main() {
     memory(); video_ports(); dma(); presentation_frame_observer(); arithmetic_interrupts_input(); rendering(); background_sprite_window(); offset_per_tile(); hdma(); clock_rates();
-    for(auto version:{eb::GameVersion::US,eb::GameVersion::JP}) {wide_presentation(version);lumine_hall_presentation(version);world_map_presentation(version);}
+    for(auto version:{eb::GameVersion::US,eb::GameVersion::JP}) {wide_presentation(version);lumine_hall_presentation(version);world_map_presentation(version);selective_effects(version);title_and_gas_effects(version);}
     std::cout << "bus: " << checks << " checks passed\n";
 }

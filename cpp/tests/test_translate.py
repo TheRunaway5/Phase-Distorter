@@ -24,6 +24,31 @@ spc700 = importlib.util.module_from_spec(SPC_SPEC)
 SPC_SPEC.loader.exec_module(spc700)
 
 
+class PresentationProfileTests(unittest.TestCase):
+    def test_effect_gates_use_each_linked_regions_symbols(self):
+        # The real linker emits an enum and a ROM label with the same event
+        # name. Exercise that ambiguity and distinct regional RAM layouts;
+        # selecting a US timer for JP would silently target unrelated state.
+        symbols = translate.defaultdict(lambda: {0x7E0100, 0xC00100, 100})
+        cases = (("US", 0x1B9E, (0xAD9E, 0xADA0, 0xADA8, 0xADAA), 860),
+                 ("JP", 0x1B44, (0xAF73, 0xAF75, 0xAF7D, 0xAF7F), 856))
+        for region, psi, timers, gas_event in cases:
+            with self.subTest(region=region):
+                symbols["PSI_ANIMATION_STATE"] = {0x7E0000 + psi}
+                for name, timer in zip(("GREEN_FLASH_DURATION", "RED_FLASH_DURATION",
+                                        "REFLECT_FLASH_DURATION", "GREEN_BACKGROUND_FLASH_DURATION"), timers):
+                    symbols[name] = {0x7E0000 + timer}
+                symbols["EVENT_860"] = {gas_event, 0xC42000}
+                symbols["BUFFER"] = {0x7F0000}
+                with mock.patch.object(translate, "linked_symbols", return_value=symbols):
+                    profile = translate.source_profile(Path("unused.dbg"), region)
+                self.assertEqual(profile["wram_psi_animation"], psi)
+                self.assertEqual(profile["wram_flash_timers"], list(timers))
+                self.assertEqual(profile["gas_flash_event"], gas_event)
+                self.assertEqual(profile["wram_gas_base_palette"], 0x10000)
+                self.assertEqual(profile["title_bg_maps"], [0x58, 0] if region == "US" else [0x38, 0x3C])
+
+
 class AssetPlaceholderTests(unittest.TestCase):
     def test_manifest_creates_zero_assets_and_address_only_text_symbols(self):
         with tempfile.TemporaryDirectory(prefix="eb-cpp-assets-test-") as directory:

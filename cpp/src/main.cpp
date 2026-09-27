@@ -643,12 +643,13 @@ public:
     }
 
     void present(const eb::Bus& bus, const eb::Cpu& cpu, const eb::Spc& spc, const eb::Dsp& dsp,
-                 std::span<const std::uint32_t> picture,
-                 const std::string& capture = {}) {
+                 std::span<const std::uint32_t> picture, unsigned picture_width,
+                 double fixed_aspect, const std::string& capture = {}) {
         int drawable_width = 0, drawable_height = 0;
         SDL_GL_GetDrawableSize(window_, &drawable_width, &drawable_height);
         const int top_inset = menu_height_pixels(drawable_height);
-        presenter_->draw(picture, int(bus.presentation_width()), height, drawable_width, drawable_height,
+        presenter_->draw(picture, int(picture_width), height, drawable_width, drawable_height,
+                         fixed_aspect > 0 ? fixed_aspect :
                          settings_.target_aspect(drawable_width, std::max(1, drawable_height - top_inset)), top_inset);
         if (panel_) {
             // Copy observations rather than exposing mutable hardware to the UI.
@@ -854,8 +855,11 @@ int run_session(Options options, std::optional<NextSession>& next) {
         eb::Cpu cpu(*bus);
         cpu.reset();
         bus->set_presentation_width(settings.render_width(width * options.scale, height * options.scale));
+        bus->set_presentation_effects_enabled(settings.reduce_flashing);
         eb::PhotosensitivityFilter photosensitivity_filter;
         std::span<const std::uint32_t> picture = bus->presentation_pixels();
+        unsigned picture_width = bus->presentation_width();
+        double picture_fixed_aspect = bus->presentation_fixed_aspect();
         std::uint64_t filtered_frame = UINT64_MAX;
         // DMA can carry one CPU step across several video frames. Observe each
         // completed canvas at its hardware boundary, before the next frame can
@@ -863,7 +867,10 @@ int run_session(Options options, std::optional<NextSession>& next) {
         bus->on_presentation_frame = [&](std::span<const std::uint32_t> pixels,
                                          unsigned source_width, std::uint64_t frame) {
             if (settings.reduce_flashing) {
-                picture = photosensitivity_filter.apply(pixels, int(source_width), height, true);
+                picture = photosensitivity_filter.apply(pixels, int(source_width), height, true,
+                    bus->presentation_effect_mask(), bus->presentation_effect_reference());
+                picture_width = source_width;
+                picture_fixed_aspect = bus->presentation_fixed_aspect();
                 filtered_frame = frame;
             }
         };
@@ -902,6 +909,11 @@ int run_session(Options options, std::optional<NextSession>& next) {
                 std::uint16_t buttons = scripted_buttons;
                 if (display && !display->events(buttons)) break;
                 if (display) display->configure_picture(*bus);
+                else bus->set_presentation_width(settings.render_width(width * options.scale, height * options.scale));
+                // Observe effect contributions only while requested. The Bus
+                // records them alongside each scanline, before DMA or game code
+                // can advance to another effect phase. No emulated state changes.
+                bus->set_presentation_effects_enabled(settings.reduce_flashing);
                 bus->set_buttons(buttons);
                 const auto previous_frame = bus->frames;
                 // CPU bus clocks also drive the attached PPU/APU. Do not create
@@ -919,19 +931,24 @@ int run_session(Options options, std::optional<NextSession>& next) {
                     // including partial images left by a step-limited run.
                     picture = photosensitivity_filter.apply(bus->presentation_pixels(),
                         int(bus->presentation_width()), height, false);
+                    picture_width = bus->presentation_width();
+                    picture_fixed_aspect = bus->presentation_fixed_aspect();
                     filtered_frame = UINT64_MAX;
                 } else if (filtered_frame != bus->frames) {
                     // A step limit may stop before the first completed frame.
                     // Normal frames were already processed by the observer;
                     // host redraws and captures must not process them twice.
                     picture = photosensitivity_filter.apply(bus->presentation_pixels(),
-                        int(bus->presentation_width()), height, true);
+                        int(bus->presentation_width()), height, true,
+                        bus->presentation_effect_mask(), bus->presentation_effect_reference());
+                    picture_width = bus->presentation_width();
+                    picture_fixed_aspect = bus->presentation_fixed_aspect();
                     filtered_frame = bus->frames;
                 }
                 if (display) {
                     const auto elapsed_frames = bus->frames > previous_frame ? bus->frames - previous_frame : 1;
                     if (pacer.advance(std::chrono::steady_clock::now(), elapsed_frames)) {
-                        display->present(*bus, cpu, spc, dsp, picture);
+                        display->present(*bus, cpu, spc, dsp, picture, picture_width, picture_fixed_aspect);
                         ++presented_frames;
                         if (pacer.deadline() > std::chrono::steady_clock::now()) std::this_thread::sleep_until(pacer.deadline());
                     } else {
@@ -948,17 +965,20 @@ int run_session(Options options, std::optional<NextSession>& next) {
             // A failed CPU step can follow a canvas resize. Refresh the span
             // before diagnostic captures, retaining the selected visual filter.
             picture = photosensitivity_filter.apply(bus->presentation_pixels(),
-                int(bus->presentation_width()), height, settings.reduce_flashing);
+                int(bus->presentation_width()), height, settings.reduce_flashing,
+                bus->presentation_effect_mask(), bus->presentation_effect_reference());
+            picture_width = bus->presentation_width();
+            picture_fixed_aspect = bus->presentation_fixed_aspect();
         }
         drain_audio();
         if (wave) wave->finish();
-        if (display && !options.gl_screenshot.empty()) display->present(*bus, cpu, spc, dsp, picture, options.gl_screenshot);
+        if (display && !options.gl_screenshot.empty()) display->present(*bus, cpu, spc, dsp, picture, picture_width, picture_fixed_aspect, options.gl_screenshot);
         if (display && !next) {
             if (const auto game_request = display->take_game_request())
                 next = NextSession{*game_request, settings, display->fullscreen()};
         }
         if (!options.screenshot.empty()) screenshot(options.screenshot, *bus);
-        if (!options.presentation_screenshot.empty()) presentation_screenshot(options.presentation_screenshot, picture, int(bus->presentation_width()));
+        if (!options.presentation_screenshot.empty()) presentation_screenshot(options.presentation_screenshot, picture, int(picture_width));
         // Execution errors may produce useful captures, but should not overwrite
         // the user's last good save or persist settings as a clean shutdown.
         if (status == 0 && !options.save.empty()) store_save(options.save, *bus);

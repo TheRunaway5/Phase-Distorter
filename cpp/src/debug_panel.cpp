@@ -194,7 +194,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     // This is independent of widescreen and never changes game
                     // timing. The frontend applies it to the completed picture.
                     ImGui::Checkbox("Photosensitivity filter", &settings.reduce_flashing);
-                    ImGui::TextWrapped("Reduces flashes. Does not guarantee seizure safety.");
+                    ImGui::TextWrapped("Softens flashing battle and lightning effects while preserving ordinary artwork and movement. Does not guarantee seizure safety.");
                     ImGui::Spacing();
                     if (ImGui::Button("Restore game display")) settings = DisplaySettings{};
                     ImGui::Spacing();

@@ -605,6 +605,18 @@ def source_profile(debug: Path, version: str) -> dict:
     return {
         "wram_battle_flag": value("BATTLE_MODE_FLAG", "ram"),
         "wram_bg_records": [value(name, "ram") for name in ("LOADED_BG_DATA_LAYER1", "LOADED_BG_DATA_LAYER2")],
+        # These gates identify authored flash effects, not ordinary battle art
+        # or map palette animation. The renderer only observes this state; it
+        # must never write to the game's timers, palettes, or animation data.
+        "wram_psi_animation": value("PSI_ANIMATION_STATE", "ram"),
+        "wram_psi_targets": value("PSI_ANIMATION_ENEMY_TARGETS", "ram"),
+        "wram_swirl_timer": value("FRAMES_UNTIL_NEXT_SWIRL_UPDATE", "ram"),
+        "wram_palettes": value("PALETTES", "ram"),
+        "wram_flash_timers": [value(name, "ram") for name in (
+            "GREEN_FLASH_DURATION", "RED_FLASH_DURATION", "REFLECT_FLASH_DURATION",
+            "GREEN_BACKGROUND_FLASH_DURATION")],
+        "wram_current_layer_config": value("CURRENT_LAYER_CONFIG", "ram"),
+        "rom_layer_config": value("UNKNOWN_C0AFF1", "rom"),
         "wram_map_combo": value("LOADED_MAP_TILE_COMBO", "ram"),
         "wram_bg_scroll": [value(name, "ram") for name in ("BG1_X_POS", "BG1_Y_POS", "BG2_X_POS", "BG2_Y_POS")],
         "wram_map_arrangements": buffer + 0x8000,
@@ -617,6 +629,20 @@ def source_profile(debug: Path, version: str) -> dict:
         "rom_map_sectors": value("GLOBAL_MAP_TILESETPALETTE_DATA", "rom"),
         "title_event_first": value("TITLE_SCREEN_1", "enum"),
         "title_event_last": value("TITLE_SCREEN_11" if version == "US" else "TITLE_SCREEN_7", "enum"),
+        # SHOW_TITLE_SCREEN uses distinct PPU layouts in the two releases. An
+        # active title script plus this layout avoids mistaking gameplay's BGs
+        # for a logo screen. Values are the source's BGMODE/BGnSC register bytes.
+        "title_bg_mode": 3 if version == "US" else 1,
+        "title_bg_maps": [0x58, 0] if version == "US" else [0x38, 0x3C],
+        # C47A9E/C47B77 play animation sequence 1 (Franklin Badge reflection)
+        # and sequence 2 (lightning strike) on BG3. Match these scripts and the
+        # corresponding entity variable instead of all uses of the text layer.
+        "lightning_events": [value(name, "enum") for name in ("EVENT_452", "EVENT_705", "EVENT_706")],
+        # EVENT_860 explicitly alternates these two palettes. In JP its enum
+        # value is shifted by four, so even shared script names need linking.
+        "gas_flash_event": value("EVENT_860", "enum"),
+        "wram_gas_base_palette": buffer,
+        "rom_gas_palettes": [value(name, "rom") for name in ("GAS_STATION_PALETTE", "GAS_STATION_PALETTE_2")],
         "file_select_event": value("EVENT_787", "enum"),
         "lumine_event": value("EVENT_353", "enum"),
     }

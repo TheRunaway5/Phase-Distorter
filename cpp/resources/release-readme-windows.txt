@@ -33,9 +33,13 @@ with display, assets and diagnostics tabs. Its Display tab includes widescreen
 and the default-off Photosensitivity filter. Escape closes Settings or exits.
 The game continues while Settings captures physical game input. The initial
 ROM import view has no gameplay bar.
-The filter reduces flashes, intense red and some sharp patterns, but cannot
-guarantee seizure safety or eliminate every trigger. It can soften colors and
-leave short trails. Enable it before play with:
+Fixed intro artwork uses a centered 4:3 view, then the selected aspect returns.
+The Mother 2 logo screen extends its background into widescreen margins while
+keeping the original logo and copyright centered.
+The filter moderates identified flashing effects, including battle animations
+and Franklin Badge lightning, while preserving ordinary picture pixels. It is
+an independent implementation, not Nintendo's exact filter, and cannot guarantee
+seizure safety or eliminate every trigger. Enable it before play with:
   "Phase Distorter.exe" --reduce-flashing
 
 Settings -> Assets lists both games' default caches. Clear cached assets asks

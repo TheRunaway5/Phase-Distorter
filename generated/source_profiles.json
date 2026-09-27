@@ -5,6 +5,18 @@
       44500,
       44619
     ],
+    "wram_psi_animation": 7070,
+    "wram_psi_targets": 44775,
+    "wram_swirl_timer": 44738,
+    "wram_palettes": 512,
+    "wram_flash_timers": [
+      44446,
+      44448,
+      44456,
+      44458
+    ],
+    "wram_current_layer_config": 44426,
+    "rom_layer_config": 45041,
     "wram_map_combo": 17262,
     "wram_bg_scroll": [
       49,
@@ -36,6 +48,22 @@
     "rom_map_sectors": 1550336,
     "title_event_first": 788,
     "title_event_last": 798,
+    "title_bg_mode": 3,
+    "title_bg_maps": [
+      88,
+      0
+    ],
+    "lightning_events": [
+      452,
+      705,
+      706
+    ],
+    "gas_flash_event": 860,
+    "wram_gas_base_palette": 65536,
+    "rom_gas_palettes": [
+      2206135,
+      2206301
+    ],
     "file_select_event": 787,
     "lumine_event": 353
   },
@@ -45,6 +73,18 @@
       44969,
       45088
     ],
+    "wram_psi_animation": 6980,
+    "wram_psi_targets": 45244,
+    "wram_swirl_timer": 45207,
+    "wram_palettes": 512,
+    "wram_flash_timers": [
+      44915,
+      44917,
+      44925,
+      44927
+    ],
+    "wram_current_layer_config": 44895,
+    "rom_layer_config": 45008,
     "wram_map_combo": 18164,
     "wram_bg_scroll": [
       49,
@@ -76,6 +116,22 @@
     "rom_map_sectors": 1550336,
     "title_event_first": 788,
     "title_event_last": 794,
+    "title_bg_mode": 1,
+    "title_bg_maps": [
+      56,
+      60
+    ],
+    "lightning_events": [
+      452,
+      705,
+      706
+    ],
+    "gas_flash_event": 856,
+    "wram_gas_base_palette": 65536,
+    "rom_gas_palettes": [
+      2202809,
+      2202975
+    ],
     "file_select_event": 787,
     "lumine_event": 353
   }

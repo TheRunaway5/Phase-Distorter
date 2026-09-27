@@ -20,6 +20,59 @@ constexpr unsigned depths[8][4] = {{2,2,2,2},{4,4,2,0},{4,4,0,0},{8,4,0,0},
 uint16_t word(const std::array<uint8_t,16>& a, unsigned i) { return a[i] | a[i+1] << 8; }
 void set_word(std::array<uint8_t,16>& a, unsigned i, uint16_t v) { a[i]=v; a[i+1]=v>>8; }
 int sign13(unsigned v) { return (v & 0x1000) ? int(v & 0x1fff)-0x2000 : int(v & 0x1fff); }
+
+// Bounded presentation-only counterpart of the source's DECOMP routine. The
+// two gas-station palettes are imported data, never embedded retail colors.
+// Decode exactly one 512-byte palette; malformed input simply disables this
+// optional reference and cannot write game memory or walk outside the image.
+bool presentation_palette(std::span<const uint8_t> rom, unsigned start, std::array<uint16_t,256>& palette) {
+    std::array<uint8_t,512> bytes{};
+    std::size_t input=start, output=0;
+    bool valid=true;
+    const auto next=[&]() -> unsigned {
+        if (input>=rom.size()) { valid=false; return 0; }
+        return rom[input++];
+    };
+    for (;;) {
+        const unsigned header=next();
+        if (!valid) return false;
+        if (header==255) break;
+        unsigned command=header>>5, count=(header&31)+1;
+        if (command==7) {
+            command=(header>>2)&7;
+            count=(((header&3)<<8)|next())+1;
+        }
+        const unsigned length=count*(command==2?2:1);
+        if (!valid || length>bytes.size()-output) return false;
+        if (!command) {
+            for (unsigned i=0;i<count;++i) bytes[output++]=uint8_t(next());
+        } else if (command<=3) {
+            const unsigned first=next(), second=command==2?next():0;
+            for (unsigned i=0;i<count;++i) {
+                bytes[output++]=uint8_t(first+(command==3?i:0));
+                if (command==2) bytes[output++]=uint8_t(second);
+            }
+        } else {
+            int source=int(next()<<8); source|=int(next());
+            for (unsigned i=0;i<count;++i) {
+                if (source<0 || std::size_t(source)>=output) return false;
+                unsigned value=bytes[unsigned(source)];
+                if (command==5) {
+                    unsigned reversed=0;
+                    for (unsigned bit=0;bit<8;++bit) { reversed=(reversed<<1)|(value&1); value>>=1; }
+                    value=reversed;
+                }
+                bytes[output++]=uint8_t(value);
+                source+=command==6?-1:1;
+            }
+        }
+        if (!valid) return false;
+    }
+    if (output!=bytes.size()) return false;
+    for (unsigned index=0;index<palette.size();++index)
+        palette[index]=(bytes[index*2]|(bytes[index*2+1]<<8))&0x7fff;
+    return true;
+}
 }
 
 // Start with forced blank and uninitialized cartridge SRAM. The source game's
@@ -42,16 +95,48 @@ Bus::Bus(std::span<const uint8_t> rom, GameVersion version) : version_(version),
 void Bus::set_presentation_width(unsigned width) {
     if (width<256 || width>1024 || (width&1))
         throw std::invalid_argument("presentation width must be even and between 256 and 1024");
+    requested_presentation_width_=width;
+    resize_presentation_width(presentation_frame_aspect_?256:width);
+}
+
+void Bus::resize_presentation_width(unsigned width) {
     if (width==presentation_width_) return;
     presentation_width_=width;
     presentation_boundary_frame_=UINT64_MAX;
     presentation_framebuffer_.assign(width==256?0:width*224,0xff000000);
     if (width>256) for (unsigned y=0;y<224;++y)
         std::copy_n(framebuffer.begin()+y*256,256,presentation_framebuffer_.begin()+y*width+(width-256)/2);
+    if (presentation_effects_enabled_) {
+        presentation_effect_mask_.assign(width*224,0);
+        const auto pixels=presentation_pixels();
+        presentation_effect_reference_.assign(pixels.begin(),pixels.end());
+    }
 }
 
 std::span<const uint32_t> Bus::presentation_pixels() const {
     return presentation_width_==256 ? std::span<const uint32_t>(framebuffer) : std::span<const uint32_t>(presentation_framebuffer_);
+}
+
+double Bus::presentation_fixed_aspect() const {
+    return presentation_frame_aspect_;
+}
+
+void Bus::set_presentation_effects_enabled(bool enabled) {
+    if (presentation_effects_enabled_==enabled) return;
+    presentation_effects_enabled_=enabled;
+    if (enabled) {
+        if (!presentation_gas_palettes_loaded_) {
+            presentation_gas_palettes_loaded_=true;
+            presentation_gas_palettes_valid_=presentation_palette(rom_,profile_->rom_gas_palettes[0],presentation_gas_palettes_[0]) &&
+                presentation_palette(rom_,profile_->rom_gas_palettes[1],presentation_gas_palettes_[1]);
+        }
+        presentation_effect_mask_.assign(presentation_width_*224,0);
+        const auto pixels=presentation_pixels();
+        presentation_effect_reference_.assign(pixels.begin(),pixels.end());
+    } else {
+        presentation_effect_mask_.clear();
+        presentation_effect_reference_.clear();
+    }
 }
 
 // HiROM decode order matters: WRAM and low-bank I/O overlays take precedence
@@ -518,10 +603,14 @@ Bus::Pixel Bus::background(unsigned bg, int x, unsigned y, bool margin) const {
     else if (mode==1) { constexpr int p[3][2]={{6,9},{5,8},{0,2}}; priority=p[bg][high]; if (bg==2&&high&&(ppu_[5]&8)) priority=11; }
     else { constexpr int p[2][2]={{2,6},{0,4}}; priority=p[bg][high]; }
     uint16_t rgb;
+    unsigned palette_index=256;
     if (depth==8 && bg==0 && (ppu_[0x30]&1))
         rgb=((color&7)<<2)|((pal&1)<<1)|((color&0x38)<<4)|((pal&2)<<5)|((color&0xc0)<<7)|((pal&4)<<10);
-    else rgb=palette(color+(depth==8?0:pal*(1<<depth))+(mode==0?bg*32:0));
-    return {rgb,priority,bg,true};
+    else {
+        palette_index=color+(depth==8?0:pal*(1<<depth))+(mode==0?bg*32:0);
+        rgb=palette(palette_index);
+    }
+    return {rgb,priority,bg,true,palette_index};
 }
 
 // Affine rendering keeps the hardware's fixed-point truncations in the
@@ -546,8 +635,9 @@ Bus::Pixel Bus::mode7_pixel(unsigned bg, int x, unsigned y) const {
     const int priority=bg==1 ? ((color&0x80)?4:0) : 2;
     if (bg==1) color&=0x7f;
     if (!color) return {};
-    const auto rgb=(bg==0 && (ppu_[0x30]&1)) ? uint16_t(((color&7)<<2)|((color&0x38)<<4)|((color&0xc0)<<7)) : palette(color);
-    return {rgb,priority,bg,true};
+    const bool direct=bg==0 && (ppu_[0x30]&1);
+    const auto rgb=direct ? uint16_t(((color&7)<<2)|((color&0x38)<<4)|((color&0xc0)<<7)) : palette(color);
+    return {rgb,priority,bg,true,direct?256u:color};
 }
 
 // Only the native pass may update sprite range/time-over flags. A second,
@@ -597,7 +687,7 @@ uint8_t Bus::sprite_pixels(unsigned y, std::span<Pixel> result, int origin) cons
             for (unsigned plane=0;plane<4;++plane)
                 color|=((vram[(addr+(plane/2)*16+(plane&1))&0xffff]>>(7-(ix&7)))&1)<<plane;
             // OAM order resolves overlap before BG priority comparison.
-            if (color && result[output_x].priority<0) result[output_x]={palette(128+pal*16+color),priority,4,pal>=4};
+            if (color && result[output_x].priority<0) result[output_x]={palette(128+pal*16+color),priority,4,pal>=4,128+pal*16+color};
         }
     }
     return status;
@@ -615,10 +705,16 @@ void Bus::prepare_presentation_scene() {
     // In particular SHOW_TITLE_SCREEN's BG1 map ($58) must not repeat the
     // copyright line. Only identified scenery/animation layers extend.
     presentation_layer_mask_=0x10;
-    if ((ppu_[5]&7)==7 || ((ppu_[5]&7)==3 && ppu_[7]==0x78 && ppu_[8]==0x7c))
-        presentation_layer_mask_=0x13; // affine scenery / animated city intro
+    if ((ppu_[5]&7)==7) presentation_layer_mask_=0x13; // affine scenery
+    presentation_jp_title_=false;
     for (unsigned slot=0;slot<30;++slot)
         if (ram_word(source.wram_entity_script+slot*2)==source.file_select_event) presentation_layer_mask_=2; // FILE_SELECT_INIT: BG2 animation, centered BG3/OBJ
+        else if (version_==GameVersion::JP && ram_word(source.wram_entity_script+slot*2)>=source.title_event_first &&
+                 ram_word(source.wram_entity_script+slot*2)<=source.title_event_last &&
+                 (ppu_[5]&7)==source.title_bg_mode && ppu_[7]==source.title_bg_maps[0] && ppu_[8]==source.title_bg_maps[1]) {
+            presentation_jp_title_=true;
+            presentation_layer_mask_=0x13;
+        }
     if (ram_word(source.wram_battle_flag)) {
         presentation_layer_mask_=0x10;
         for (unsigned record : source.wram_bg_records) {
@@ -774,51 +870,200 @@ uint16_t Bus::presentation_tile(unsigned bg, int x, unsigned y, uint16_t origina
     return wram[source]|(wram[source+1]<<8);
 }
 
+void Bus::prepare_presentation_effects() {
+    const auto ram_word=[this](unsigned address) { return unsigned(wram[address])|(unsigned(wram[address+1])<<8); };
+    const auto& source=*profile_;
+    for (unsigned index=0;index<256;++index) presentation_reference_palette_[index]=palette(index);
+    presentation_effect_layers_=0;
+    presentation_psi_layer_=0;
+    presentation_reference_cgwsel_=ppu_[0x30];
+    presentation_reference_cgadsub_=ppu_[0x31];
+    presentation_reference_fixed_=fixed_color_;
+
+    if (ram_word(source.wram_battle_flag)) {
+        // SHOW_PSI_ANIMATION chooses its overlay from the loaded background's
+        // depth. Enemy targets use duplicate OBJ palettes 12..15, whose normal
+        // colors remain in palettes 8..11. No historical picture is required.
+        const bool psi=wram[source.wram_psi_animation] && wram[source.wram_psi_animation+10] &&
+            wram[source.wram_psi_animation+7]<wram[source.wram_psi_animation+8];
+        if (psi) {
+            const unsigned pointer=ram_word(source.wram_psi_animation+44);
+            if (pointer>=source.wram_palettes && pointer<source.wram_palettes+512 && !((pointer-source.wram_palettes)&1)) {
+                presentation_psi_layer_=wram[source.wram_bg_records[0]+1]==2?2u:1u;
+                presentation_psi_palette_first_=(pointer-source.wram_palettes)/2+wram[source.wram_psi_animation+7];
+                presentation_psi_palette_last_=(pointer-source.wram_palettes)/2+wram[source.wram_psi_animation+8];
+            }
+        }
+        for (unsigned target=0;target<4;++target) {
+            // Targets can remain set after an attack, and KO/revive reuse the
+            // independent fade counters. Only the currently cycling PSI owns
+            // this color suppression; gradual return/death fades stay original.
+            if (psi && ram_word(source.wram_psi_targets+target*2))
+                for (unsigned index=192+target*16;index<208+target*16;++index)
+                    presentation_reference_palette_[index]=palette(index-64);
+        }
+        if (wram[source.wram_swirl_timer] && ppu_[0x30]==0x10 && ppu_[0x31]==0x3f)
+            presentation_reference_fixed_=0;
+        const bool red_green=ram_word(source.wram_flash_timers[0]) || ram_word(source.wram_flash_timers[1]);
+        if (red_green && ppu_[0x30]==0 && ppu_[0x31]==0x3f) {
+            // SMAAAASH/Giygas flashes temporarily override the normal layer
+            // configuration with fixed red/green addition. Recover only that
+            // configuration's color math; current scroll/sprites/windows stay.
+            const unsigned config=ram_word(source.wram_current_layer_config);
+            if (config<10 && source.rom_layer_config+31+config<rom_.size()) {
+                presentation_reference_cgwsel_=rom_[source.rom_layer_config+21+config];
+                presentation_reference_cgadsub_=rom_[source.rom_layer_config+31+config];
+                presentation_reference_fixed_=0;
+            }
+        }
+        const unsigned reflect=ram_word(source.wram_flash_timers[2]);
+        const unsigned green_background=ram_word(source.wram_flash_timers[3]);
+        if ((green_background?green_background:reflect)&2) {
+            // C2DF2E replaces selected background entries with white/black;
+            // palette2 retains the original colors. The generator stores the
+            // *next* cycle step after uploading a rotation, so undo one step
+            // when mapping a displayed palette slot back to its original.
+            const bool four_bit=wram[source.wram_bg_records[0]+1]==4;
+            for (unsigned record_index=0;record_index<(four_bit?1u:2u);++record_index) {
+                const unsigned record=source.wram_bg_records[record_index];
+                if (!wram[record]) continue;
+                const unsigned pointer=ram_word(record+76);
+                if (pointer<source.wram_palettes || pointer>=source.wram_palettes+512 || ((pointer-source.wram_palettes)&1)) continue;
+                const unsigned base=(pointer-source.wram_palettes)/2;
+                const unsigned count=four_bit?16:4;
+                for (unsigned index=1;index<count && base+index<256;++index) {
+                    const auto actual=palette(base+index);
+                    if (actual!=(green_background?0:0x7fff)) continue;
+                    unsigned original=index;
+                    const unsigned style=wram[record+3];
+                    const auto cycle=[&](unsigned first,unsigned last,unsigned next,bool ping_pong) {
+                        if (first>last || last>=count || index<first || index>last) return false;
+                        const unsigned length=last-first+1;
+                        const unsigned period=ping_pong?length*2:length;
+                        const unsigned step=(next+period-1)%period;
+                        unsigned offset=ping_pong?(index-first+step)%period:(index-first+length-step)%length;
+                        if (ping_pong && offset>=length) offset=period-1-offset;
+                        original=first+offset;
+                        return true;
+                    };
+                    // Style 2 uploads the second range first; the first range
+                    // wins if authored ranges overlap, matching the source.
+                    if (!wram[record+2]) {
+                        if (style==2) cycle(wram[record+6],wram[record+7],wram[record+9],false);
+                        if (style>=1 && style<=3) cycle(wram[record+4],wram[record+5],wram[record+8],style==3);
+                    }
+                    presentation_reference_palette_[base+index]=ram_word(record+44+original*2)&0x7fff;
+                }
+            }
+        }
+        if (green_background==2 && palette(0)==0x03e0) presentation_reference_palette_[0]=0;
+    }
+
+    for (unsigned slot=0;slot<30;++slot) {
+        const unsigned event=ram_word(source.wram_entity_script+slot*2);
+        const unsigned phase=ram_word(source.wram_entity_var0+slot*2);
+        const bool reflected=event==source.lightning_events[0] && phase==1;
+        const bool strike=(event==source.lightning_events[1] || event==source.lightning_events[2]) &&
+                          (phase==2 || phase==0 || phase==10);
+        if (reflected || strike) {
+            // These scripts temporarily use BG3's text tilemap for lightning;
+            // it is cleared before ordinary dialogue resumes. The other layers
+            // keep moving normally underneath the removed effect in reference.
+            presentation_effect_layers_|=4;
+            if (strike && ppu_[0x30]==0x10 && ppu_[0x31]==0x33)
+                presentation_reference_fixed_=0;
+        }
+        if (event==source.gas_flash_event && (ppu_[5]&7)==3 && ppu_[7]==0x78 && ppu_[8]==0x7c && presentation_gas_palettes_valid_) {
+            // Compare against the exact authored flash palette. BUFFER also
+            // contains a procedural BG2 palette, so using it as a blanket
+            // replacement would alter normal gas-station colors between flashes.
+            for (unsigned index=0;index<256;++index)
+                if (palette(index)==presentation_gas_palettes_[1][index])
+                    presentation_reference_palette_[index]=presentation_gas_palettes_[0][index];
+        }
+    }
+}
+
 // Resolve main/subscreen winners first, then apply window clipping, color
 // arithmetic, and brightness. Presentation policy can choose which scenery
 // to sample, but it never changes these PPU registers or native composition.
-uint32_t Bus::compose_pixel(int x, unsigned y, const Pixel& object, bool margin) const {
+uint32_t Bus::compose_pixel(int x, unsigned y, const Pixel& object, bool margin, uint32_t* effect_reference) const {
     const bool outside_native=x<0 || x>=256;
     const bool outside_world=margin && presentation_world_map_ && (x<presentation_clip_left_ || x>=presentation_clip_right_);
-    Pixel main{outside_world?uint16_t(0):palette(0),-1,5,true}, sub{fixed_color_,-1,5,true};
+    Pixel main{outside_world?uint16_t(0):palette(0),-1,5,true,0}, sub{fixed_color_,-1,5,true};
+    Pixel reference_main=main, reference_sub=sub;
+    if (effect_reference) {
+        if (!outside_world) reference_main.color=presentation_reference_palette_[0];
+        reference_sub.color=presentation_reference_fixed_;
+    }
     // Windows remain anchored to the native picture. Extending their edge
     // membership preserves full-screen fades and clips in the extra picture.
     const unsigned window_x=unsigned(std::clamp(x,0,255));
     for (unsigned layer=0;layer<5;++layer) {
         const bool scenery=presentation_layer_mask_&(1<<layer);
         if (margin && ((outside_native && !scenery) || (outside_world && scenery))) continue;
-        const int sample_x=x+((margin && scenery)?presentation_shift_x_:0);
+        // The Japanese logo's red field reaches the authored picture edges.
+        // Extend those BG edge samples only; repeating tilemaps would duplicate
+        // logo letters/copyright, and repeating OBJ would duplicate sprites.
+        const int sample_x=margin && outside_native && presentation_jp_title_ && layer<2
+            ? std::clamp(x,0,255) : x+((margin && scenery)?presentation_shift_x_:0);
         const Pixel p=layer==4?object:background(layer,sample_x,y+1,margin && scenery);
         if (p.priority<0) continue;
         const bool masked=window(layer,window_x);
         if ((ppu_[0x2c]&(1<<layer)) && !((ppu_[0x2e]&(1<<layer))&&masked) && p.priority>main.priority) main=p;
         if ((ppu_[0x2d]&(1<<layer)) && !((ppu_[0x2f]&(1<<layer))&&masked) && p.priority>sub.priority) sub=p;
+        const bool psi_color=(presentation_psi_layer_&(1u<<layer)) &&
+            p.palette_index>=presentation_psi_palette_first_ && p.palette_index<=presentation_psi_palette_last_;
+        if (effect_reference && !(presentation_effect_layers_&(1u<<layer)) && !psi_color) {
+            auto clean=p;
+            if (clean.palette_index<256) clean.color=presentation_reference_palette_[clean.palette_index];
+            if ((ppu_[0x2c]&(1<<layer)) && !((ppu_[0x2e]&(1<<layer))&&masked) && clean.priority>reference_main.priority) reference_main=clean;
+            if ((ppu_[0x2d]&(1<<layer)) && !((ppu_[0x2f]&(1<<layer))&&masked) && clean.priority>reference_sub.priority) reference_sub=clean;
+        }
     }
     const bool inside=window(5,window_x);
     const auto affected=[inside](unsigned setting) { return setting==3 || (setting==1&&!inside) || (setting==2&&inside); };
-    const bool clipped=affected(ppu_[0x30]>>6);
-    unsigned color=clipped?0:main.color;
-    // Color math works on independent five-bit channels. Saturate only after
-    // the optional halve operation so bright addition retains its expected
-    // half-intensity result; backdrop outside a clamped region stays black.
-    if (!(outside_world && main.layer==5) && !affected((ppu_[0x30]>>4)&3) && main.math && (ppu_[0x31]&(1<<main.layer))) {
-        const unsigned other=(ppu_[0x30]&2)?sub.color:fixed_color_;
-        const bool half=(ppu_[0x31]&0x40)&&!clipped&&(!(ppu_[0x30]&2)||sub.priority>=0);
-        unsigned mixed=0;
-        for (unsigned shift=0;shift<15;shift+=5) {
-            const int a=(color>>shift)&31, b=(other>>shift)&31;
-            int c=(ppu_[0x31]&0x80)?std::max(0,a-b):(a+b);
-            if (half) c/=2;
-            mixed|=unsigned(std::min(31,c))<<shift;
+    // Run the same window/color-math/brightness arithmetic for both pictures.
+    // The alternate winners and palette live only in host presentation state.
+    const auto finish=[&](const Pixel& main, const Pixel& sub, uint8_t cgwsel, uint8_t cgadsub, uint16_t fixed) {
+        const bool clipped=affected(cgwsel>>6);
+        unsigned color=clipped?0:main.color;
+        // Color math works on independent five-bit channels. Saturate only after
+        // the optional halve operation so bright addition retains its expected
+        // half-intensity result; backdrop outside a clamped region stays black.
+        if (!(outside_world && main.layer==5) && !affected((cgwsel>>4)&3) && main.math && (cgadsub&(1<<main.layer))) {
+            const unsigned other=(cgwsel&2)?sub.color:fixed;
+            const bool half=(cgadsub&0x40)&&!clipped&&(!(cgwsel&2)||sub.priority>=0);
+            unsigned mixed=0;
+            for (unsigned shift=0;shift<15;shift+=5) {
+                const int a=(color>>shift)&31, b=(other>>shift)&31;
+                int c=(cgadsub&0x80)?std::max(0,a-b):(a+b);
+                if (half) c/=2;
+                mixed|=unsigned(std::min(31,c))<<shift;
+            }
+            color=mixed;
         }
-        color=mixed;
-    }
-    const unsigned brightness=ppu_[0]&15;
-    const auto component=[brightness](unsigned value) {
-        const auto scaled=(value*brightness+7)/15;
-        return (scaled<<3)|(scaled>>2);
+        const unsigned brightness=ppu_[0]&15;
+        const auto component=[brightness](unsigned value) {
+            const auto scaled=(value*brightness+7)/15;
+            return (scaled<<3)|(scaled>>2);
+        };
+        return 0xff000000|(component(color&31)<<16)|(component((color>>5)&31)<<8)|component((color>>10)&31);
     };
-    return 0xff000000|(component(color&31)<<16)|(component((color>>5)&31)<<8)|component((color>>10)&31);
+    const auto result=finish(main,sub,ppu_[0x30],ppu_[0x31],fixed_color_);
+    if (effect_reference) *effect_reference=finish(reference_main,reference_sub,
+        presentation_reference_cgwsel_,presentation_reference_cgadsub_,presentation_reference_fixed_);
+    return result;
+}
+
+uint32_t Bus::compose_presentation_pixel(int x, unsigned y, const Pixel& object, bool margin) {
+    if (!presentation_effects_enabled_) return compose_pixel(x,y,object,margin);
+    const unsigned output_x=unsigned(x+int((presentation_width_-256)/2));
+    const auto index=std::size_t(y)*presentation_width_+output_x;
+    auto& reference=presentation_effect_reference_[index];
+    const auto pixel=compose_pixel(x,y,object,margin,&reference);
+    presentation_effect_mask_[index]=pixel!=reference;
+    return pixel;
 }
 
 // Fast path copies the native center byte-for-byte and renders only margins.
@@ -840,13 +1085,13 @@ void Bus::render_presentation_margins(unsigned y) {
         sprite_pixels(y,std::span<Pixel>(objects.data(),presentation_width_),-int(margin)+presentation_shift_x_);
     if (presentation_shift_x_ || (presentation_world_map_ && (presentation_clip_left_>0 || presentation_clip_right_<256))) {
         for (unsigned x=0;x<presentation_width_;++x)
-            output[x]=compose_pixel(int(x)-int(margin),y,objects[x],true);
+            output[x]=compose_presentation_pixel(int(x)-int(margin),y,objects[x],true);
         return;
     }
     for (unsigned x=0;x<margin;++x) {
-        output[x]=compose_pixel(int(x)-int(margin),y,objects[x],true);
+        output[x]=compose_presentation_pixel(int(x)-int(margin),y,objects[x],true);
         const unsigned right=margin+256+x;
-        output[right]=compose_pixel(256+int(x),y,objects[right],true);
+        output[right]=compose_presentation_pixel(256+int(x),y,objects[right],true);
     }
 }
 
@@ -854,11 +1099,26 @@ void Bus::render_presentation_margins(unsigned y) {
 // status side effects are independent of whether a wider host buffer exists;
 // presentation is an additional consumer of the completed hardware state.
 void Bus::render_line(unsigned y) {
-    if (ppu_[0]&0x80) std::fill_n(framebuffer.begin()+y*256,256,0xff000000);
+    if (!y) {
+        // Latch the scene alongside its first visible row, before any pixel or
+        // metadata is written. A transition can happen inside one CPU step, so
+        // waiting for the frontend's next iteration would repeat one gas frame
+        // or stretch one logo frame. Keep the user's requested width separately.
+        presentation_frame_aspect_=(ppu_[5]&7)==3 && ppu_[7]==0x78 && ppu_[8]==0x7c?4.0/3:0.0;
+        resize_presentation_width(presentation_frame_aspect_?256:requested_presentation_width_);
+    }
+    if (presentation_effects_enabled_) prepare_presentation_effects();
+    if (ppu_[0]&0x80) {
+        std::fill_n(framebuffer.begin()+y*256,256,0xff000000);
+        if (presentation_effects_enabled_) {
+            std::fill_n(presentation_effect_mask_.begin()+y*presentation_width_,presentation_width_,0);
+            std::fill_n(presentation_effect_reference_.begin()+y*presentation_width_,presentation_width_,0xff000000);
+        }
+    }
     else {
         std::array<Pixel,256> objects{};
         if ((ppu_[0x2c]|ppu_[0x2d])&16) sprites(y,objects);
-        for (unsigned x=0;x<256;++x) framebuffer[y*256+x]=compose_pixel(x,y,objects[x],false);
+        for (unsigned x=0;x<256;++x) framebuffer[y*256+x]=compose_presentation_pixel(x,y,objects[x],false);
     }
     render_presentation_margins(y);
 }

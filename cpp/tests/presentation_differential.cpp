@@ -3,6 +3,7 @@
 #include "eb/bus.hpp"
 #include "eb/cpu.hpp"
 #include "eb/dsp.hpp"
+#include "eb/photosensitivity_filter.hpp"
 #include "eb/spc.hpp"
 #include "generated_assets.hpp"
 #include <algorithm>
@@ -49,11 +50,10 @@ auto cpu_state(const eb::Cpu& c) {
 auto spc_state(const eb::Spc& c) {
     return std::tie(c.pc,c.a,c.x,c.y,c.sp,c.p,c.stopped,c.sleeping,c.cycles,c.instructions);
 }
-void save(const std::string& path,const eb::Bus& bus,bool wide) {
+void save(const std::string& path,std::span<const uint32_t> pixels,unsigned width) {
     if(path.empty()) return;
     std::ofstream out(path,std::ios::binary);
-    out<<"P6\n"<<(wide?bus.presentation_width():256)<<" 224\n255\n";
-    auto pixels=wide?bus.presentation_pixels():std::span<const uint32_t>(bus.framebuffer);
+    out<<"P6\n"<<width<<" 224\n255\n";
     for(auto p:pixels) { const char rgb[]={char(p>>16),char(p>>8),char(p)};out.write(rgb,3); }
     if(!out) throw std::runtime_error("Cannot write "+path);
 }
@@ -62,12 +62,14 @@ int main(int argc,char** argv) {
     try {
         std::string assets=std::getenv("EB_ASSET_PACK")?std::getenv("EB_ASSET_PACK"):"", script, output;
         uint64_t frames=1200;
+        bool reduce_flashing=false;
         for(int i=1;i<argc;++i) {
             const std::string arg=argv[i];
             if(arg=="--help") {
-                std::cout<<"presentation_differential --assets FILE [--frames N] [--input-script FILE] [--output-prefix PATH]\n";
+                std::cout<<"presentation_differential --assets FILE [--frames N] [--input-script FILE] [--output-prefix PATH] [--reduce-flashing]\n";
                 return 0;
             }
+            if(arg=="--reduce-flashing") { reduce_flashing=true; continue; }
             if(i+1==argc) throw std::runtime_error("Missing value for "+arg);
             const std::string value=argv[++i];
             if(arg=="--assets") assets=value;
@@ -81,6 +83,25 @@ int main(int argc,char** argv) {
         auto native=std::make_unique<eb::Bus>(game.image,game.version),wide=std::make_unique<eb::Bus>(game.image,game.version);
         eb::Spc sa(*native),sb(*wide); eb::Dsp da(sa),db(sb); eb::Cpu ca(*native),cb(*wide);
         ca.reset(); cb.reset(); wide->set_presentation_width(400);
+        eb::PhotosensitivityFilter filter;
+        std::span<const uint32_t> filtered_picture=wide->presentation_pixels();
+        unsigned filtered_width=wide->presentation_width();
+        uint64_t effect_frames=0, effect_pixels=0, changed_pixels=0;
+        if(reduce_flashing) {
+            wide->set_presentation_effects_enabled(true);
+            // Filter every completed game frame at its hardware boundary,
+            // including multiple boundaries crossed by one CPU/DMA operation.
+            // The other instance has neither metadata nor an observer enabled.
+            wide->on_presentation_frame=[&](std::span<const uint32_t> pixels,unsigned width,uint64_t) {
+                const auto mask=wide->presentation_effect_mask();
+                filtered_picture=filter.apply(pixels,int(width),224,true,mask,wide->presentation_effect_reference());
+                filtered_width=width;
+                const auto marked=std::count_if(mask.begin(),mask.end(),[](uint8_t value){return value!=0;});
+                effect_frames+=marked!=0;
+                effect_pixels+=marked;
+                for(std::size_t i=0;i<pixels.size();++i) changed_pixels+=filtered_picture[i]!=pixels[i];
+            };
+        }
         std::vector<Write> wa,wb;
         ca.observe_write=[&](uint32_t a,uint8_t v){wa.push_back({0,a,v});};
         cb.observe_write=[&](uint32_t a,uint8_t v){wb.push_back({0,a,v});};
@@ -122,9 +143,15 @@ int main(int argc,char** argv) {
             }
             if(native->frames%1200==0) std::cout<<"verified frame "<<native->frames<<'\n'<<std::flush;
         }
-        if(!output.empty()) {save(output+"-native.ppm",*native,false);save(output+"-wide.ppm",*wide,true);}
+        if(!output.empty()) {
+            save(output+"-native.ppm",native->framebuffer,256);
+            save(output+"-wide.ppm",reduce_flashing?filtered_picture:wide->presentation_pixels(),
+                 reduce_flashing?filtered_width:wide->presentation_width());
+        }
         std::cout<<"PASS game="<<game.title<<" frames="<<native->frames<<" CPUsteps="<<ca.instructions<<" SPCsteps="<<sa.instructions
-                 <<" ordered_writes="<<writes<<" audio_frames="<<da.sample_frames()
+                 <<" ordered_writes="<<writes<<" audio_frames="<<da.sample_frames();
+        if(reduce_flashing) std::cout<<" filtered_effect_frames="<<effect_frames<<" masked_pixels="<<effect_pixels<<" changed_pixels="<<changed_pixels;
+        std::cout
                  <<"; dynamic widths preserve CPU/SPC state, all game/entity/PPU memory, clocks, writes, audio, native pixels\n";
     } catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

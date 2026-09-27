@@ -14,6 +14,8 @@
 - Persistent aspect preferences and read-only game diagnostics.
 - Widescreen scene rendering with unchanged gameplay and spawning, battle patterns,
   Lumine Hall text, and presentation camera boundaries for narrow map regions.
+- Fixed intro artwork uses a centered 4:3 view; the Mother 2 logo screen extends
+  its background into widescreen margins without stretching or repeating the logo.
 - Deterministic verification tools and documented fidelity limits.
 - Phase Distorter branding and Saturn launcher/window icons on both platforms.
 - Optional per-user Linux menu and Windows Desktop/Start Menu shortcut setup,
@@ -22,4 +24,6 @@
 - Direct source-build installation with `cmake --install build --prefix dist`;
   optional developer launch scripts retain local-build priority.
 - Expanded installation/build guide and explanatory source comments.
-- Default-off photosensitivity filter for contrast, red saturation, patterns, and rapid color changes.
+- Default-off photosensitivity filter scoped to identified flashing effects,
+  including battle animations and Franklin Badge lightning; ordinary picture
+  pixels retain their original colors and sharpness.

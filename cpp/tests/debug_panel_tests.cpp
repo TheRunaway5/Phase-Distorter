@@ -150,7 +150,9 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(!settings.reduce_flashing, "Photosensitivity filter could not be disabled");
         click(window, panel, draw, 43, 168 + menu_offset);
         require(settings.reduce_flashing, "Photosensitivity filter could not be re-enabled");
-        click(window, panel, draw, 100, 230 + menu_offset);
+        // The scoped-effects explanation wraps to three lines in this fixed
+        // 480-pixel panel; click the reset button below that explanatory text.
+        click(window, panel, draw, 100, 256 + menu_offset);
         require(!settings.reduce_flashing && !settings.widescreen && settings.aspect == eb::AspectRatio::SixteenNine,
             "Restore game display did not reset the photosensitivity filter and aspect preferences");
         panel.process_event(key(window, SDLK_F1));

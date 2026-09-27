@@ -35,10 +35,15 @@ has no gameplay bar. A separate wider presentation buffer draws existing scene d
 without changing emulated camera coordinates, entity activation, or spawn rules.
 The original 256×224 framebuffer remains available for strict comparisons.
 An optional, default-off photosensitivity filter changes only the presentation
-image. It reduces contrast, highlights, dominant reds, sharp patterns, and rapid
-color changes. It advances once per completed game frame, including frame
+pixels of identified flashing effects, including battle animations and Franklin
+Badge lightning. Ordinary picture pixels remain unchanged. It advances once
+per completed game frame, including frame
 boundaries crossed inside DMA, independently of host display pacing. Details
 and limitations are in [docs/photosensitivity.md](docs/photosensitivity.md).
+Fixed intro artwork uses a native-width canvas displayed at 4:3; the selected
+wider view returns after the scene. The Mother 2 logo screen carries its
+background edge colors into the widescreen margins while preserving the
+original foreground and copyright in the center.
 
 See [TRANSLATION.md](TRANSLATION.md) for the source mapping contract and counts;
 the US source has 119,472 original 65816 instruction sites and the Japanese
@@ -78,12 +83,17 @@ data ranges reconstructs each image's complete SHA-256 fingerprint.
   executable as the tested build; Windows also installs SDL2.dll beside it.
   Runnable archives use explicit input whitelists, reject ROM/asset-pack content,
   preserve executable permissions, and contain payload manifests and checksums.
-- Both exact 0.1 ZIPs passed manifest/checksum checks and direct first-run launch
-  from freshly extracted folders with empty, isolated user data. The Linux ZIP
-  loaded its own three runtime libraries and exactly reproduced both games'
-  filtered frame-900 native/wide pixels, audio, and CPU/SPC state. Windows' exact
-  archive opened the importer without a console under Wine; its executable and
-  SDL DLL match the independently verified frame-900 gameplay build.
+- Both fresh 0.1 ZIPs passed manifest/checksum verification after extraction
+  into paths containing spaces. The exact extracted Linux EarthBound and
+  Windows Mother 2 frame-1,800 filtered runs reproduce the tested native/adapted
+  pixels and WAV bytes; Windows execution was under Wine. Linux loads its own
+  three runtime libraries with no SDL3 dependency. The Linux archive contains
+  21 regular files and the Windows archive contains 14; root downloads,
+  versioned copies, and the Linux `.zup` alias are byte-identical per platform.
+  Archive hashes are recorded in [RELEASE.md](../RELEASE.md).
+- The final asset audit covers all 346 tracked or unignored source/release
+  files and every ZIP entry. No supported ROM image or imported asset pack is
+  present.
 - Native Linux and MinGW Windows executables build. Windows execution and
   graphics were tested under Wine, not on a native Windows installation.
 - The separate version 0.1 snapshot builds directly from its 136 frozen generated
@@ -100,25 +110,48 @@ data ranges reconstructs each image's complete SHA-256 fingerprint.
   reconstructed both canonical image hashes, and both frame-900 images matched
   normal builds exactly. Ninja dependency checks verify source changes
   regenerate affected outputs.
-- All standard CTest checks pass: translation fixtures, CPU semantics, bus/PPU,
+- All final standard CTest checks pass: translation fixtures, CPU semantics, bus/PPU,
   SPC semantics, DSP synthesis, OpenGL presentation, frame pacing, asset import,
-  control-panel interaction, cache administration, and photosensitivity filtering (eleven registered tests).
-- Filter tests cover disabled identity, source-buffer preservation, red/cyan and
-  black/white alternation, contrast and spatial filtering, stable text, geometry
-  changes, toggles, and invalid input. They pass optimized and under ASan/UBSan.
-  All 239 focused bus checks also pass both builds, including paired observed
-  and unobserved DMA runs spanning multiple frame boundaries. The observer does
+  control-panel interaction, cache administration, and photosensitivity filtering
+  (eleven registered tests). Native Linux completes in 8.95 seconds and Wine
+  in 46.40 seconds, both with the final 302-check bus fixture.
+- Selective-filter unit tests pass for exact ordinary-image preservation,
+  disabled identity, input/reference preservation, effect locality, red/cyan
+  and black/white alternation, moving reference images, center-aligned resizing,
+  toggles, and invalid input. All 302 focused bus checks also pass under
+  ASan/UBSan. These include paired observed and unobserved DMA runs spanning
+  multiple frame boundaries. The observer does
   not change hardware state, clocks, ordered writes, audio delivery, or pixels.
-- With the filter disabled, final Japanese frame-900 native/wide images and WAV
-  bytes match the previous release exactly. Enabling it preserves native pixels,
-  WAV, CPU/SPC state, and instruction counts while changing only presentation
-  pixels. Linux and Wine produce identical filtered images. A US frame-900 run
-  also preserves native pixels and audio. In the exact Linux ZIP's desktop
-  frame-60 capture, all game-region pixels match the scaled filtered source below
-  the 19-pixel bar, and letterboxes match. That startup picture is uniform;
-  separate varied-pattern GL fixtures establish orientation/content coverage.
-  All nine preference/CLI cases pass on both
-  platforms, including persistence, defaults, and explicit overrides.
+- With selective filtering enabled, both native Linux 3,100-frame differential
+  routes preserve CPU/SPC state, ordered writes, game/entity/PPU memory, clocks,
+  audio, and native pixels while the presentation width changes. EarthBound
+  checks 46,141,394 CPU instructions, 13,035,207 SPC instructions, 10,177,144
+  ordered writes, and 1,650,615 audio frames; Mother 2 checks 46,423,899 CPU
+  instructions, 13,035,281 SPC instructions, 9,549,143 ordered writes, and the
+  same audio-frame count. Each route exercises 98 effect frames, with 1,820,644
+  pixel changes in EarthBound and 1,843,576 in Mother 2 accumulated across those
+  frames. These routes cover
+  intro flashes and title transitions, not every battle animation.
+- Separate native Linux frame-1,800 captures in both games confirm that the
+  gas-station flash changes when enabled. Frame-3,000 logo pictures remain
+  bit-identical on and off. Every pair preserves native pixels, WAV bytes, CPU
+  and SPC state, and instruction counts. All eight corresponding Windows runs
+  under Wine match Linux pictures, audio, and CPU/SPC state exactly. The fresh
+  extracted-package runs described above also pass. The earlier nine
+  preference/CLI cases passed
+  on Linux and Wine,
+  including persistence, defaults, and explicit overrides.
+- Both games' fixed intro-art frame-1,500 captures use the original 256-pixel
+  canvas for a centered 4:3 display; their frame-3,000 logos use a 398-pixel
+  widescreen canvas at 16:9. Every original center pixel remains identical to
+  the previous and canonical native captures. Mother 2's 71-pixel margins match
+  the background edge color on each row, without repeated logo/copyright art.
+- A live Linux OpenGL run with the filter enabled presented 1,800 frames with
+  zero skipped frames in 29.952 seconds. At the final fixed 4:3 scene, its
+  1,194×672 window held an 871×653 game viewport at (161, 19). Every viewport
+  pixel matches nearest-pixel scaling of the complete 256×224 source image,
+  with zero mismatches and black sidebars. That filtered source also matches
+  the headless run exactly.
 - Phase Distorter's Saturn artwork is embedded in the window on both platforms
   and in all seven Windows executable icon sizes. Actual Linux and Wine window
   pixels and Windows executable resources were checked against the provided

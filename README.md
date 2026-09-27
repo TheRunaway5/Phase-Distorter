@@ -223,6 +223,12 @@ camera stops at map-region boundaries, including the Fourside tunnel and desert
 road; areas narrower than the selected view use side borders. Menus and HUD
 remain centered, and the wider picture does not activate extra actors.
 
+Fixed intro artwork, including **The War Against Giygas!**, uses a centered 4:3
+view instead of repeating into the margins. The selected wider view returns
+after that scene. The Mother 2 logo screen extends its background into the
+widescreen margins while keeping the original logo and copyright centered;
+the artwork itself is not stretched or repeated.
+
 Pass command-line display options directly to the executable:
 
 ```sh
@@ -259,11 +265,10 @@ files are never deleted by these controls.
 ### Optional photosensitivity filter
 
 The **Photosensitivity filter** in **F1 → Display** is **disabled by default**
-and works independently of widescreen. It lowers flash contrast and bright
-highlights, reduces intense red saturation, softens high-contrast pattern edges,
-and blends rapid frame-to-frame color changes. These adjustments affect the
-presented picture in both games, including battle effects and fullscreen
-transitions. Game execution, input, audio, and save data remain unchanged.
+and works independently of widescreen. It moderates identified flashing effects,
+including battle animations and Franklin Badge lightning, in both games.
+Ordinary scenery, sprites, text, and colors remain unchanged outside the affected
+effect pixels. Game execution, input, audio, and save data remain unchanged.
 
 The setting is saved with your display preferences. To enable it before the
 first game frame, use:
