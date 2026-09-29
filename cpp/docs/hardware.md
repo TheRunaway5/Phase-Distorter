@@ -1,6 +1,6 @@
 # C++ hardware model
 
-`eb::Bus` is independent of the existing C runtime. The cartridge input is the
+`eb::SnesBus` is independent of the existing C runtime. The cartridge input is the
 assembled HiROM byte image. CPU reads and writes run against the actual bank
 mapping; the port model does not replace game routines or generate responses to
 game-specific upload protocols.
@@ -16,9 +16,9 @@ SPC700 driver and a standalone S-DSP backend to those ports. Boot acknowledgment
 come from executing the IPL instructions and the uploaded source-translated code.
 
 The CPU charges explicit fetch/data accesses at 6, 8, or 12 master clocks based
-on the address and MEMSEL. `run_cpu` advances that master-clock total and inserts
+on the address and MEMSEL. `advance_master_clocks_with_refresh` advances that master-clock total and inserts
 40-clock WRAM refresh pauses on the eight-clock phase near each scanline's center.
-Noninterlaced odd NTSC fields have the four-clock-short line 240. `tick` remains
+Noninterlaced odd NTSC fields have the four-clock-short line 240. `advance_cpu_cycles` remains
 a hardware-test helper that advances an exact number of six-clock units without
 inserting CPU refresh pauses. `take_dma_clocks` transfers DMA/HDMA stall debt to
 the caller in master clocks, retaining byte, channel, and initialization costs.
@@ -44,14 +44,14 @@ Remaining fidelity work (these are limitations, not completion claims):
   transform, truncation, repeat modes and EXTBG, but needs differential validation.
 - The DAC brightness curve and analog video characteristics have not been measured.
 - SPC execution and DSP synthesis are integrated in the executable (see `spc.md`).
-  The standalone Bus still leaves its APU reply ports empty when no SPC processor
+  The standalone SnesBus still leaves its APU reply ports empty when no SPC processor
   is attached. CPU/SPC/DSP synchronization within an instruction needs additional
   timing validation.
 
 Hardware behavior was checked against Martin Korth's original reverse engineering
 reference, [fullsnes](https://problemkaputt.de/fullsnes.htm), especially the memory,
 DMA, PPU and timing sections, and [Anomie's timing measurements](https://github.com/gilligan/snesdev/blob/master/docs/timing.txt).
-`bus_tests.cpp` exercises register-visible results,
+`snes_bus_tests.cpp` exercises register-visible results,
 DMA transfers, interrupt flags, controller order and rendered pixel cases; these
 tests are not evidence of whole-game or console-level equivalence.
 
@@ -114,9 +114,17 @@ it adds no production instrumentation.
 
 ## Optional wider presentation
 
-`Bus::set_presentation_width()` selects an even source width from 256 through
+`SnesBus` delegates game-specific presentation to `GameSceneRenderer`. The
+renderer owns its picture/cache state and receives synchronous `SceneReadView`
+values containing const memory spans, registers and regional metadata. It has
+no hardware write or clock-advance interface. Native sampling helpers read the
+same view, while only the bus's native sprite pass commits overflow status.
+[Source navigation](source-navigation.md) describes these ownership boundaries.
+
+
+`SnesBus::set_presentation_width()` selects an even source width from 256 through
 1,024 pixels. `presentation_pixels()` exposes a separate 224-line display
-buffer. The original `framebuffer` is always 256 by 224 and is rendered by the
+buffer. The original `native_framebuffer` is always 256 by 224 and is rendered by the
 same native path, including the native sprite limits and status flags. Width
 changes do not write PPU registers, WRAM, camera variables, controller state,
 entity data, or save RAM, and do not advance any emulated clock.
@@ -125,12 +133,22 @@ Extra pixels use the same scanline's tile graphics, palettes, scroll offsets,
 affine transform, priority, windows, and color arithmetic. Negative horizontal
 coordinates are supported. Original native pixels are copied directly into the
 center except when the optional display camera shifts scenery within a map
-region. Even then the original framebuffer remains exact; only the separate
+region or the PSI overlay is fitted to the wider canvas. The original
+framebuffer remains exact; only the separate
 presentation buffer changes. Window and HUD background layers remain anchored
-to the native center. Existing objects move with scenery, and native-edge
-objects can be completed in the margins. Fully hidden OAM slots are not exposed;
-the wider view does not activate or draw entities that the original game omitted
-from its sprite output.
+to the native center. Existing objects move with scenery. Active world entities
+are read from the source's linked entity list and sprite descriptors, including
+pieces omitted by the native OAM clipping. Their descriptors are captured with
+the full OAM DMA upload so margins and center use the same published frame.
+Full signed coordinates, chained maps, frame selection, flips, priorities, and
+the source invisibility flags are preserved. Unallocated entities are never
+created, and spawn/despawn routines and timers are never called or modified.
+Raw hidden OAM slots are not treated as extra world entities.
+
+This describes the read-only renderer. The desktop session separately opts
+into `EntityPreload`, which expands source NPC/enemy query and retention bounds
+for wide views. See [actor loading](entity-preload.md); core rendering-only
+differentials leave this gameplay policy disabled.
 
 Scene adaptation follows [the original source contracts](presentation-scenes.md):
 
@@ -140,6 +158,14 @@ Scene adaptation follows [the original source contracts](presentation-scenes.md)
 - Battle layers are chosen from the actual loaded-background metadata, including
   configurations that put an animated layer on BG3. Scanline distortion offsets
   apply to the additional pixels as well.
+- PSI uses the separate animation layer selected by the source background
+  depth, independently of palette cycling. Its authored canvas is mapped once
+  across the requested width; single-target effects retain their original
+  enemy anchor and do not wrap copies into the margins. Color arithmetic,
+  brightness, windows, and flash-filter references still use the current row.
+- Clearing `BATTLE_MODE_FLAG` starts the exit fade; it does not immediately end
+  the displayed battle scene. That layout remains wide until black or replaced
+  by another PPU layout, avoiding a premature 4:3-looking frame.
 - Confirmed world views read the original packed global map and the currently
   loaded, event-adjusted arrangement buffer beyond the VRAM streaming ring.
   The decoder first checks its interpretation against native visible tiles;

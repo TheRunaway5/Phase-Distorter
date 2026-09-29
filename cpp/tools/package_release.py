@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Create deterministic, whitelisted runnable ZIPs and native-download aliases.
+"""Create deterministic, whitelisted runnable ZIPs under releases/.
 
 Run only after native binaries and Linux runtime libraries have been finalized.
 --check validates the inputs and reports package contents without writing ZIPs.
 The optional --linux-runtime-dir accepts an independently prepared runtime tree;
 its file names and license records are still explicitly whitelisted below.
-Versioned archives live under releases/. Root windows-VERSION.zip,
-linux-VERSION.zip and linux-VERSION.zup are identical platform archive copies.
+Native binaries and runtime libraries live under launchers/<platform>/.
+Archives are written only to releases/; no root-level copies are created.
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import stat
 import struct
 import tempfile
@@ -115,14 +114,14 @@ def package_entries(platform: str, version: str, runtime: Path) -> list[Entry]:
     entries.extend((template(f"release-readme-{platform}.txt", version, "README.txt"),
                     template("release-notice.txt", version, "NOTICE.txt")))
     if platform == "windows":
-        for name in ("Phase Distorter.exe", "SDL2.dll"):
-            entry = file_entry(ROOT / name, name, 0o755)
+        for source, name in (("eb_cpp.exe", "Phase Distorter.exe"), ("SDL2.dll", "SDL2.dll")):
+            entry = file_entry(ROOT / "launchers/windows/bin" / source, name, 0o755)
             require_native(entry, platform)
             entries.append(entry)
         entries.append(file_entry(ROOT / "install-shortcuts.vbs", "install-shortcuts.vbs"))
         entries.append(file_entry(ROOT / "cpp/resources/phase-distorter.ico", "cpp/resources/phase-distorter.ico"))
     else:
-        entry = file_entry(ROOT / "Phase Distorter", "Phase Distorter", 0o755)
+        entry = file_entry(ROOT / "launchers/linux/bin/eb_cpp", "Phase Distorter", 0o755)
         require_native(entry, platform)
         entries.append(entry)
         entries.append(file_entry(ROOT / "install-linux.sh", "install-linux.sh", 0o755))
@@ -188,26 +187,11 @@ def write_zip(destination: Path, entries: list[Entry]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def copy_archive(source: Path, destination: Path) -> None:
-    # Aliases use the already-verified ZIP bytes, not a separately recompressed
-    # archive. A partial copy can never replace a previous downloadable file.
-    handle, temporary = tempfile.mkstemp(prefix=destination.name + ".", suffix=".tmp", dir=destination.parent)
-    os.close(handle)
-    try:
-        shutil.copyfile(source, temporary)
-        if sha256(source.read_bytes()) != sha256(Path(temporary).read_bytes()):
-            raise ValueError(f"Archive alias copy did not match: {destination.name}")
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, destination)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default=(ROOT / "VERSION").read_text(encoding="utf-8").strip())
     parser.add_argument("--platform", choices=("all", "windows", "linux"), default="all")
-    parser.add_argument("--linux-runtime-dir", type=Path, default=ROOT / "lib")
+    parser.add_argument("--linux-runtime-dir", type=Path, default=ROOT / "launchers/linux/lib")
     parser.add_argument("--check", action="store_true", help="Validate whitelisted inputs without writing releases")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?", args.version):
@@ -225,13 +209,6 @@ def main() -> int:
         print(f"{'Validated' if args.check else 'Packaged'} {name}: {len(entries)} files, "
               f"{sum(len(entry.data) for entry in entries):,} uncompressed bytes")
     if not args.check:
-        for platform in platforms:
-            source = releases / f"Phase-Distorter-{args.version}-{platform}-x86_64.zip"
-            names = (f"windows-{args.version}.zip",) if platform == "windows" else (
-                f"linux-{args.version}.zip", f"linux-{args.version}.zup")
-            for name in names:
-                copy_archive(source, ROOT / name)
-                print(f"Copied identical archive alias: {name}")
         # The enclosing checksum file hashes the ZIPs only. ZIP contents never
         # include this file or the repository checksum file, avoiding cycles.
         archives = [releases / f"Phase-Distorter-{args.version}-{platform}-x86_64.zip"

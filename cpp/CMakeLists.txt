@@ -21,34 +21,63 @@ if(EB_PREGENERATED_DIR)
 else()
     set(EB_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endif()
+# Translation units follow assembly subsystems/routines. The checked-in
+# inventory makes the standalone build independent of the assembly checkout.
+set(EB_PROGRAM_MANIFEST "${EB_GENERATED_DIR}/program_sources.cmake")
+if(NOT EB_PREGENERATED_DIR)
+    get_filename_component(EB_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    find_program(EB_CA65 ca65 REQUIRED)
+    find_program(EB_LD65 ld65 REQUIRED)
+    file(GLOB_RECURSE EB_ASSEMBLY_INPUTS CONFIGURE_DEPENDS
+        "${EB_SOURCE_ROOT}/src/*" "${EB_SOURCE_ROOT}/include/*")
+    list(FILTER EB_ASSEMBLY_INPUTS EXCLUDE REGEX "/src/bin/")
+    set(EB_TRANSLATOR_INPUTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/translate.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/spc700.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_layout.py")
+    # A source rename/addition can change the compilation unit inventory.
+    # Refresh it before CMake creates build rules, and reconfigure whenever any
+    # code-generation input changes. Never discover new units mid-build.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${EB_TRANSLATOR_INPUTS} ${EB_ASSEMBLY_INPUTS}
+        "${EB_SOURCE_ROOT}/snes.cfg" "${EB_SOURCE_ROOT}/earthbound.yml" "${EB_SOURCE_ROOT}/mother2.yml")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/translate.py"
+        --root "${EB_SOURCE_ROOT}" --output "${EB_GENERATED_DIR}"
+        RESULT_VARIABLE EB_BOOTSTRAP_RESULT)
+    if(NOT EB_BOOTSTRAP_RESULT EQUAL 0)
+        message(FATAL_ERROR "Could not generate the assembly program source inventory")
+    endif()
+endif()
+if(NOT EXISTS "${EB_PROGRAM_MANIFEST}")
+    message(FATAL_ERROR "Incomplete EB_PREGENERATED_DIR: missing file ${EB_PROGRAM_MANIFEST}")
+endif()
+include("${EB_PROGRAM_MANIFEST}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EB_PROGRAM_MANIFEST}")
 set(EB_GENERATED_REPORTS
     "${EB_GENERATED_DIR}/coverage.json"
     "${EB_GENERATED_DIR}/source_map.json"
     "${EB_GENERATED_DIR}/spc_source_map.json"
     "${EB_GENERATED_DIR}/mode_variant_audit.json"
-    "${EB_GENERATED_DIR}/source_profiles.json")
+    "${EB_GENERATED_DIR}/source_profiles.json"
+    "${EB_GENERATED_DIR}/audio_program_index.json"
+    "${EB_PROGRAM_MANIFEST}")
 set(EB_GENERATED_SOURCES
     "${EB_GENERATED_DIR}/translated_dispatch.cpp"
-    "${EB_GENERATED_DIR}/spc_translated.cpp"
+    ${EB_GENERATED_PROGRAM_SOURCES}
     "${EB_GENERATED_DIR}/generated_assets.cpp"
     "${EB_GENERATED_DIR}/generated_profiles.cpp")
 set(EB_GENERATED_HEADERS "${EB_GENERATED_DIR}/generated_assets.hpp"
-    "${EB_GENERATED_DIR}/generated_code.hpp" "${EB_GENERATED_DIR}/generated_spc.hpp"
+    "${EB_GENERATED_DIR}/generated_code.hpp" "${EB_GENERATED_DIR}/generated_audio_program.hpp"
     "${EB_GENERATED_DIR}/generated_profile.hpp")
 # Both profiles are linked into one executable. Their separate namespaces keep
 # identical SNES addresses from colliding; the imported pack selects the profile.
 foreach(version us jp)
-    list(APPEND EB_GENERATED_SOURCES "${EB_GENERATED_DIR}/${version}/translated_dispatch.cpp"
-        "${EB_GENERATED_DIR}/${version}/generated_assets.cpp")
+    list(APPEND EB_GENERATED_SOURCES "${EB_GENERATED_DIR}/${version}/generated_assets.cpp")
     list(APPEND EB_GENERATED_HEADERS "${EB_GENERATED_DIR}/${version}/generated_assets.hpp"
         "${EB_GENERATED_DIR}/${version}/generated_code.hpp")
     list(APPEND EB_GENERATED_REPORTS "${EB_GENERATED_DIR}/${version}/coverage.json"
-        "${EB_GENERATED_DIR}/${version}/source_map.json" "${EB_GENERATED_DIR}/${version}/mode_variant_audit.json")
-    foreach(bank RANGE 192 255)
-        math(EXPR bank_hex "${bank}" OUTPUT_FORMAT HEXADECIMAL)
-        string(SUBSTRING "${bank_hex}" 2 -1 bank_hex)
-        list(APPEND EB_GENERATED_SOURCES "${EB_GENERATED_DIR}/${version}/translated_bank_${bank_hex}.cpp")
-    endforeach()
+        "${EB_GENERATED_DIR}/${version}/source_map.json" "${EB_GENERATED_DIR}/${version}/mode_variant_audit.json"
+        "${EB_GENERATED_DIR}/${version}/program_index.json")
 endforeach()
 # Reject incomplete source snapshots during configuration instead of allowing a
 # partial instruction dispatcher to fail much later at link time or during play.
@@ -61,31 +90,19 @@ if(EB_PREGENERATED_DIR)
     add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_HEADERS})
     message(STATUS "Using existing generated C++: ${EB_GENERATED_DIR}")
 else()
-    get_filename_component(EB_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-    find_program(EB_CA65 ca65 REQUIRED)
-    find_program(EB_LD65 ld65 REQUIRED)
-    file(GLOB_RECURSE EB_ASSEMBLY_INPUTS CONFIGURE_DEPENDS
-        "${EB_SOURCE_ROOT}/src/*" "${EB_SOURCE_ROOT}/include/*")
-    list(FILTER EB_ASSEMBLY_INPUTS EXCLUDE REGEX "/src/bin/")
-    set(EB_TRANSLATOR_INPUTS
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/translate.py"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/spc700.py"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_layout.py")
-    add_custom_command(
-        OUTPUT ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS}
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/translate.py"
-            --root "${EB_SOURCE_ROOT}" --output "${EB_GENERATED_DIR}"
-        DEPENDS ${EB_TRANSLATOR_INPUTS}
-            "${EB_SOURCE_ROOT}/snes.cfg" "${EB_SOURCE_ROOT}/earthbound.yml"
-            "${EB_SOURCE_ROOT}/mother2.yml" ${EB_ASSEMBLY_INPUTS}
-        COMMENT "Translate source instructions without reading retail assets"
-        VERBATIM)
+    # Missing generated products also trigger the configure-time generator.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS})
     add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS})
 endif()
 # Separate game hardware, asset I/O, sound synthesis, and host presentation.
 # Asset tests and rendering fixtures can then exercise their contracts without
 # booting the game or requiring a retail asset pack.
-add_library(eb_core STATIC src/cpu.cpp src/bus.cpp src/spc.cpp ${EB_GENERATED_SOURCES})
+add_library(eb_core STATIC
+    src/main_cpu_65816.cpp src/entity_preload.cpp
+    src/snes_bus.cpp src/snes_ppu_registers.cpp src/snes_ppu_renderer.cpp src/game_scene_renderer.cpp
+    src/spc700_audio_cpu.cpp src/game_debug.cpp
+    ${EB_GENERATED_SOURCES})
 add_dependencies(eb_core eb_generate)
 target_include_directories(eb_core PUBLIC include "${EB_GENERATED_DIR}")
 add_library(eb_assets STATIC src/asset_store.cpp)
@@ -95,7 +112,7 @@ target_include_directories(eb_asset_cache PUBLIC include)
 # A pure pixel transform: no Bus, CPU, SDL, or game assets are accessible here.
 # Keeping the filter isolated makes its disabled identity and temporal limits
 # testable without opening a window or altering the simulation clock.
-add_library(eb_filter STATIC src/photosensitivity_filter.cpp)
+add_library(eb_filter STATIC src/photosensitivity_filter.cpp src/frame_interpolator.cpp src/presentation_pipeline.cpp)
 target_include_directories(eb_filter PUBLIC include)
 if(MINGW)
     target_link_options(eb_core INTERFACE -static -static-libgcc -static-libstdc++)
@@ -104,12 +121,16 @@ if(MINGW)
     target_link_options(eb_filter INTERFACE -static -static-libgcc -static-libstdc++)
 endif()
 
-add_library(eb_dsp STATIC src/dsp.cpp external/spc_dsp/SPC_DSP.cpp)
+add_library(eb_dsp STATIC src/snes_audio_dsp.cpp external/spc_dsp/SPC_DSP.cpp)
 target_include_directories(eb_dsp PUBLIC include PRIVATE external/spc_dsp)
 install(DIRECTORY external/spc_dsp/ DESTINATION share/eb_cpp/spc_dsp)
 if(MINGW)
     target_link_options(eb_dsp INTERFACE -static -static-libgcc -static-libstdc++)
 endif()
+# A deterministic game owns its hardware and processor lifetimes; no SDL is needed.
+add_library(eb_session STATIC src/game_session.cpp)
+target_include_directories(eb_session PUBLIC include)
+target_link_libraries(eb_session PUBLIC eb_core eb_dsp)
 if(MSVC)
     target_compile_options(eb_core PRIVATE /W4 /permissive-)
 else()
@@ -145,7 +166,15 @@ if(EB_BUILD_FRONTEND)
     target_compile_definitions(eb_debug_panel PUBLIC SDL_MAIN_HANDLED)
     install(DIRECTORY external/imgui/ DESTINATION share/eb_cpp/imgui)
     install(DIRECTORY external/sdl2/ DESTINATION share/eb_cpp/sdl2)
-    add_executable(eb_cpp src/main.cpp)
+    add_library(eb_desktop_support STATIC
+        src/launch_options.cpp src/display_preferences.cpp src/input_replay.cpp
+        src/session_storage.cpp src/audio_output.cpp)
+    target_include_directories(eb_desktop_support PUBLIC include)
+    target_link_libraries(eb_desktop_support PUBLIC eb_video)
+    add_library(eb_desktop STATIC src/desktop_display.cpp src/desktop_input.cpp)
+    target_include_directories(eb_desktop PUBLIC include)
+    target_link_libraries(eb_desktop PUBLIC eb_desktop_support eb_debug_panel eb_assets eb_asset_cache eb_core)
+    add_executable(eb_cpp src/desktop_application.cpp)
     if(UNIX AND NOT APPLE)
         # Release ZIPs place their SDL/C++ runtimes next to the application in
         # lib/. Resolve from the executable, never the caller's working directory.
@@ -169,7 +198,7 @@ if(EB_BUILD_FRONTEND)
         target_sources(eb_cpp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/phase-distorter.rc")
     endif()
     add_dependencies(eb_cpp eb_generate)
-    target_link_libraries(eb_cpp PRIVATE eb_core eb_video eb_dsp eb_debug_panel eb_assets eb_asset_cache eb_filter)
+    target_link_libraries(eb_cpp PRIVATE eb_session eb_desktop eb_filter)
     if(MINGW)
         # Keep the package self-contained except for SDL2.dll and Windows system DLLs.
         target_link_options(eb_video INTERFACE -static -static-libgcc -static-libstdc++)
@@ -198,6 +227,19 @@ endif()
 # and scene executables are built below but require an explicit local pack.
 if(EB_BUILD_TESTS)
     enable_testing()
+    add_executable(game_session_tests tests/game_session_tests.cpp)
+    target_link_libraries(game_session_tests PRIVATE eb_session)
+    add_test(NAME game_session_tests COMMAND game_session_tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_session_differential.cpp")
+        add_executable(game_session_differential tests/game_session_differential.cpp)
+        target_link_libraries(game_session_differential PRIVATE eb_session eb_assets)
+    endif()
+    add_executable(scene_renderer_ownership_tests tests/scene_renderer_ownership_tests.cpp)
+    target_link_libraries(scene_renderer_ownership_tests PRIVATE eb_core)
+    add_test(NAME scene_renderer_ownership_tests COMMAND scene_renderer_ownership_tests)
+    add_executable(presentation_pipeline_tests tests/presentation_pipeline_tests.cpp)
+    target_link_libraries(presentation_pipeline_tests PRIVATE eb_filter)
+    add_test(NAME presentation_pipeline_tests COMMAND presentation_pipeline_tests)
     add_executable(photosensitivity_filter_tests tests/photosensitivity_filter_tests.cpp)
     target_link_libraries(photosensitivity_filter_tests PRIVATE eb_filter)
     add_test(NAME photosensitivity_filter_tests COMMAND photosensitivity_filter_tests)
@@ -207,6 +249,15 @@ if(EB_BUILD_TESTS)
     add_executable(asset_cache_tests tests/asset_cache_tests.cpp)
     target_link_libraries(asset_cache_tests PRIVATE eb_asset_cache)
     add_test(NAME asset_cache_tests COMMAND asset_cache_tests)
+    add_executable(entity_preload_tests tests/entity_preload_tests.cpp)
+    target_link_libraries(entity_preload_tests PRIVATE eb_core)
+    add_test(NAME entity_preload_tests COMMAND entity_preload_tests)
+    add_executable(gameplay_timing_tests tests/gameplay_timing_tests.cpp)
+    target_link_libraries(gameplay_timing_tests PRIVATE eb_core)
+    add_test(NAME gameplay_timing_tests COMMAND gameplay_timing_tests)
+    add_executable(frame_interpolator_tests tests/frame_interpolator_tests.cpp)
+    target_link_libraries(frame_interpolator_tests PRIVATE eb_filter)
+    add_test(NAME frame_interpolator_tests COMMAND frame_interpolator_tests)
     add_executable(frame_pacer_tests tests/frame_pacer_tests.cpp)
     target_include_directories(frame_pacer_tests PRIVATE include)
     if(MINGW)
@@ -215,9 +266,9 @@ if(EB_BUILD_TESTS)
     add_test(NAME frame_pacer_tests COMMAND frame_pacer_tests)
     add_test(NAME translation_tests COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_translate.py")
-    add_executable(dsp_tests tests/dsp_tests.cpp)
-    target_link_libraries(dsp_tests PRIVATE eb_dsp)
-    add_test(NAME dsp_tests COMMAND dsp_tests)
+    add_executable(snes_audio_dsp_tests tests/snes_audio_dsp_tests.cpp)
+    target_link_libraries(snes_audio_dsp_tests PRIVATE eb_dsp)
+    add_test(NAME snes_audio_dsp_tests COMMAND snes_audio_dsp_tests)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_smoke.cpp")
         add_executable(game_smoke tests/game_smoke.cpp)
         target_link_libraries(game_smoke PRIVATE eb_core eb_dsp eb_assets)
@@ -231,11 +282,18 @@ if(EB_BUILD_TESTS)
         target_link_libraries(presentation_scene_tests PRIVATE eb_core eb_assets)
     endif()
     if(EB_BUILD_FRONTEND)
+        add_executable(desktop_support_tests tests/desktop_support_tests.cpp)
+        target_link_libraries(desktop_support_tests PRIVATE eb_desktop_support)
+        add_test(NAME desktop_support_tests COMMAND desktop_support_tests)
         add_executable(debug_panel_tests tests/debug_panel_tests.cpp)
         target_link_libraries(debug_panel_tests PRIVATE eb_debug_panel eb_imgui)
         if(MINGW)
             target_link_options(debug_panel_tests PRIVATE -static -static-libgcc -static-libstdc++)
         endif()
+        add_executable(presentation_wait_probe tests/presentation_wait_probe.cpp)
+        target_include_directories(presentation_wait_probe PRIVATE include)
+        target_compile_definitions(presentation_wait_probe PRIVATE SDL_MAIN_HANDLED)
+        target_link_libraries(presentation_wait_probe PRIVATE eb_video)
         add_executable(video_tests tests/video_tests.cpp)
         target_link_libraries(video_tests PRIVATE eb_video)
         if(WIN32 AND EB_SDL_TYPE STREQUAL "SHARED_LIBRARY")
@@ -256,35 +314,45 @@ if(EB_BUILD_TESTS)
         if(EB_XVFB_RUN)
             add_test(NAME video_tests COMMAND "${EB_XVFB_RUN}" -a -s "-screen 0 1920x1080x24" "$<TARGET_FILE:video_tests>")
             add_test(NAME debug_panel_tests COMMAND "${EB_XVFB_RUN}" -a -s "-screen 0 1920x1080x24" "$<TARGET_FILE:debug_panel_tests>")
-            set_tests_properties(video_tests debug_panel_tests PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=x11")
+            # xvfb-run -a can race when parallel tests choose the same free display.
+            set_tests_properties(video_tests debug_panel_tests PROPERTIES
+                ENVIRONMENT "SDL_VIDEODRIVER=x11" RESOURCE_LOCK xvfb_display)
         else()
             add_test(NAME video_tests COMMAND video_tests)
             add_test(NAME debug_panel_tests COMMAND debug_panel_tests)
         endif()
     endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpu_tests.cpp")
-        add_executable(cpu_tests tests/cpu_tests.cpp)
-        target_link_libraries(cpu_tests PRIVATE eb_core)
-        add_test(NAME cpu_tests COMMAND cpu_tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/main_cpu_65816_tests.cpp")
+        add_executable(main_cpu_65816_tests tests/main_cpu_65816_tests.cpp)
+        target_link_libraries(main_cpu_65816_tests PRIVATE eb_core)
+        add_test(NAME main_cpu_65816_tests COMMAND main_cpu_65816_tests)
     endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/bus_tests.cpp")
-        add_executable(bus_tests tests/bus_tests.cpp)
-        target_link_libraries(bus_tests PRIVATE eb_core)
-        add_test(NAME bus_tests COMMAND bus_tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/snes_bus_tests.cpp")
+        add_executable(snes_bus_tests tests/snes_bus_tests.cpp)
+        target_link_libraries(snes_bus_tests PRIVATE eb_core)
+        add_test(NAME snes_bus_tests COMMAND snes_bus_tests)
     endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/spc_tests.cpp")
-        add_executable(spc_tests tests/spc_tests.cpp)
-        target_link_libraries(spc_tests PRIVATE eb_core)
-        add_test(NAME spc_tests COMMAND spc_tests)
+    add_executable(widescreen_tests tests/widescreen_tests.cpp)
+    target_link_libraries(widescreen_tests PRIVATE eb_core)
+    add_test(NAME widescreen_tests COMMAND widescreen_tests)
+    add_executable(game_debug_tests tests/game_debug_tests.cpp)
+    target_link_libraries(game_debug_tests PRIVATE eb_core eb_assets eb_dsp)
+    add_test(NAME game_debug_tests COMMAND game_debug_tests)
+    add_executable(battle_animation_tests tests/battle_animation_tests.cpp)
+    target_link_libraries(battle_animation_tests PRIVATE eb_core eb_assets)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/spc700_audio_cpu_tests.cpp")
+        add_executable(spc700_audio_cpu_tests tests/spc700_audio_cpu_tests.cpp)
+        target_link_libraries(spc700_audio_cpu_tests PRIVATE eb_core)
+        add_test(NAME spc700_audio_cpu_tests COMMAND spc700_audio_cpu_tests)
     endif()
-    if(NOT CMAKE_CROSSCOMPILING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpu_vectors.cpp")
+    if(NOT CMAKE_CROSSCOMPILING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/main_cpu_instruction_vectors.cpp")
         find_package(nlohmann_json CONFIG QUIET)
         if(TARGET nlohmann_json::nlohmann_json)
-            add_executable(cpu_vectors tests/cpu_vectors.cpp)
-            target_link_libraries(cpu_vectors PRIVATE eb_core nlohmann_json::nlohmann_json)
-            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/spc_vectors.cpp")
-                add_executable(spc_vectors tests/spc_vectors.cpp)
-                target_link_libraries(spc_vectors PRIVATE eb_core nlohmann_json::nlohmann_json)
+            add_executable(main_cpu_instruction_vectors tests/main_cpu_instruction_vectors.cpp)
+            target_link_libraries(main_cpu_instruction_vectors PRIVATE eb_core nlohmann_json::nlohmann_json)
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/spc700_instruction_vectors.cpp")
+                add_executable(spc700_instruction_vectors tests/spc700_instruction_vectors.cpp)
+                target_link_libraries(spc700_instruction_vectors PRIVATE eb_core nlohmann_json::nlohmann_json)
             endif()
         endif()
     endif()

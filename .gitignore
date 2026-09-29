@@ -1,5 +1,13 @@
 /build/
 /build-*/
+/dist/
+# Native snapshots belong in launchers/ and downloadable archives in releases/.
+/Phase Distorter
+/Phase Distorter.exe
+/*.dll
+/*.zip
+/*.zup
+/lib/
 __pycache__/
 *.pyc
 *.sfc

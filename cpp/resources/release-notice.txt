@@ -7,7 +7,9 @@ tools, hardware model, importer and frontend come from this independent port.
 No blanket license is assigned to upstream or third-party work by this package.
 
 This binary ZIP contains no retail ROM, extracted gameplay asset pack, save, or
-gameplay source/data tables. The supplied Saturn icon is application artwork.
+map artwork or dialogue. The debug teleport picker contains place names and
+landing coordinates; its source references are documented in the full source
+snapshot at cpp/docs/debug-tools.md. The supplied Saturn icon is application artwork.
 Obtain the matching full Phase Distorter source snapshot from the same project
 release for build instructions, generated program sources, and the exact used
 dependency sources. Source code is not duplicated in this runnable ZIP.

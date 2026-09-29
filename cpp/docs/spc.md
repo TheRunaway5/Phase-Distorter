@@ -1,6 +1,6 @@
 # Source-translated SPC700 execution
 
-`Spc` implements all 256 SPC700 instruction semantics. Generated C++ calls a
+`Spc700AudioCpu` implements all 256 SPC700 instruction semantics. Generated C++ calls a
 constant opcode helper at each original source instruction address, passing its
 source-assembled operands and length. Instructions are not decoded from APU RAM.
 The compiled dispatch rejects loaded code that differs from its source mapping.
@@ -19,11 +19,11 @@ separate DSP implementation; isolated semantic tests may use its register array.
 
 Validation:
 
-- `spc_tests` exercises the full IPL handshake, a real byte upload and entry-point
+- `spc700_audio_cpu_tests` exercises the full IPL handshake, a real byte upload and entry-point
   jump, all opcode helper coverage, exhaustive 8-bit ADC/SBC values and carry
   inputs, word arithmetic, multiplication/division edge cases, branches, stack,
   direct-page wrapping, bit operations, communication direction and timers.
-- `spc_vectors` checks every final architectural register, all expected RAM,
+- `spc700_instruction_vectors` checks every final architectural register, all expected RAM,
   unexpected writes and whole-instruction cycle counts against the independent
   [SingleStepTests/spc700](https://github.com/SingleStepTests/spc700) corpus pinned
   to `67d15f492b2740964abd4efd1229e0ec9c342228`. All 256,000 vectors pass. The test
@@ -31,12 +31,12 @@ Validation:
   SLEEP/STOP observation-window cycle counts are excluded because those opcodes
   halt indefinitely; their architectural results are still checked.
 
-Reproduce the independent run after building the optional `spc_vectors` target
+Reproduce the independent run after building the optional `spc700_instruction_vectors` target
 (requires `nlohmann_json` development headers):
 
 ```sh
 python3 cpp/tests/fetch_spc_vectors.py build/cpp/spc-vectors
-./build/cpp/spc_vectors build/cpp/spc-vectors/*.json
+./build/cpp/spc700_instruction_vectors build/cpp/spc-vectors/*.json
 ```
 
 The opcode/register behavior and IPL listing were independently checked against

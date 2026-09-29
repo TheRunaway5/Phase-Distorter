@@ -1,0 +1,770 @@
+#include "eb/game_scene_renderer.hpp"
+#include "generated_profile.hpp"
+
+#include <algorithm>
+#include <stdexcept>
+
+#include "snes_ppu_constants.hpp"
+
+namespace eb {
+namespace {
+// Bounded presentation-only counterpart of the source's DECOMP routine. The
+// two gas-station palettes are imported data, never embedded retail colors.
+// Decode exactly one 512-byte palette; malformed input simply disables this
+// optional reference and cannot write game memory or walk outside the image.
+bool decode_presentation_palette(std::span<const uint8_t> rom, unsigned start,
+                                 std::array<uint16_t, 256> &palette) {
+    std::array<uint8_t, 512> bytes{};
+    std::size_t input = start, output = 0;
+    bool valid = true;
+    const auto next = [&]() -> unsigned {
+        if (input >= rom.size()) {
+            valid = false;
+            return 0;
+        }
+        return rom[input++];
+    };
+    for (;;) {
+        const unsigned header = next();
+        if (!valid)
+            return false;
+        if (header == 255)
+            break;
+        unsigned command = header >> 5, count = (header & 31) + 1;
+        if (command == 7) {
+            command = (header >> 2) & 7;
+            count = (((header & 3) << 8) | next()) + 1;
+        }
+        const unsigned length = count * (command == 2 ? 2 : 1);
+        if (!valid || length > bytes.size() - output)
+            return false;
+        if (!command) {
+            for (unsigned i = 0; i < count; ++i)
+                bytes[output++] = uint8_t(next());
+        } else if (command <= 3) {
+            const unsigned first = next(), second = command == 2 ? next() : 0;
+            for (unsigned i = 0; i < count; ++i) {
+                bytes[output++] = uint8_t(first + (command == 3 ? i : 0));
+                if (command == 2)
+                    bytes[output++] = uint8_t(second);
+            }
+        } else {
+            int source = int(next() << 8);
+            source |= int(next());
+            for (unsigned i = 0; i < count; ++i) {
+                if (source < 0 || std::size_t(source) >= output)
+                    return false;
+                unsigned value = bytes[unsigned(source)];
+                if (command == 5) {
+                    unsigned reversed = 0;
+                    for (unsigned bit = 0; bit < 8; ++bit) {
+                        reversed = (reversed << 1) | (value & 1);
+                        value >>= 1;
+                    }
+                    value = reversed;
+                }
+                bytes[output++] = uint8_t(value);
+                source += command == 6 ? -1 : 1;
+            }
+        }
+        if (!valid)
+            return false;
+    }
+    if (output != bytes.size())
+        return false;
+    for (unsigned index = 0; index < palette.size(); ++index)
+        palette[index] = (bytes[index * 2] | (bytes[index * 2 + 1] << 8)) & 0x7fff;
+    return true;
+}
+} // namespace
+
+// Changing the host viewport allocates only a presentation buffer. Seed its
+// center from the last native frame to avoid stale pixels before the next
+// scanline; no game camera, PPU register, or emulated clock is adjusted here.
+void GameSceneRenderer::set_presentation_width(const SceneReadView &view, unsigned width) {
+    if (width < 256 || width > 1024 || (width & 1))
+        throw std::invalid_argument("presentation width must be even and between 256 and 1024");
+    requested_presentation_width_ = width;
+    resize_presentation_width(view, presentation_frame_aspect_ ? 256 : width);
+}
+
+void GameSceneRenderer::resize_presentation_width(const SceneReadView &view, unsigned width) {
+    if (width == presentation_width_)
+        return;
+    presentation_width_ = width;
+    presentation_boundary_frame_ = UINT64_MAX;
+    presentation_framebuffer_.assign(width == 256 ? 0 : width * 224, 0xff000000);
+    if (width > 256)
+        for (unsigned y = 0; y < 224; ++y)
+            std::copy_n(view.native_framebuffer.begin() + y * 256, 256,
+                        presentation_framebuffer_.begin() + y * width + (width - 256) / 2);
+    if (presentation_effects_enabled_) {
+        presentation_effect_mask_.assign(width * 224, 0);
+        const auto pixels = presentation_pixels(view.native_framebuffer);
+        presentation_effect_reference_.assign(pixels.begin(), pixels.end());
+    }
+}
+
+std::span<const uint32_t>
+GameSceneRenderer::presentation_pixels(std::span<const uint32_t, 256 * 224> native) const {
+    return presentation_width_ == 256 ? std::span<const uint32_t>(native)
+                                      : std::span<const uint32_t>(presentation_framebuffer_);
+}
+
+double GameSceneRenderer::presentation_fixed_aspect() const { return presentation_frame_aspect_; }
+
+void GameSceneRenderer::set_presentation_effects_enabled(const SceneReadView &view, bool enabled) {
+    if (presentation_effects_enabled_ == enabled)
+        return;
+    presentation_effects_enabled_ = enabled;
+    if (enabled) {
+        if (!presentation_gas_palettes_loaded_) {
+            presentation_gas_palettes_loaded_ = true;
+            presentation_gas_palettes_valid_ =
+                decode_presentation_palette(view.cartridge_rom,
+                                            view.source_profile.rom_gas_station_palettes.normal,
+                                            presentation_gas_palettes_[0]) &&
+                decode_presentation_palette(view.cartridge_rom,
+                                            view.source_profile.rom_gas_station_palettes.alternate,
+                                            presentation_gas_palettes_[1]);
+        }
+        presentation_effect_mask_.assign(presentation_width_ * 224, 0);
+        const auto pixels = presentation_pixels(view.native_framebuffer);
+        presentation_effect_reference_.assign(pixels.begin(), pixels.end());
+    } else {
+        presentation_effect_mask_.clear();
+        presentation_effect_reference_.clear();
+    }
+}
+
+void GameSceneRenderer::prepare_presentation_objects(const SceneReadView &view) {
+    presentation_objects_frame_ = view.completed_frames;
+    presentation_objects_.clear();
+    const auto &source = view.source_profile;
+    const auto ram = [&view](unsigned a) {
+        return unsigned(view.work_ram[a]) | (unsigned(view.work_ram[a + 1]) << 8);
+    };
+    // Inspection must not acknowledge hardware ports or touch the open bus.
+    const auto peek = [&view](uint32_t address, int &value) {
+        if (address >= 0x7e0000 && address < 0x800000) {
+            value = view.work_ram[address - 0x7e0000];
+            return true;
+        }
+        if (address >= 0xc00000 && address < 0xf00000 && address - 0xc00000 < view.cartridge_rom.size()) {
+            value = view.cartridge_rom[address - 0xc00000];
+            return true;
+        }
+        return false;
+    };
+    struct Entity {
+        unsigned slot, priority;
+        int depth;
+    };
+    std::vector<Entity> entities;
+    std::array<bool, 30> visited{};
+    for (unsigned slot = ram(source.wram_first_entity); slot < 60 && !(slot & 1) && !visited[slot / 2];
+         slot = ram(source.wram_entity_next + slot)) {
+        visited[slot / 2] = true;
+        const unsigned bank = ram(source.wram_entity_spritemap_pointers.high + slot);
+        if ((bank & 0xc000) || (ram(source.wram_entity_animation_frame + slot) & 0x8000))
+            continue;
+        const unsigned callback = ram(source.wram_entity_draw_callback + slot);
+        if (callback != source.entity_draw_callbacks.screen_space &&
+            callback != source.entity_draw_callbacks.world_space)
+            continue;
+        unsigned priority = ram(source.wram_entity_draw_priority + slot);
+        if (priority & 0x8000) {
+            const unsigned owner = (priority & 0x3f) * 2;
+            if (owner >= 60)
+                continue;
+            priority = ram(source.wram_entity_draw_priority + owner);
+        }
+        if (priority > 3)
+            continue;
+        entities.push_back({slot, priority, int16_t(ram(source.wram_entity_world_coordinates.y + slot))});
+    }
+    // The source queues priorities 0..3, sorting ordinary world actors by
+    // descending world Y within priority 1. No allocation or callback executes.
+    std::stable_sort(entities.begin(), entities.end(), [](const Entity &a, const Entity &b) {
+        return a.priority != b.priority ? a.priority < b.priority : a.priority == 1 && a.depth > b.depth;
+    });
+    for (const auto &entity : entities) {
+        const unsigned slot = entity.slot,
+                       bank = ram(source.wram_entity_spritemap_pointers.high + slot) & 255;
+        unsigned pointer = ram(source.wram_entity_spritemap_pointers.low + slot);
+        const bool ordinary =
+            ram(source.wram_entity_draw_callback + slot) == source.entity_draw_callbacks.screen_space;
+        if (ordinary && (ram(source.wram_entity_displayed_sprites + slot) & 1))
+            pointer = (pointer + ram(source.wram_entity_spritemap_sizes + slot)) & 0xffff;
+        const int x = int16_t(ram(
+            (ordinary ? source.wram_entity_screen_coordinates.x : source.wram_entity_world_coordinates.x) +
+            slot));
+        const int y = int16_t(ram(
+            (ordinary ? source.wram_entity_screen_coordinates.y : source.wram_entity_world_coordinates.y) +
+            slot));
+        if (!ordinary) {
+            const unsigned frame = ram(source.wram_entity_animation_frame + slot);
+            int lo{}, hi{};
+            if (!peek((bank << 16) | ((pointer + frame * 2) & 0xffff), lo) ||
+                !peek((bank << 16) | ((pointer + frame * 2 + 1) & 0xffff), hi))
+                continue;
+            pointer = unsigned(lo) | (unsigned(hi) << 8);
+        }
+        const unsigned surface = ram(source.wram_entity_surface_flags + slot),
+                       upper = ram(source.wram_entity_body_divides + slot) >> 8;
+        unsigned part = 0;
+        // Spritemaps may chain through a $80 Y sentinel. Bound both chain walks
+        // and output so corrupt/stale descriptors can never stall a frame.
+        for (unsigned step = 0; step < 128 && presentation_objects_.size() < 3840; ++step) {
+            std::array<int, 5> entry{};
+            bool valid = true;
+            for (unsigned i = 0; i < 5; ++i)
+                valid &= peek((bank << 16) | ((pointer + i) & 0xffff), entry[i]);
+            if (!valid)
+                break;
+            if (entry[0] == 0x80) {
+                pointer = unsigned(entry[1]) | (unsigned(entry[2]) << 8);
+                continue;
+            }
+            unsigned attributes = entry[2];
+            if (ordinary)
+                attributes = (attributes & 0xcf) | ((surface & (part < upper ? 2 : 1)) ? 0x20 : 0x30);
+            presentation_objects_.push_back({x + int8_t(entry[3]), y + int8_t(entry[0]) - 1,
+                                             uint8_t(entry[1]), uint8_t(attributes), bool(entry[4] & 1)});
+            ++part;
+            if (entry[4] & 0x80)
+                break;
+            pointer = (pointer + 5) & 0xffff;
+        }
+    }
+}
+
+void GameSceneRenderer::presentation_object_pixels(const SceneReadView &view, unsigned y,
+                                                   std::span<Pixel> result, int origin) const {
+    constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
+                                         {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
+                                         {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
+    constexpr int priorities[3][4] = {{2, 5, 8, 11}, {1, 3, 7, 10}, {1, 3, 5, 7}};
+    for (const auto &object : presentation_objects_) {
+        const unsigned width = sizes[view.ppu_registers[1] >> 5][object.large][0],
+                       height = sizes[view.ppu_registers[1] >> 5][object.large][1];
+        int row = int(y) - object.y;
+        if (row < 0 || row >= int(height))
+            continue;
+        const unsigned attr = object.attributes, pal = (attr >> 1) & 7, mode = view.ppu_registers[5] & 7;
+        const int priority = priorities[std::min(mode, 2u)][(attr >> 4) & 3];
+        if (attr & 0x80)
+            row = int(height) - 1 - row;
+        const unsigned base = (view.ppu_registers[1] & 7) * 16384 +
+                              ((attr & 1) ? (((view.ppu_registers[1] >> 3) & 3) + 1) * 8192 : 0);
+        for (unsigned col = 0; col < width; ++col) {
+            const int out = object.x + int(col) - origin;
+            if (out < 0 || out >= int(result.size()) || result[out].priority >= 0)
+                continue;
+            const unsigned ix = (attr & 0x40) ? width - 1 - col : col;
+            const unsigned tile =
+                (((object.tile & 0xf0) + unsigned(row / 8) * 16) & 0xf0) | ((object.tile + ix / 8) & 15);
+            const unsigned address = base + tile * 32 + unsigned(row & 7) * 2;
+            unsigned color = 0;
+            for (unsigned plane = 0; plane < 4; ++plane)
+                color |=
+                    ((view.video_ram[(address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >> (7 - (ix & 7))) &
+                     1)
+                    << plane;
+            if (color)
+                result[out] = {view.palette(128 + pal * 16 + color), priority, 4, pal >= 4,
+                               128 + pal * 16 + color};
+        }
+    }
+}
+
+void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
+    // In the US source, ordinary window/HUD tiles use BG3/BG4. The two
+    // generated battle backgrounds can instead target BG2 or BG3; honor the
+    // actual loaded_bg_data records rather than dropping that battle layer.
+    const auto ram_word = [&view](unsigned address) {
+        return unsigned(view.work_ram[address]) | (unsigned(view.work_ram[address + 1]) << 8);
+    };
+    // Address metadata is generated separately for US and JP. Scene probes
+    // read that selected profile rather than assuming the English RAM layout.
+    const auto &source = view.source_profile;
+    // BATTLE_ROUTINE clears its mode flag before FADE_OUT completes. Keep the
+    // last battle layout until it is black or replaced; never infer a new battle
+    // from stale loaded-background records in an unrelated menu/world scene.
+    const std::array<uint8_t, 7> layout{view.ppu_registers[5], view.ppu_registers[7],  view.ppu_registers[8],
+                                        view.ppu_registers[9], view.ppu_registers[10], view.ppu_registers[11],
+                                        view.ppu_registers[12]};
+    if (ram_word(source.wram_battle_mode_flag)) {
+        presentation_battle_scene_ = true;
+        presentation_battle_layout_ = layout;
+    } else if ((view.ppu_registers[0] & 0x80) || !(view.ppu_registers[0] & 15) ||
+               layout != presentation_battle_layout_) {
+        presentation_battle_scene_ = false;
+    }
+    presentation_psi_display_layer_ = 0;
+    // Static full-screen art/text has no authored offscreen continuation.
+    // In particular SHOW_TITLE_SCREEN's BG1 map ($58) must not repeat the
+    // copyright line. Only identified scenery/animation layers extend.
+    presentation_layer_mask_ = 0x10;
+    if ((view.ppu_registers[5] & 7) == 7)
+        presentation_layer_mask_ = 0x13; // affine scenery
+    presentation_jp_title_ = false;
+    for (unsigned slot = 0; slot < 30; ++slot)
+        if (ram_word(source.wram_entity_script_ids + slot * 2) == source.file_select_script)
+            presentation_layer_mask_ = 2; // FILE_SELECT_INIT: BG2 animation, centered BG3/OBJ
+        else if (view.game_version == GameVersion::JP &&
+                 ram_word(source.wram_entity_script_ids + slot * 2) >= source.title_script_first &&
+                 ram_word(source.wram_entity_script_ids + slot * 2) <= source.title_script_last &&
+                 (view.ppu_registers[5] & 7) == source.title_background_mode &&
+                 view.ppu_registers[7] == source.title_background_maps.layer1 &&
+                 view.ppu_registers[8] == source.title_background_maps.layer2) {
+            presentation_jp_title_ = true;
+            presentation_layer_mask_ = 0x13;
+        }
+    if (presentation_battle_scene_) {
+        presentation_layer_mask_ = 0x10;
+        for (unsigned record :
+             {source.wram_battle_backgrounds.layer1, source.wram_battle_backgrounds.layer2}) {
+            const unsigned target = view.work_ram[record], depth = view.work_ram[record + 1];
+            if (target >= 1 && target <= 4 &&
+                depth == background_color_depths[view.ppu_registers[5] & 7][target - 1])
+                presentation_layer_mask_ |= 1u << (target - 1);
+        }
+        // SHOW_PSI_ANIMATION selects BG2 over two-bit backgrounds, BG1 over
+        // four-bit backgrounds. All animations use this path, including those
+        // without palette cycling. This is independent of flash filtering.
+        if (view.work_ram[source.wram_psi_animation_state]) {
+            presentation_psi_display_layer_ =
+                view.work_ram[source.wram_battle_backgrounds.layer1 + 1] == 2 ? 2u : 1u;
+            presentation_layer_mask_ |= presentation_psi_display_layer_;
+        }
+    }
+
+    presentation_world_map_ = false;
+    if ((view.ppu_registers[5] & 0x37) == 1 && view.ppu_registers[7] == 0x39 &&
+        view.ppu_registers[8] == 0x59 && !presentation_battle_scene_ &&
+        view.cartridge_rom.size() >= source.rom_map_tileset_palette_sectors + 2560) {
+        // Align the source's full map position to the actual latched scroll;
+        // a game tick may have prepared the following frame's position already.
+        for (unsigned bg = 0; bg < 2; ++bg) {
+            const int camera_x = int16_t(ram_word((bg ? source.wram_background_scroll.layer2_x
+                                                      : source.wram_background_scroll.layer1_x))),
+                      camera_y = int16_t(ram_word((bg ? source.wram_background_scroll.layer2_y
+                                                      : source.wram_background_scroll.layer1_y)));
+            presentation_world_x_[bg] =
+                camera_x + ((int(view.background_scroll_x[bg]) - (camera_x & 1023) + 512) & 1023) - 512;
+            presentation_world_y_[bg] =
+                camera_y + ((int(view.background_scroll_y[bg]) - (camera_y & 1023) + 512) & 1023) - 512;
+        }
+        // Confirm the source map/arrangement interpretation against displayed
+        // native tiles before applying it outside the viewport. These points
+        // avoid the centered Lumine Hall message patch and ordinary text HUD.
+        bool matches = true;
+        for (unsigned y : {8u, 216u})
+            for (unsigned x : {8u, 128u, 248u}) {
+                const unsigned mx = ((x + view.background_scroll_x[0]) & 511) / 8,
+                               my = ((y + view.background_scroll_y[0]) & 255) / 8;
+                const auto actual = view.vram_word(0x7000 + (mx / 32) * 2048 + (my * 32 + (mx & 31)) * 2);
+                const int wx = presentation_world_x_[0] + int(x), wy = presentation_world_y_[0] + int(y);
+                const int tx = wx >= 0 ? wx / 8 : (wx - 7) / 8, ty = wy >= 0 ? wy / 8 : (wy - 7) / 8;
+                matches &= actual == presentation_map_tile(view, tx, ty, 0);
+            }
+        presentation_world_map_ = matches;
+        if (matches)
+            presentation_layer_mask_ = 0x13;
+    }
+    if (presentation_world_map_)
+        prepare_presentation_boundary(view);
+    else {
+        presentation_shift_x_ = 0;
+        presentation_clip_left_ = -384;
+        presentation_clip_right_ = 640;
+    }
+    if (presentation_world_map_ && presentation_objects_frame_ != view.completed_frames) {
+        if (presentation_objects_uploaded_) {
+            presentation_objects_ = presentation_uploaded_objects_;
+            presentation_objects_frame_ = view.completed_frames;
+        } else
+            prepare_presentation_objects(view); // Direct-register hardware fixtures.
+    }
+    if (!presentation_world_map_) {
+        presentation_objects_.clear();
+        presentation_objects_frame_ = UINT64_MAX;
+    }
+
+    presentation_lumine_phase_ = -1;
+    // EVENT_353 -> C4880C builds both half-tile phases of the complete wall
+    // message in BUFFER. C48A6D uploads 30 columns by eight rows to BG1 at
+    // world tile (808,588), then increments that entity's VAR1. Detect the
+    // phase actually in VRAM, since the DMA can lag behind the script tick.
+    if ((view.ppu_registers[5] & 0x17) != 1 || view.ppu_registers[7] != 0x39 ||
+        view.work_ram[source.wram_lumine_text_header] != 8 ||
+        view.work_ram[source.wram_lumine_text_header + 1] != 30)
+        return;
+    for (unsigned slot = 0; slot < 30; ++slot) {
+        const unsigned offset = slot * 2;
+        if (ram_word(source.wram_entity_script_ids + offset) != source.lumine_text_script)
+            continue;
+        const unsigned limit = ram_word(source.wram_entity_script_variable0 + offset),
+                       next = ram_word(source.wram_entity_script_variable1 + offset);
+        if (!limit || limit > 1400 || next > limit + 1)
+            continue;
+        for (int delta : {-1, 0, -2, -3}) {
+            const int phase = int(next) + delta;
+            if (phase < 0 || unsigned(phase) > limit)
+                continue;
+            const unsigned source_address = ((phase & 1) ? source.wram_lumine_text_maps.odd_columns
+                                                         : source.wram_lumine_text_maps.even_columns) +
+                                            unsigned(phase / 2) * 16;
+            bool match = true;
+            for (unsigned column = 0; column < 30 && match; ++column)
+                for (unsigned row = 0; row < 8; ++row) {
+                    const unsigned mx = (40 + column) & 63;
+                    const unsigned actual =
+                        view.vram_word(0x7000 + (mx / 32) * 2048 + ((12 + row) * 32 + (mx & 31)) * 2);
+                    const unsigned expected = ram_word(source_address + column * 16 + row * 2);
+                    if (expected < 0x0c10 || expected > 0x0c1f || actual != expected) {
+                        match = false;
+                        break;
+                    }
+                }
+            if (match) {
+                presentation_lumine_phase_ = phase;
+                presentation_lumine_columns_ = limit / 2 + 30;
+                presentation_layer_mask_ |= 1;
+                return;
+            }
+        }
+    }
+}
+
+// A wider view may fit within a connected run of authored sectors even when
+// the native camera is centered near an edge. Shift only its rendered scenery;
+// narrow runs receive black margins instead of exposing neighboring map data.
+void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view) {
+    if (presentation_boundary_frame_ == view.completed_frames)
+        return;
+    presentation_boundary_frame_ = view.completed_frames;
+    presentation_shift_x_ = 0;
+    presentation_clip_left_ = -384;
+    presentation_clip_right_ = 640;
+    // The original camera itself is not clamped. This optional display policy
+    // derives a horizontal region from the very same sector IDs that LOAD_MAP
+    // uses to hide unrelated maps. Anchor at the native viewport center and
+    // hold the result throughout the frame, avoiding scanline-shaped warping.
+    const int camera = presentation_world_x_[0];
+    const int center_x = camera + 128, center_y = presentation_world_y_[0] + 112;
+    if (center_x < 0 || center_x >= 8192 || center_y < 0 || center_y >= 10240)
+        return;
+    const unsigned row = unsigned(center_y) / 128,
+                   address = view.source_profile.wram_loaded_map_tile_combination;
+    const unsigned combo = view.work_ram[address] | (view.work_ram[address + 1] << 8);
+    const auto valid = [&](int column) {
+        return column >= 0 && column < 32 &&
+               (view.cartridge_rom[view.source_profile.rom_map_tileset_palette_sectors + row * 32 +
+                                   unsigned(column)] >>
+                3) == combo;
+    };
+    int left = center_x / 256, right = left + 1;
+    if (!valid(left))
+        return;
+    while (valid(left - 1))
+        --left;
+    while (valid(right))
+        ++right;
+    left *= 256;
+    right *= 256;
+    const int width = int(presentation_width_), margin = (width - 256) / 2;
+    const int available = right - left;
+    // origin is the displayed world's left edge. The derived shift converts
+    // back to native coordinates for tile/sprite sampling; clip bounds remain
+    // in centered output coordinates, so HUD placement never follows the shift.
+    const int origin = available >= width ? std::clamp(camera - margin, left, right - width)
+                                          : left - (width - available) / 2;
+    presentation_shift_x_ = origin + margin - camera;
+    presentation_clip_left_ = left - origin - margin;
+    presentation_clip_right_ = right - origin - margin;
+}
+
+uint16_t GameSceneRenderer::presentation_map_tile(const SceneReadView &view, int tile_x, int tile_y,
+                                                  unsigned bg) const {
+    // Read-only equivalents of C0A156/C0A1CE and C00FCB/C00E16. No map-cache
+    // loads, event processing, entity traversal, or spawn routine is invoked.
+    unsigned block = 0;
+    if (tile_x >= 0 && tile_x < 1024 && tile_y >= 0 && tile_y < 1280) {
+        const unsigned bx = unsigned(tile_x) / 4, by = unsigned(tile_y) / 4;
+        const unsigned combo = view.cartridge_rom[view.source_profile.rom_map_tileset_palette_sectors +
+                                                  (by & ~3u) * 8 + (bx >> 3)] >>
+                               3;
+        const unsigned address = view.source_profile.wram_loaded_map_tile_combination;
+        if (combo == (unsigned(view.work_ram[address]) | (unsigned(view.work_ram[address + 1]) << 8))) {
+            const auto &chunks = view.source_profile.rom_map_tile_chunks;
+            const unsigned index = (by >> 3) * 256 + bx;
+            const unsigned high = view.cartridge_rom[chunks[(by & 4) ? 9 : 8] + index];
+            block = view.cartridge_rom[chunks[by & 7] + index] | (((high >> ((by & 3) * 2)) & 3) << 8);
+        }
+    }
+    // REPLACE_BLOCK has already applied source event changes to these loaded
+    // arrangements. Using them preserves the existing event state naturally.
+    const unsigned arrangement = view.source_profile.wram_map_tile_arrangements + block * 32 +
+                                 ((unsigned(tile_y) & 3) * 4 + (unsigned(tile_x) & 3)) * 2;
+    const uint16_t tile = view.work_ram[arrangement] | (view.work_ram[arrangement + 1] << 8);
+    return bg == 0 ? tile : (tile & 1023) < 384 ? tile | 0x2000 : 0;
+}
+
+// Native tiles come from the real VRAM ring. Only exposed continuation uses
+// source map/text data; this prevents stale offscreen cache entries from being
+// mistaken for authored scenery without asking the game to load more cells.
+uint16_t GameSceneRenderer::presentation_tile(const SceneReadView &view, unsigned bg, int x, unsigned y,
+                                              uint16_t original) const {
+    if (presentation_world_map_ && bg < 2 && (x < 0 || x >= 256)) {
+        const int wx = presentation_world_x_[bg] + x, wy = presentation_world_y_[bg] + int(y);
+        const int tx = wx >= 0 ? wx / 8 : (wx - 7) / 8, ty = wy >= 0 ? wy / 8 : (wy - 7) / 8;
+        original = presentation_map_tile(view, tx, ty, bg);
+    }
+    if (bg || presentation_lumine_phase_ < 0)
+        return original;
+    const unsigned row = ((y + view.background_scroll_y[0]) & 255) / 8;
+    if (row < 12 || row >= 20)
+        return original;
+    // Select the native 240-pixel patch's occurrence nearest the centered
+    // viewport. Additional columns come from the prebuilt text, not from the
+    // 64-column tilemap ring wrapping back into an earlier word of the message.
+    int start = 40 * 8;
+    while (start + 120 - int(view.background_scroll_x[0]) > 384)
+        start -= 512;
+    while (start + 120 - int(view.background_scroll_x[0]) < -128)
+        start += 512;
+    const int relative = x + int(view.background_scroll_x[0]) - start;
+    const int column = relative >= 0 ? relative / 8 : (relative - 7) / 8;
+    // This also covers authored patch columns that lie outside the native
+    // viewport. The world-map extension above must not replace those letters
+    // with the underlying wall when the map camera exposes them in a margin.
+    const int source_column = presentation_lumine_phase_ / 2 + column;
+    if (source_column < 0 || unsigned(source_column) >= presentation_lumine_columns_)
+        return 0x0c10;
+    const unsigned source =
+        ((presentation_lumine_phase_ & 1) ? view.source_profile.wram_lumine_text_maps.odd_columns
+                                          : view.source_profile.wram_lumine_text_maps.even_columns) +
+        unsigned(source_column) * 16 + (row - 12) * 2;
+    return view.work_ram[source] | (view.work_ram[source + 1] << 8);
+}
+
+void GameSceneRenderer::prepare_presentation_effects(const SceneReadView &view) {
+    const auto ram_word = [&view](unsigned address) {
+        return unsigned(view.work_ram[address]) | (unsigned(view.work_ram[address + 1]) << 8);
+    };
+    const auto &source = view.source_profile;
+    for (unsigned index = 0; index < 256; ++index)
+        presentation_reference_palette_[index] = view.palette(index);
+    presentation_effect_layers_ = 0;
+    presentation_psi_layer_ = 0;
+    presentation_reference_cgwsel_ = view.ppu_registers[0x30];
+    presentation_reference_cgadsub_ = view.ppu_registers[0x31];
+    presentation_reference_fixed_ = view.fixed_color;
+
+    if (ram_word(source.wram_battle_mode_flag)) {
+        // SHOW_PSI_ANIMATION chooses its overlay from the loaded background's
+        // depth. Enemy targets use duplicate OBJ palettes 12..15, whose normal
+        // colors remain in palettes 8..11. No historical picture is required.
+        const bool psi = view.work_ram[source.wram_psi_animation_state] &&
+                         view.work_ram[source.wram_psi_animation_state + 10] &&
+                         view.work_ram[source.wram_psi_animation_state + 7] <
+                             view.work_ram[source.wram_psi_animation_state + 8];
+        if (psi) {
+            const unsigned pointer = ram_word(source.wram_psi_animation_state + 44);
+            if (pointer >= source.wram_palettes && pointer < source.wram_palettes + 512 &&
+                !((pointer - source.wram_palettes) & 1)) {
+                presentation_psi_layer_ =
+                    view.work_ram[source.wram_battle_backgrounds.layer1 + 1] == 2 ? 2u : 1u;
+                presentation_psi_palette_first_ =
+                    (pointer - source.wram_palettes) / 2 + view.work_ram[source.wram_psi_animation_state + 7];
+                presentation_psi_palette_last_ =
+                    (pointer - source.wram_palettes) / 2 + view.work_ram[source.wram_psi_animation_state + 8];
+            }
+        }
+        for (unsigned target = 0; target < 4; ++target) {
+            // Targets can remain set after an attack, and KO/revive reuse the
+            // independent fade counters. Only the currently cycling PSI owns
+            // this color suppression; gradual return/death fades stay original.
+            if (psi && ram_word(source.wram_psi_animation_targets + target * 2))
+                for (unsigned index = 192 + target * 16; index < 208 + target * 16; ++index)
+                    presentation_reference_palette_[index] = view.palette(index - 64);
+        }
+        if (view.work_ram[source.wram_swirl_update_timer] && view.ppu_registers[0x30] == 0x10 &&
+            view.ppu_registers[0x31] == 0x3f)
+            presentation_reference_fixed_ = 0;
+        const bool red_green =
+            ram_word(source.wram_flash_timers.green) || ram_word(source.wram_flash_timers.red);
+        if (red_green && view.ppu_registers[0x30] == 0 && view.ppu_registers[0x31] == 0x3f) {
+            // SMAAAASH/Giygas flashes temporarily override the normal layer
+            // configuration with fixed red/green addition. Recover only that
+            // configuration's color math; current scroll/sprites/windows stay.
+            const unsigned config = ram_word(source.wram_current_layer_config);
+            if (config < 10 && source.rom_layer_config_table + 31 + config < view.cartridge_rom.size()) {
+                presentation_reference_cgwsel_ =
+                    view.cartridge_rom[source.rom_layer_config_table + 21 + config];
+                presentation_reference_cgadsub_ =
+                    view.cartridge_rom[source.rom_layer_config_table + 31 + config];
+                presentation_reference_fixed_ = 0;
+            }
+        }
+        const unsigned reflect = ram_word(source.wram_flash_timers.reflection);
+        const unsigned green_background = ram_word(source.wram_flash_timers.green_background);
+        if ((green_background ? green_background : reflect) & 2) {
+            // C2DF2E replaces selected background entries with white/black;
+            // palette2 retains the original colors. The generator stores the
+            // *next* cycle step after uploading a rotation, so undo one step
+            // when mapping a displayed palette slot back to its original.
+            const bool four_bit = view.work_ram[source.wram_battle_backgrounds.layer1 + 1] == 4;
+            for (unsigned record_index = 0; record_index < (four_bit ? 1u : 2u); ++record_index) {
+                const unsigned record = (record_index ? source.wram_battle_backgrounds.layer2
+                                                      : source.wram_battle_backgrounds.layer1);
+                if (!view.work_ram[record])
+                    continue;
+                const unsigned pointer = ram_word(record + 76);
+                if (pointer < source.wram_palettes || pointer >= source.wram_palettes + 512 ||
+                    ((pointer - source.wram_palettes) & 1))
+                    continue;
+                const unsigned base = (pointer - source.wram_palettes) / 2;
+                const unsigned count = four_bit ? 16 : 4;
+                for (unsigned index = 1; index < count && base + index < 256; ++index) {
+                    const auto actual = view.palette(base + index);
+                    if (actual != (green_background ? 0 : 0x7fff))
+                        continue;
+                    unsigned original = index;
+                    const unsigned style = view.work_ram[record + 3];
+                    const auto cycle = [&](unsigned first, unsigned last, unsigned next, bool ping_pong) {
+                        if (first > last || last >= count || index < first || index > last)
+                            return false;
+                        const unsigned length = last - first + 1;
+                        const unsigned period = ping_pong ? length * 2 : length;
+                        const unsigned step = (next + period - 1) % period;
+                        unsigned offset = ping_pong ? (index - first + step) % period
+                                                    : (index - first + length - step) % length;
+                        if (ping_pong && offset >= length)
+                            offset = period - 1 - offset;
+                        original = first + offset;
+                        return true;
+                    };
+                    // Style 2 uploads the second range first; the first range
+                    // wins if authored ranges overlap, matching the source.
+                    if (!view.work_ram[record + 2]) {
+                        if (style == 2)
+                            cycle(view.work_ram[record + 6], view.work_ram[record + 7],
+                                  view.work_ram[record + 9], false);
+                        if (style >= 1 && style <= 3)
+                            cycle(view.work_ram[record + 4], view.work_ram[record + 5],
+                                  view.work_ram[record + 8], style == 3);
+                    }
+                    presentation_reference_palette_[base + index] =
+                        ram_word(record + 44 + original * 2) & 0x7fff;
+                }
+            }
+        }
+        if (green_background == 2 && view.palette(0) == 0x03e0)
+            presentation_reference_palette_[0] = 0;
+    }
+
+    for (unsigned slot = 0; slot < 30; ++slot) {
+        const unsigned event = ram_word(source.wram_entity_script_ids + slot * 2);
+        const unsigned phase = ram_word(source.wram_entity_script_variable0 + slot * 2);
+        const bool reflected = event == source.lightning_scripts.franklin_badge_reflection && phase == 1;
+        const bool strike = (event == source.lightning_scripts.strike_event_705 ||
+                             event == source.lightning_scripts.strike_event_706) &&
+                            (phase == 2 || phase == 0 || phase == 10);
+        if (reflected || strike) {
+            // These scripts temporarily use BG3's text tilemap for lightning;
+            // it is cleared before ordinary dialogue resumes. The other layers
+            // keep moving normally underneath the removed effect in reference.
+            presentation_effect_layers_ |= 4;
+            if (strike && view.ppu_registers[0x30] == 0x10 && view.ppu_registers[0x31] == 0x33)
+                presentation_reference_fixed_ = 0;
+        }
+        if (event == source.gas_station_flash_script && (view.ppu_registers[5] & 7) == 3 &&
+            view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c &&
+            presentation_gas_palettes_valid_) {
+            // Compare against the exact authored flash palette. BUFFER also
+            // contains a procedural BG2 palette, so using it as a blanket
+            // replacement would alter normal gas-station colors between flashes.
+            for (unsigned index = 0; index < 256; ++index)
+                if (view.palette(index) == presentation_gas_palettes_[1][index])
+                    presentation_reference_palette_[index] = presentation_gas_palettes_[0][index];
+        }
+    }
+}
+
+// Fast path copies the native center byte-for-byte and renders only margins.
+// When a boundary shifts scenery, recomposition affects the presentation copy
+// alone. Sprite sampling is const, preserving the canonical overflow flags.
+void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, unsigned y) {
+    if (presentation_width_ == 256)
+        return;
+    const unsigned margin = (presentation_width_ - 256) / 2;
+    auto output = presentation_framebuffer_.begin() + y * presentation_width_;
+    std::copy_n(view.native_framebuffer.begin() + y * 256, 256, output + margin);
+    if (view.ppu_registers[0] & 0x80) {
+        std::fill_n(output, margin, 0xff000000);
+        std::fill_n(output + margin + 256, margin, 0xff000000);
+        return;
+    }
+    std::array<Pixel, 1024> objects{};
+    if ((view.ppu_registers[0x2c] | view.ppu_registers[0x2d]) & 16) {
+        view.sample_sprite_pixels(y, std::span<Pixel>(objects.data(), presentation_width_),
+                                  -int(margin) + presentation_shift_x_);
+        if (presentation_world_map_) {
+            std::array<Pixel, 1024> world_objects{};
+            presentation_object_pixels(view, y, std::span<Pixel>(world_objects.data(), presentation_width_),
+                                       -int(margin) + presentation_shift_x_);
+            for (unsigned x = 0; x < presentation_width_; ++x)
+                if (world_objects[x].priority >= 0)
+                    objects[x] = world_objects[x];
+        }
+    }
+    if (presentation_psi_display_layer_ || presentation_shift_x_ ||
+        (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
+        for (unsigned x = 0; x < presentation_width_; ++x)
+            output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
+        return;
+    }
+    for (unsigned x = 0; x < margin; ++x) {
+        output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
+        const unsigned right = margin + 256 + x;
+        output[right] = compose_presentation_pixel(view, 256 + int(x), y, objects[right], true);
+    }
+}
+
+void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
+    if (!y) {
+        // Latch the scene alongside its first visible row, before any pixel or
+        // metadata is written. A transition can happen inside one CPU step, so
+        // waiting for the frontend's next iteration would repeat one gas frame
+        // or stretch one logo frame. Keep the user's requested width separately.
+        presentation_frame_aspect_ =
+            (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c
+                ? 4.0 / 3
+                : 0.0;
+        resize_presentation_width(view, presentation_frame_aspect_ ? 256 : requested_presentation_width_);
+    }
+    if (!y || presentation_width_ > 256)
+        prepare_presentation_scene(view);
+    if (presentation_effects_enabled_)
+        prepare_presentation_effects(view);
+    if ((view.ppu_registers[0] & 0x80) && presentation_effects_enabled_) {
+        std::fill_n(presentation_effect_mask_.begin() + y * presentation_width_, presentation_width_, 0);
+        std::fill_n(presentation_effect_reference_.begin() + y * presentation_width_, presentation_width_,
+                    0xff000000);
+    }
+}
+
+void GameSceneRenderer::capture_oam_upload(const SceneReadView &view) {
+    auto displayed = std::move(presentation_objects_);
+    const auto displayed_frame = presentation_objects_frame_;
+    prepare_presentation_objects(view);
+    presentation_uploaded_objects_ = std::move(presentation_objects_);
+    presentation_objects_ = std::move(displayed);
+    presentation_objects_frame_ = displayed_frame;
+    presentation_objects_uploaded_ = true;
+}
+
+} // namespace eb

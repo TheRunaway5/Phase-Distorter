@@ -1,39 +1,140 @@
 {
   "US": {
-    "wram_battle_flag": 38467,
-    "wram_bg_records": [
-      44500,
-      44619
-    ],
-    "wram_psi_animation": 7070,
-    "wram_psi_targets": 44775,
-    "wram_swirl_timer": 44738,
+    "gameplay_timing": {
+      "entity_update_call": 12630040,
+      "entity_update_return": 12630044,
+      "wait_for_next_frame": 12617558
+    },
+    "character_layout": {
+      "table_address": 39374,
+      "entry_size": 95,
+      "level": 5,
+      "max_hp": 10,
+      "max_pp": 12,
+      "afflictions": 14,
+      "current_hp_fraction": 67,
+      "current_hp": 69,
+      "current_hp_target": 71,
+      "current_pp_fraction": 73,
+      "current_pp": 75,
+      "current_pp_target": 77
+    },
+    "battler_layout": {
+      "table_address": 40876,
+      "entry_size": 78,
+      "hp": 17,
+      "hp_target": 19,
+      "hp_max": 21,
+      "pp": 23,
+      "pp_target": 25,
+      "pp_max": 27,
+      "afflictions": 29,
+      "consciousness": 12,
+      "ally_or_enemy": 14,
+      "npc_id": 15,
+      "id": 0
+    },
+    "party_state": {
+      "members": 39023,
+      "count": 39075,
+      "player_controlled_count": 39076,
+      "walking_style": 39043,
+      "leader_x": 39031,
+      "leader_y": 39035
+    },
+    "action_gates": {
+      "battle_mode": 19906,
+      "battle_swirl_countdown": 23904,
+      "enemy_touched": 19898,
+      "teleport_destination": 40767,
+      "using_door": 24002,
+      "input_disable_frames": 23924,
+      "pending_interactions": 23962
+    },
+    "movement_state": {
+      "flags": 23894,
+      "intangibility_frames": 23896
+    },
+    "teleport_state": {
+      "destination": 40767,
+      "style": 40769,
+      "destination_table": 1407104,
+      "entry_size": 31,
+      "destination_x": 27,
+      "destination_y": 29
+    },
+    "gameplay_routines": {
+      "main_loop": 12630036,
+      "add_party_character": 12724472,
+      "remove_party_character": 12724667
+    },
+    "dma_queue": {
+      "write_index": 0,
+      "last_completed_index": 1
+    },
+    "wram_battle_mode_flag": 38467,
+    "wram_battle_backgrounds": {
+      "layer1": 44500,
+      "layer2": 44619
+    },
+    "wram_psi_animation_state": 7070,
+    "rom_psi_animation_config": 847949,
+    "rom_psi_animation_pointers": 849295,
+    "rom_psi_animation_palettes": 849023,
+    "rom_psi_animation_graphics_bank": 786432,
+    "wram_psi_animation_targets": 44775,
+    "wram_swirl_update_timer": 44738,
     "wram_palettes": 512,
-    "wram_flash_timers": [
-      44446,
-      44448,
-      44456,
-      44458
-    ],
+    "wram_flash_timers": {
+      "green": 44446,
+      "red": 44448,
+      "reflection": 44456,
+      "green_background": 44458
+    },
     "wram_current_layer_config": 44426,
-    "rom_layer_config": 45041,
-    "wram_map_combo": 17262,
-    "wram_bg_scroll": [
-      49,
-      51,
-      53,
-      55
-    ],
-    "wram_map_arrangements": 98304,
-    "wram_entity_script": 2658,
-    "wram_entity_var0": 3678,
-    "wram_entity_var1": 3738,
-    "wram_lumine_header": 65536,
-    "wram_lumine_maps": [
-      69632,
-      81920
-    ],
-    "rom_map_chunks": [
+    "rom_layer_config_table": 45041,
+    "wram_loaded_map_tile_combination": 17262,
+    "wram_background_scroll": {
+      "layer1_x": 49,
+      "layer1_y": 51,
+      "layer2_x": 53,
+      "layer2_y": 55
+    },
+    "wram_map_tile_arrangements": 98304,
+    "wram_entity_script_ids": 2658,
+    "wram_entity_script_variable0": 3678,
+    "wram_entity_script_variable1": 3738,
+    "wram_first_entity": 2640,
+    "wram_entity_next": 2718,
+    "wram_entity_screen_coordinates": {
+      "x": 2838,
+      "y": 2898
+    },
+    "wram_entity_world_coordinates": {
+      "x": 2958,
+      "y": 3018
+    },
+    "wram_entity_draw_priority": 4158,
+    "wram_entity_spritemap_pointers": {
+      "low": 4398,
+      "high": 4458
+    },
+    "wram_entity_draw_callback": 4578,
+    "wram_entity_animation_frame": 4338,
+    "wram_entity_displayed_sprites": 13338,
+    "wram_entity_spritemap_sizes": 10518,
+    "wram_entity_surface_flags": 11178,
+    "wram_entity_body_divides": 11238,
+    "entity_draw_callbacks": {
+      "screen_space": 41892,
+      "world_space": 41210
+    },
+    "wram_lumine_text_header": 65536,
+    "wram_lumine_text_maps": {
+      "even_columns": 69632,
+      "odd_columns": 81920
+    },
+    "rom_map_tile_chunks": [
       1441792,
       1452032,
       1462272,
@@ -45,63 +146,164 @@
       1527808,
       1540096
     ],
-    "rom_map_sectors": 1550336,
-    "title_event_first": 788,
-    "title_event_last": 798,
-    "title_bg_mode": 3,
-    "title_bg_maps": [
-      88,
-      0
-    ],
-    "lightning_events": [
-      452,
-      705,
-      706
-    ],
-    "gas_flash_event": 860,
-    "wram_gas_base_palette": 65536,
-    "rom_gas_palettes": [
-      2206135,
-      2206301
-    ],
-    "file_select_event": 787,
-    "lumine_event": 353
+    "rom_map_tileset_palette_sectors": 1550336,
+    "title_script_first": 788,
+    "title_script_last": 798,
+    "title_background_mode": 3,
+    "title_background_maps": {
+      "layer1": 88,
+      "layer2": 0
+    },
+    "lightning_scripts": {
+      "franklin_badge_reflection": 452,
+      "strike_event_705": 705,
+      "strike_event_706": 706
+    },
+    "gas_station_flash_script": 860,
+    "wram_gas_station_base_palette": 65536,
+    "rom_gas_station_palettes": {
+      "normal": 2206135,
+      "alternate": 2206301
+    },
+    "file_select_script": 787,
+    "lumine_text_script": 353
   },
   "JP": {
-    "wram_battle_flag": 39227,
-    "wram_bg_records": [
-      44969,
-      45088
-    ],
-    "wram_psi_animation": 6980,
-    "wram_psi_targets": 45244,
-    "wram_swirl_timer": 45207,
+    "gameplay_timing": {
+      "entity_update_call": 12630003,
+      "entity_update_return": 12630007,
+      "wait_for_next_frame": 12617548
+    },
+    "character_layout": {
+      "table_address": 40063,
+      "entry_size": 94,
+      "level": 4,
+      "max_hp": 9,
+      "max_pp": 11,
+      "afflictions": 13,
+      "current_hp_fraction": 66,
+      "current_hp": 68,
+      "current_hp_target": 70,
+      "current_pp_fraction": 72,
+      "current_pp": 74,
+      "current_pp_target": 76
+    },
+    "battler_layout": {
+      "table_address": 41390,
+      "entry_size": 78,
+      "hp": 17,
+      "hp_target": 19,
+      "hp_max": 21,
+      "pp": 23,
+      "pp_target": 25,
+      "pp_max": 27,
+      "afflictions": 29,
+      "consciousness": 12,
+      "ally_or_enemy": 14,
+      "npc_id": 15,
+      "id": 0
+    },
+    "party_state": {
+      "members": 39712,
+      "count": 39764,
+      "player_controlled_count": 39765,
+      "walking_style": 39732,
+      "leader_x": 39720,
+      "leader_y": 39724
+    },
+    "action_gates": {
+      "battle_mode": 20808,
+      "battle_swirl_countdown": 24806,
+      "enemy_touched": 20800,
+      "teleport_destination": 41281,
+      "using_door": 24904,
+      "input_disable_frames": 24826,
+      "pending_interactions": 24864
+    },
+    "movement_state": {
+      "flags": 24796,
+      "intangibility_frames": 24798
+    },
+    "teleport_state": {
+      "destination": 41281,
+      "style": 41283,
+      "destination_table": 1411486,
+      "entry_size": 16,
+      "destination_x": 12,
+      "destination_y": 14
+    },
+    "gameplay_routines": {
+      "main_loop": 12629999,
+      "add_party_character": 12724164,
+      "remove_party_character": 12724403
+    },
+    "dma_queue": {
+      "write_index": 0,
+      "last_completed_index": 1
+    },
+    "wram_battle_mode_flag": 39227,
+    "wram_battle_backgrounds": {
+      "layer1": 44969,
+      "layer2": 45088
+    },
+    "wram_psi_animation_state": 6980,
+    "rom_psi_animation_config": 848228,
+    "rom_psi_animation_pointers": 849574,
+    "rom_psi_animation_palettes": 849302,
+    "rom_psi_animation_graphics_bank": 786432,
+    "wram_psi_animation_targets": 45244,
+    "wram_swirl_update_timer": 45207,
     "wram_palettes": 512,
-    "wram_flash_timers": [
-      44915,
-      44917,
-      44925,
-      44927
-    ],
+    "wram_flash_timers": {
+      "green": 44915,
+      "red": 44917,
+      "reflection": 44925,
+      "green_background": 44927
+    },
     "wram_current_layer_config": 44895,
-    "rom_layer_config": 45008,
-    "wram_map_combo": 18164,
-    "wram_bg_scroll": [
-      49,
-      51,
-      53,
-      55
-    ],
-    "wram_map_arrangements": 98304,
-    "wram_entity_script": 2648,
-    "wram_entity_var0": 3668,
-    "wram_entity_var1": 3728,
-    "wram_lumine_header": 65536,
-    "wram_lumine_maps": [
-      73728,
-      81920
-    ],
-    "rom_map_chunks": [
+    "rom_layer_config_table": 45008,
+    "wram_loaded_map_tile_combination": 18164,
+    "wram_background_scroll": {
+      "layer1_x": 49,
+      "layer1_y": 51,
+      "layer2_x": 53,
+      "layer2_y": 55
+    },
+    "wram_map_tile_arrangements": 98304,
+    "wram_entity_script_ids": 2648,
+    "wram_entity_script_variable0": 3668,
+    "wram_entity_script_variable1": 3728,
+    "wram_first_entity": 2630,
+    "wram_entity_next": 2708,
+    "wram_entity_screen_coordinates": {
+      "x": 2828,
+      "y": 2888
+    },
+    "wram_entity_world_coordinates": {
+      "x": 2948,
+      "y": 3008
+    },
+    "wram_entity_draw_priority": 4148,
+    "wram_entity_spritemap_pointers": {
+      "low": 4388,
+      "high": 4448
+    },
+    "wram_entity_draw_callback": 4568,
+    "wram_entity_animation_frame": 4328,
+    "wram_entity_displayed_sprites": 6840,
+    "wram_entity_spritemap_sizes": 11540,
+    "wram_entity_surface_flags": 12200,
+    "wram_entity_body_divides": 12260,
+    "entity_draw_callbacks": {
+      "screen_space": 41859,
+      "world_space": 41177
+    },
+    "wram_lumine_text_header": 65536,
+    "wram_lumine_text_maps": {
+      "even_columns": 73728,
+      "odd_columns": 81920
+    },
+    "rom_map_tile_chunks": [
       1441792,
       1452032,
       1462272,
@@ -113,26 +315,26 @@
       1527808,
       1540096
     ],
-    "rom_map_sectors": 1550336,
-    "title_event_first": 788,
-    "title_event_last": 794,
-    "title_bg_mode": 1,
-    "title_bg_maps": [
-      56,
-      60
-    ],
-    "lightning_events": [
-      452,
-      705,
-      706
-    ],
-    "gas_flash_event": 856,
-    "wram_gas_base_palette": 65536,
-    "rom_gas_palettes": [
-      2202809,
-      2202975
-    ],
-    "file_select_event": 787,
-    "lumine_event": 353
+    "rom_map_tileset_palette_sectors": 1550336,
+    "title_script_first": 788,
+    "title_script_last": 794,
+    "title_background_mode": 1,
+    "title_background_maps": {
+      "layer1": 56,
+      "layer2": 60
+    },
+    "lightning_scripts": {
+      "franklin_badge_reflection": 452,
+      "strike_event_705": 705,
+      "strike_event_706": 706
+    },
+    "gas_station_flash_script": 856,
+    "wram_gas_station_base_palette": 65536,
+    "rom_gas_station_palettes": {
+      "normal": 2202809,
+      "alternate": 2202975
+    },
+    "file_select_script": 787,
+    "lumine_text_script": 353
   }
 }

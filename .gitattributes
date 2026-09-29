@@ -4,10 +4,8 @@
 *.exe binary
 *.dll binary
 launchers/linux/bin/eb_cpp binary
-"Phase Distorter" binary
 *.so.* binary
 *.zip binary
-*.zup binary
 *.vbs text eol=crlf
 *.png binary
 *.ico binary

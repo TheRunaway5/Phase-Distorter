@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 from pathlib import Path
@@ -101,6 +101,8 @@ class Instruction:
     source_span_length: int | None = None
     rom_offset: int | None = None
     overlap_origin: int | None = None
+    routine_source: Source | None = None
+    snapshot_override: dict | None = None
 
 
 def fields(text: str) -> dict[str, str]:
@@ -215,7 +217,7 @@ def expand_mode_variants(instructions: list[Instruction], rom: bytes) -> tuple[l
         operand = int.from_bytes(rom[offset + 1:offset + length], "little")
         item = Instruction(address, opcode, operand, length, owner.source,
                            operand if opcode in IMMEDIATE_M | IMMEDIATE_X else None,
-                           None, offset, origin)
+                           None, offset, origin, owner.routine_source)
         compiled[address] = item
         bank = address & 0xFF0000
         following = bank | ((address + length) & 0xFFFF)
@@ -292,6 +294,7 @@ def parse_translation(root: Path, debug: Path, rom: bytes) -> tuple[list[Instruc
     source_cache: dict[str, list[str]] = {}
     aliases: dict[str, set[str]] = defaultdict(set)
     alias_references: list[tuple[int, Source]] = []
+    invocation_references: list[tuple[int, Source]] = []
     emitted_source_lines = 0
     # Debug files order files/lines before segments/spans. Retain the references,
     # then join them after reading; macro instruction records can reference many
@@ -321,6 +324,13 @@ def parse_translation(root: Path, debug: Path, rom: bytes) -> tuple[list[Instruc
                     text = source_cache[filename][line - 1]
                 except IndexError as error:
                     raise ValueError(f"Stale debug source location {filename}:{line}") from error
+                # ca65 records the complete macro invocation span as well as
+                # its individual definition instructions. Keep the caller as
+                # organization metadata; opcode provenance remains untouched.
+                code = text.partition(";")[0].strip()
+                if data.get("type") != "2" and code and not code.startswith("."):
+                    caller = Source(filename, line, text.strip(), False)
+                    invocation_references.extend((int(span), caller) for span in data["span"].split("+"))
                 if source_mnemonic(text):
                     emitted_source_lines += 1
                     source = Source(filename, line, text.strip(), data.get("type") == "2")
@@ -344,6 +354,19 @@ def parse_translation(root: Path, debug: Path, rom: bytes) -> tuple[list[Instruc
         if 1 <= length <= 4 and OPCODES[rom[offset]] in aliases[token]:
             references[span_id].append(source)
             emitted_source_lines += 1
+
+    # Pick the smallest source invocation covering each emitted byte. This
+    # resolves nested macro instructions to their caller without attributing
+    # them to a neighboring function or guessing from a linked address.
+    routine_owners: dict[tuple[int, int], tuple[int, Source]] = {}
+    for span_id, caller in invocation_references:
+        span = spans[span_id]
+        size, start, segment_id = int(span["size"]), int(span["start"]), int(span["seg"])
+        for offset in range(start, start + size):
+            key = (segment_id, offset)
+            previous = routine_owners.get(key)
+            if previous is None or size < previous[0]:
+                routine_owners[key] = (size, caller)
 
     instructions: dict[int, Instruction] = {}
     instruction_spans = 0
@@ -389,7 +412,8 @@ def parse_translation(root: Path, debug: Path, rom: bytes) -> tuple[list[Instruc
         wide_operand = (int.from_bytes(rom[rom_offset + 1:rom_offset + 3], "little")
                         if opcode in IMMEDIATE_M | IMMEDIATE_X else None)
         instruction = Instruction(address, opcode, operand, architectural_length, source,
-                                  wide_operand, length, rom_offset)
+                                  wide_operand, length, rom_offset,
+                                  routine_source=routine_owners.get((int(span["seg"]), offset), (0, source))[1])
         previous = instructions.get(address)
         if previous and (previous.opcode, previous.operand, previous.length) != (opcode, instruction.operand, architectural_length):
             raise ValueError(f"Conflicting instruction spans at {address:06X}")
@@ -452,38 +476,167 @@ def spc_rom_spans(debug: Path, translation: dict) -> list[tuple[int, int]]:
             for item in translation["instructions"]]
 
 
-def emit(output: Path, instructions: list[Instruction], rom: bytes, provenance: dict,
-         extra_code_spans: list[tuple[int, int]] = (), namespace: str = "eb") -> None:
-    # Split by bank to keep compiler units manageable. Each generated switch
-    # selects a fixed source site, then delegates its semantics to Cpu::execute.
-    output.mkdir(parents=True, exist_ok=True)
-    banks: dict[int, list[Instruction]] = defaultdict(list)
-    for instruction in instructions:
-        banks[instruction.address >> 16].append(instruction)
-    generated = "// Generated from ca65 instruction spans. Do not edit.\n"
-    for bank in range(0xC0, 0x100):
-        cpu_parameter = "Cpu& c" if banks[bank] else "[[maybe_unused]] Cpu& c"
-        lines = [generated, '#include "eb/cpu.hpp"\n', "#include <cstdint>\n\n",
-                 f"namespace {namespace} {{\nbool translated_bank_{bank:02x}({cpu_parameter}, std::uint16_t offset) {{\n",
-                 "    switch (offset) {\n"]
-        for instruction in banks[bank]:
-            source = instruction.source
-            # Avoid a source comment's final backslash splicing away the case.
-            lines.append(f"    // {source.file}:{source.line} {source.text.rstrip(chr(92))}\n")
-            if instruction.overlap_origin is not None:
-                lines.append(f"    // Overlapping static entry reached from 0x{instruction.overlap_origin:06X}.\n")
-            if instruction.wide_operand is not None:
-                flag = 0x20 if instruction.opcode in IMMEDIATE_M else 0x10
-                lines.append(f"    case 0x{instruction.address & 0xFFFF:04X}: if (c.p & 0x{flag:02X}) c.execute<0x{instruction.opcode:02X}>(0x{instruction.wide_operand & 0xFF:06X}, 2); else c.execute<0x{instruction.opcode:02X}>(0x{instruction.wide_operand:06X}, 3); return true;\n")
-            else:
-                lines.append(f"    case 0x{instruction.address & 0xFFFF:04X}: c.execute<0x{instruction.opcode:02X}>(0x{instruction.operand:06X}, {instruction.length}); return true;\n")
-        lines.extend(["    default: return false;\n    }\n}\n} // namespace eb\n"])
-        write_changed(output / f"translated_bank_{bank:02x}.cpp", "".join(lines))
+# These verified static-dispatch overrides were already shipped in the frozen
+# snapshot before source organization. The original assembly checkout has older
+# entity-culling bounds. Keep the exact existing runtime-width cases, including
+# alternate entries; renaming must not silently change gameplay. The code-only
+# ROM import template remains the original linked bytes for asset validation.
+FROZEN_PRESENTATION_OVERRIDES = {
+    "US": [
+        {"address": 0xC0C6F3, "expected": [0xC9, 0xFFC0, 3, 0xFFC0], "frozen": [0xC9, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0C6F8, "expected": [0xC9, 0x140, 3, 0x140], "frozen": [0xC9, 0x180, 3, 0x180]},
+        {"address": 0xC0C6F9, "expected": [0x40, 0, 1, None], "frozen": [0x80, 1, 2, None]},
+        {"address": 0xC0C6FD, "expected": [0xE0, 0xFFC0, 3, 0xFFC0], "frozen": [0xE0, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0C702, "expected": [0xE0, 0x140, 3, 0x140], "frozen": [0xE0, 0x180, 3, 0x180]},
+        {"address": 0xC0C703, "expected": [0x40, 0, 1, None], "frozen": [0x80, 1, 2, None]},
+        {"address": 0xC0DB49, "expected": [0xC9, 0x140, 3, 0x140], "frozen": [0xC9, 0x180, 3, 0x180]},
+        {"address": 0xC0DB4E, "expected": [0xC9, 0xFFC0, 3, 0xFFC0], "frozen": [0xC9, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0DB4F, "expected": [0xC0, 0x90FF, 3, 0x90FF], "frozen": [0x80, 0x90FF, 3, 0x90FF]},
+    ],
+    "JP": [
+        {"address": 0xC0C6D5, "expected": [0xC9, 0xFFC0, 3, 0xFFC0], "frozen": [0xC9, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0C6DA, "expected": [0xC9, 0x140, 3, 0x140], "frozen": [0xC9, 0x180, 3, 0x180]},
+        {"address": 0xC0C6DB, "expected": [0x40, 0, 1, None], "frozen": [0x80, 1, 2, None]},
+        {"address": 0xC0C6DF, "expected": [0xE0, 0xFFC0, 3, 0xFFC0], "frozen": [0xE0, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0C6E4, "expected": [0xE0, 0x140, 3, 0x140], "frozen": [0xE0, 0x180, 3, 0x180]},
+        {"address": 0xC0C6E5, "expected": [0x40, 0, 1, None], "frozen": [0x80, 1, 2, None]},
+        {"address": 0xC0DB11, "expected": [0xC9, 0x140, 3, 0x140], "frozen": [0xC9, 0x180, 3, 0x180]},
+        {"address": 0xC0DB16, "expected": [0xC9, 0xFFC0, 3, 0xFFC0], "frozen": [0xC9, 0xFF80, 3, 0xFF80]},
+        {"address": 0xC0DB17, "expected": [0xC0, 0x90FF, 3, 0x90FF], "frozen": [0x80, 0x90FF, 3, 0x90FF]},
+    ],
+}
 
-    lines = [generated, '#include "eb/cpu.hpp"\n#include "generated_code.hpp"\n\n', f'namespace {namespace} {{\n']
-    for bank in range(0xC0, 0x100):
-        lines.append(f"bool translated_bank_{bank:02x}(Cpu&, std::uint16_t);\n")
-    lines.extend(["""
+
+def apply_frozen_program_overrides(version: str, instructions: list[Instruction]) -> list[Instruction]:
+    by_address = {item.address: item for item in instructions}
+    for override in FROZEN_PRESENTATION_OVERRIDES[version]:
+        item = by_address.get(override["address"])
+        actual = [item.opcode, item.operand, item.length, item.wide_operand] if item else None
+        if actual != override["expected"]:
+            raise ValueError(f"Frozen presentation override source changed at {override['address']:06X}: {actual}")
+        opcode, operand, length, wide_operand = override["frozen"]
+        by_address[item.address] = replace(item, opcode=opcode, operand=operand,
+            length=length, wide_operand=wide_operand, snapshot_override=override)
+    return sorted(by_address.values(), key=lambda item: item.address)
+
+
+def instruction_stream_digest(instructions: list[Instruction]) -> str:
+    """Fingerprint executable selection, independent of names and organization."""
+    stream = [(item.address, item.opcode, item.operand, item.length, item.wide_operand)
+              for item in sorted(instructions, key=lambda item: item.address)]
+    return hashlib.sha256(json.dumps(stream, separators=(",", ":")).encode()).hexdigest()
+
+
+def routine_identity(source: Source) -> tuple[str, str, str]:
+    """Use assembly provenance, keeping unresolved names explicitly unresolved."""
+    path = Path(source.file)
+    parts = list(path.with_suffix("").parts)
+    if parts and parts[0] == "src":
+        parts.pop(0)
+    classification = "source_named"
+    if "unknown" in parts or "unused" in parts or re.fullmatch(r"[C-Fc-f][0-9A-Fa-f]{5}(?:-.*)?", path.stem):
+        classification = "unresolved"
+        parts = ["unresolved", *parts[1:]] if parts[0] in ("unknown", "unused") else ["unresolved", *parts]
+    elif not parts or parts[0] == "include":
+        classification = "shared_assembly_helper"
+    # Expand only source vocabulary whose meaning is explicit in its path.
+    vocabulary = {"battlebgs": "battle_backgrounds", "intro": "introduction",
+                  "misc": "miscellaneous", "decomp": "decompression"}
+    parts = [vocabulary.get(part, part) for part in parts]
+    identifier = re.sub(r"[^a-z0-9_]+", "_", "_".join(parts).lower()).strip("_")
+    if not identifier or identifier[0].isdigit():
+        identifier = "source_" + identifier
+    category = parts[0] if parts else "unresolved"
+    if category == "unresolved" and len(parts) > 1:
+        category += "_" + re.sub(r"[^a-z0-9_]+", "_", parts[1].lower())
+    return category, "execute_" + identifier + "_instruction", classification
+
+
+def emit_program_instructions(output: Path, instructions: list[Instruction], namespace: str) -> None:
+    """Organize exact instruction sites by their source routine, not ROM bank."""
+    grouped: dict[str, list[Instruction]] = defaultdict(list)
+    for instruction in sorted(instructions, key=lambda item: item.address):
+        grouped[(instruction.routine_source or instruction.source).file].append(instruction)
+    identities = {filename: routine_identity(items[0].routine_source or items[0].source)
+                  for filename, items in grouped.items()}
+    names = [identity[1] for identity in identities.values()]
+    if len(names) != len(set(names)):
+        raise ValueError("Assembly source paths collide after C++ identifier normalization")
+    generated = "// Generated from ca65 instruction spans and source ownership. Do not edit.\n"
+    old_index = output / "program_index.json"
+    stale_sources = set(json.loads(old_index.read_text())["generated_sources"]) if old_index.exists() else set()
+    chunks: dict[str, list[tuple[str, list[Instruction]]]] = {}
+    chunk_sizes: dict[str, int] = defaultdict(int)
+    category_chunks: dict[str, int] = defaultdict(lambda: 1)
+    owners: dict[int, str] = {}
+    index_routines = []
+    for filename in sorted(grouped):
+        items = grouped[filename]
+        category, name, classification = identities[filename]
+        chunk = f"program/{category}_{category_chunks[category]:02d}.cpp"
+        if chunk_sizes[chunk] and chunk_sizes[chunk] + len(items) > 5000:
+            category_chunks[category] += 1
+            chunk = f"program/{category}_{category_chunks[category]:02d}.cpp"
+        chunks.setdefault(chunk, []).append((filename, items))
+        chunk_sizes[chunk] += len(items)
+        for item in items:
+            owners[item.address] = name
+        index_routines.append({"function": name, "source_file": filename,
+            "generated_file": chunk, "classification": classification,
+            "first_address": f"0x{items[0].address:06X}", "last_address": f"0x{items[-1].address:06X}",
+            "instruction_count": len(items), "instruction_stream_sha256": instruction_stream_digest(items),
+            "source_lines": [min((item.routine_source or item.source).line for item in items),
+                             max((item.routine_source or item.source).line for item in items)]})
+    for chunk, routines in chunks.items():
+        lines = [generated, '#include "eb/main_cpu_65816.hpp"\n#include <cstdint>\n\n', f"namespace {namespace} {{\n"]
+        for filename, items in routines:
+            _, name, classification = identities[filename]
+            lines.extend([f"// Assembly routine source: {filename} ({classification}).\n",
+                f"bool {name}(MainCpu65816& cpu, std::uint32_t address) {{\n    switch (address) {{\n"])
+            for instruction in items:
+                source = instruction.source
+                lines.append(f"    // {source.file}:{source.line} {source.text.rstrip(chr(92))}\n")
+                if instruction.routine_source and instruction.routine_source != source:
+                    caller = instruction.routine_source
+                    lines.append(f"    // Macro caller: {caller.file}:{caller.line} {caller.text.rstrip(chr(92))}\n")
+                if instruction.snapshot_override:
+                    lines.append("    // Retained frozen presentation override; see program_index.json.\n")
+                if instruction.overlap_origin is not None:
+                    lines.append(f"    // Overlapping static entry reached from 0x{instruction.overlap_origin:06X}.\n")
+                if instruction.wide_operand is not None:
+                    flag = 0x20 if instruction.opcode in IMMEDIATE_M else 0x10
+                    lines.append(f"    case 0x{instruction.address:06X}: if (cpu.status_register & 0x{flag:02X}) cpu.execute_instruction<0x{instruction.opcode:02X}>(0x{instruction.wide_operand & 0xFF:06X}, 2); else cpu.execute_instruction<0x{instruction.opcode:02X}>(0x{instruction.wide_operand:06X}, 3); return true;\n")
+                else:
+                    lines.append(f"    case 0x{instruction.address:06X}: cpu.execute_instruction<0x{instruction.opcode:02X}>(0x{instruction.operand:06X}, {instruction.length}); return true;\n")
+            lines.append("    default: return false;\n    }\n}\n\n")
+        lines.append(f"}} // namespace {namespace}\n")
+        (output / chunk).parent.mkdir(parents=True, exist_ok=True)
+        write_changed(output / chunk, "".join(lines))
+    # A 256-byte page selects a routine directly. Shared pages need only a
+    # short boundary chain; each routine still rejects every non-source site.
+    # This avoids a binary search on every main-CPU instruction.
+    pages: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    for address, name in sorted(owners.items()):
+        page = address >> 8
+        if not pages[page] or pages[page][-1][1] != name:
+            pages[page].append((address, name))
+    lines = [generated, '#include "eb/main_cpu_65816.hpp"\n#include "generated_code.hpp"\n#include <array>\n\n', f"namespace {namespace} {{\n"]
+    lines.extend(f"bool {name}(MainCpu65816&, std::uint32_t);\n" for name in sorted(names))
+    lines.append("\nnamespace {\nusing Routine = bool (*)(MainCpu65816&, std::uint32_t);\n")
+    page_routines = {}
+    for page, ranges in sorted(pages.items()):
+        name = ranges[0][1]
+        if len(ranges) > 1:
+            name = f"execute_shared_page_{page:04x}"
+            lines.append(f"bool {name}(MainCpu65816& cpu, std::uint32_t address) {{\n")
+            for (_, routine), (following, _) in zip(ranges, ranges[1:]):
+                lines.append(f"    if (address < 0x{following:06X}) return {routine}(cpu, address);\n")
+            lines.append(f"    return {ranges[-1][1]}(cpu, address);\n}}\n")
+        page_routines[page] = name
+    lines.append("constexpr auto make_program_pages() {\n    std::array<Routine, 0x4000> pages{};\n")
+    lines.extend(f"    pages[0x{page - 0xC000:04X}] = &{name};\n" for page, name in sorted(page_routines.items()))
+    lines.append("    return pages;\n}\nconstexpr auto program_pages = make_program_pages();\n}\n")
+    lines.append("""
 std::uint32_t canonical_rom_address(std::uint32_t address) {
     address &= 0xFFFFFF;
     const auto bank = address >> 16;
@@ -495,22 +648,59 @@ std::uint32_t canonical_rom_address(std::uint32_t address) {
     return address;
 }
 
-bool translated_step(Cpu& c) {
-    const auto address = canonical_rom_address(c.pc);
-    switch (address >> 16) {
-"""])
-    for bank in range(0xC0, 0x100):
-        lines.append(f"    case 0x{bank:02X}: return translated_bank_{bank:02x}(c, static_cast<std::uint16_t>(address));\n")
-    lines.extend(["    default: return false;\n    }\n}\n",
-                  f"std::size_t translated_instruction_count() {{ return {len(instructions)}; }}\n",
-                  "} // namespace eb\n"])
-    write_changed(output / "translated_dispatch.cpp", "".join(lines))
+bool execute_translated_main_instruction(MainCpu65816& cpu) {
+    const auto address = canonical_rom_address(cpu.program_counter);
+    if (address == 0xFFFFFFFF) return false;
+    const auto routine = program_pages[(address - 0xC00000) >> 8];
+    return routine && routine(cpu, address);
+}
+""")
+    lines.extend([f"std::size_t translated_instruction_count() {{ return {len(instructions)}; }}\n", f"}} // namespace {namespace}\n"])
+    write_changed(output / "game_program_dispatch.cpp", "".join(lines))
+    source_files = ["game_program_dispatch.cpp", *sorted(chunks)]
+    index = {"schema": 1, "namespace": namespace, "instruction_count": len(instructions),
+        "instruction_stream_sha256": instruction_stream_digest(instructions),
+        "naming_evidence": "Original assembly source paths; macro ownership from enclosing ca65 invocation spans. Address-only source names remain explicitly unresolved.",
+        "classification_counts": dict(Counter(row["classification"] for row in index_routines)),
+        "classification_instruction_counts": {classification: sum(row["instruction_count"] for row in index_routines if row["classification"] == classification)
+                                               for classification in sorted({row["classification"] for row in index_routines})},
+        "snapshot_overrides": [item.snapshot_override for item in instructions if item.snapshot_override],
+        "generated_sources": source_files, "routines": index_routines}
+    write_changed(old_index, json.dumps(index, indent=2) + "\n")
+    # Only remove files owned by this generator's prior manifest or legacy
+    # bank emitter; never sweep arbitrary C++ files from the source directory.
+    for stale in stale_sources - set(source_files):
+        path = output / stale
+        if path.is_file():
+            path.unlink()
+    for path in [*output.glob("translated_bank_[cdef][0123456789abcdef].cpp"), output / "translated_dispatch.cpp"]:
+        if path.is_file():
+            path.unlink()
+
+
+def emit_program_manifest(output: Path) -> None:
+    sources = ["audio_driver_instructions.cpp"]
+    for version in ("us", "jp"):
+        index = json.loads((output / version / "program_index.json").read_text())
+        sources.extend(f"{version}/{name}" for name in index["generated_sources"])
+    write_changed(output / "program_sources.cmake", "# Generated program source inventory. Do not edit.\nset(EB_GENERATED_PROGRAM_SOURCES\n" +
+                  "".join(f'    "${{CMAKE_CURRENT_LIST_DIR}}/{name}"\n' for name in sources) + ")\n")
+
+
+def emit(output: Path, instructions: list[Instruction], rom: bytes, provenance: dict,
+         extra_code_spans: list[tuple[int, int]] = (), namespace: str = "eb") -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    emit_program_instructions(output, instructions, namespace)
+    banks: dict[int, list[Instruction]] = defaultdict(list)
+    for instruction in instructions:
+        banks[instruction.address >> 16].append(instruction)
+    generated = "// Generated from ca65 instruction spans. Do not edit.\n"
     write_changed(output / "generated_code.hpp", generated + """#pragma once
 #include <cstddef>
 #include <cstdint>
-namespace eb { class Cpu; }
+namespace eb { class MainCpu65816; }
 NAMESPACE {
-bool translated_step(Cpu&);
+bool execute_translated_main_instruction(MainCpu65816&);
 std::uint32_t canonical_rom_address(std::uint32_t address);
 std::size_t translated_instruction_count();
 }
@@ -586,6 +776,97 @@ def linked_symbols(debug: Path) -> dict[str, set[int]]:
     return result
 
 
+def debug_profile(debug: Path, version: str, value) -> dict:
+    # Debug actions use the same regional symbols as compiled game code.
+    records = [fields(line.partition("\t")[2]) | {"record": line.partition("\t")[0]}
+               for line in debug.read_text().splitlines() if line.startswith(("sym\t", "scope\t"))]
+    def member(structure: str, name: str = "") -> int:
+        scopes = {r["id"]: r for r in records if r["record"] == "scope" and r.get("name") == structure}
+        matches = {int(r["val"], 0) for r in records if r["record"] == "sym" and
+                   r.get("scope") in scopes and r.get("name") == name and "val" in r} if name else {
+                   int(r["size"], 0) for r in scopes.values()}
+        if len(matches) != 1:
+            raise ValueError(f"Ambiguous/missing {version} member {structure}::{name}: {matches}")
+        return matches.pop()
+    main_ids = {r["id"] for r in records if r["record"] == "sym" and r.get("name") == "MAIN_LOOP" and "val" in r}
+    main_loop = {int(r["val"], 0) for r in records if r["record"] == "sym" and
+                 r.get("parent") in main_ids and r.get("name") == "@LOOP_BEGIN"}
+    if len(main_loop) != 1:
+        raise ValueError(f"Missing {version} main-loop debug boundary")
+    return {
+        # MAIN_LOOP starts with JSL OAM_CLEAR, then JSL RUN_ACTIONSCRIPT_FRAME.
+        # Bound extra compute capacity to that call, not menus/intro/battle code.
+        "gameplay_timing": {
+            'entity_update_call': next(iter(main_loop)) + 4,
+            'entity_update_return': next(iter(main_loop)) + 8,
+            'wait_for_next_frame': 0xc00000 + value('WAIT_UNTIL_NEXT_FRAME', 'rom'),
+        },
+        "character_layout": {
+            'table_address': value('PARTY_CHARACTERS', 'ram'),
+            'entry_size': member('char_struct'),
+            'level': member('char_struct', 'level'),
+            'max_hp': member('char_struct', 'max_hp'),
+            'max_pp': member('char_struct', 'max_pp'),
+            'afflictions': member('char_struct', 'afflictions'),
+            'current_hp_fraction': member('char_struct', 'current_hp_fraction'),
+            'current_hp': member('char_struct', 'current_hp'),
+            'current_hp_target': member('char_struct', 'current_hp_target'),
+            'current_pp_fraction': member('char_struct', 'current_pp_fraction'),
+            'current_pp': member('char_struct', 'current_pp'),
+            'current_pp_target': member('char_struct', 'current_pp_target'),
+        },
+        "battler_layout": {
+            'table_address': value('BATTLERS_TABLE', 'ram'),
+            'entry_size': member('battler'),
+            'hp': member('battler', 'hp'),
+            'hp_target': member('battler', 'hp_target'),
+            'hp_max': member('battler', 'hp_max'),
+            'pp': member('battler', 'pp'),
+            'pp_target': member('battler', 'pp_target'),
+            'pp_max': member('battler', 'pp_max'),
+            'afflictions': member('battler', 'afflictions'),
+            'consciousness': member('battler', 'consciousness'),
+            'ally_or_enemy': member('battler', 'ally_or_enemy'),
+            'npc_id': member('battler', 'npc_id'),
+            'id': member('battler', 'id'),
+        },
+        "party_state": {
+            'members': value('GAME_STATE', 'ram') + member('game_state', 'party_members'),
+            'count': value('GAME_STATE', 'ram') + member('game_state', 'party_count'),
+            'player_controlled_count': value('GAME_STATE', 'ram') + member('game_state', 'player_controlled_party_count'),
+            'walking_style': value('GAME_STATE', 'ram') + member('game_state', 'walking_style'),
+            'leader_x': value('GAME_STATE', 'ram') + member('game_state', 'leader_x_coord'),
+            'leader_y': value('GAME_STATE', 'ram') + member('game_state', 'leader_y_coord'),
+        },
+        "action_gates": {
+            'battle_mode': value('BATTLE_MODE', 'ram'),
+            'battle_swirl_countdown': value('BATTLE_SWIRL_COUNTDOWN', 'ram'),
+            'enemy_touched': value('ENEMY_HAS_BEEN_TOUCHED', 'ram'),
+            'teleport_destination': value('PSI_TELEPORT_DESTINATION', 'ram'),
+            'using_door': value('USING_DOOR', 'ram'),
+            'input_disable_frames': value('INPUT_DISABLE_FRAME_COUNTER', 'ram'),
+            'pending_interactions': value('PENDING_INTERACTIONS', 'ram'),
+        },
+        "movement_state": {
+            'flags': value('PLAYER_MOVEMENT_FLAGS', 'ram'),
+            'intangibility_frames': value('PLAYER_INTANGIBILITY_FRAMES', 'ram'),
+        },
+        "teleport_state": {
+            'destination': value('PSI_TELEPORT_DESTINATION', 'ram'),
+            'style': value('PSI_TELEPORT_STYLE', 'ram'),
+            'destination_table': value('PSI_TELEPORT_DEST_TABLE', 'rom'),
+            'entry_size': member('psi_teleport_destination'),
+            'destination_x': member('psi_teleport_destination', 'dest_x'),
+            'destination_y': member('psi_teleport_destination', 'dest_y'),
+        },
+        "gameplay_routines": {
+            'main_loop': main_loop.pop(),
+            'add_party_character': 0xc00000 + value('ADD_CHAR_TO_PARTY', 'rom'),
+            'remove_party_character': 0xc00000 + value('REMOVE_CHAR_FROM_PARTY', 'rom'),
+        },
+    }
+
+
 def source_profile(debug: Path, version: str) -> dict:
     # Presentation reads game state through version-specific linked symbols.
     # Deriving these offsets prevents US WRAM layouts from leaking into Mother 2.
@@ -603,48 +884,108 @@ def source_profile(debug: Path, version: str) -> dict:
 
     buffer = value("BUFFER", "ram")
     return {
-        "wram_battle_flag": value("BATTLE_MODE_FLAG", "ram"),
-        "wram_bg_records": [value(name, "ram") for name in ("LOADED_BG_DATA_LAYER1", "LOADED_BG_DATA_LAYER2")],
+        **debug_profile(debug, version, value),
+        "dma_queue": {
+            'write_index': value('DMA_QUEUE_INDEX', 'ram'),
+            'last_completed_index': value('LAST_COMPLETED_DMA_INDEX', 'ram'),
+        },
+        "wram_battle_mode_flag": value("BATTLE_MODE_FLAG", "ram"),
+        "wram_battle_backgrounds": {
+            'layer1': value('LOADED_BG_DATA_LAYER1', 'ram'),
+            'layer2': value('LOADED_BG_DATA_LAYER2', 'ram'),
+        },
         # These gates identify authored flash effects, not ordinary battle art
         # or map palette animation. The renderer only observes this state; it
         # must never write to the game's timers, palettes, or animation data.
-        "wram_psi_animation": value("PSI_ANIMATION_STATE", "ram"),
-        "wram_psi_targets": value("PSI_ANIMATION_ENEMY_TARGETS", "ram"),
-        "wram_swirl_timer": value("FRAMES_UNTIL_NEXT_SWIRL_UPDATE", "ram"),
+        "wram_psi_animation_state": value("PSI_ANIMATION_STATE", "ram"),
+        "rom_psi_animation_config": value("PSI_ANIM_CFG", "rom"),
+        "rom_psi_animation_pointers": value("PSI_ANIM_POINTERS", "rom"),
+        "rom_psi_animation_palettes": value("PSI_ANIM_PALETTES", "rom"),
+        "rom_psi_animation_graphics_bank": value("PSI_ANIM_GFX_SET_1", "rom") & 0xff0000,
+        "wram_psi_animation_targets": value("PSI_ANIMATION_ENEMY_TARGETS", "ram"),
+        "wram_swirl_update_timer": value("FRAMES_UNTIL_NEXT_SWIRL_UPDATE", "ram"),
         "wram_palettes": value("PALETTES", "ram"),
-        "wram_flash_timers": [value(name, "ram") for name in (
-            "GREEN_FLASH_DURATION", "RED_FLASH_DURATION", "REFLECT_FLASH_DURATION",
-            "GREEN_BACKGROUND_FLASH_DURATION")],
+        "wram_flash_timers": {
+            'green': value('GREEN_FLASH_DURATION', 'ram'),
+            'red': value('RED_FLASH_DURATION', 'ram'),
+            'reflection': value('REFLECT_FLASH_DURATION', 'ram'),
+            'green_background': value('GREEN_BACKGROUND_FLASH_DURATION', 'ram'),
+        },
         "wram_current_layer_config": value("CURRENT_LAYER_CONFIG", "ram"),
-        "rom_layer_config": value("UNKNOWN_C0AFF1", "rom"),
-        "wram_map_combo": value("LOADED_MAP_TILE_COMBO", "ram"),
-        "wram_bg_scroll": [value(name, "ram") for name in ("BG1_X_POS", "BG1_Y_POS", "BG2_X_POS", "BG2_Y_POS")],
-        "wram_map_arrangements": buffer + 0x8000,
-        "wram_entity_script": value("ENTITY_SCRIPT_TABLE", "ram"),
-        "wram_entity_var0": value("ENTITY_SCRIPT_VAR0_TABLE", "ram"),
-        "wram_entity_var1": value("ENTITY_SCRIPT_VAR1_TABLE", "ram"),
-        "wram_lumine_header": buffer,
-        "wram_lumine_maps": [buffer + (0x1000 if version == "US" else 0x2000), buffer + 0x4000],
-        "rom_map_chunks": [value(f"MAP_DATA_TILE_TABLE_CHUNK_{index}", "rom") for index in range(1, 11)],
-        "rom_map_sectors": value("GLOBAL_MAP_TILESETPALETTE_DATA", "rom"),
-        "title_event_first": value("TITLE_SCREEN_1", "enum"),
-        "title_event_last": value("TITLE_SCREEN_11" if version == "US" else "TITLE_SCREEN_7", "enum"),
+        "rom_layer_config_table": value("UNKNOWN_C0AFF1", "rom"),
+        "wram_loaded_map_tile_combination": value("LOADED_MAP_TILE_COMBO", "ram"),
+        "wram_background_scroll": {
+            'layer1_x': value('BG1_X_POS', 'ram'),
+            'layer1_y': value('BG1_Y_POS', 'ram'),
+            'layer2_x': value('BG2_X_POS', 'ram'),
+            'layer2_y': value('BG2_Y_POS', 'ram'),
+        },
+        "wram_map_tile_arrangements": buffer + 0x8000,
+        "wram_entity_script_ids": value("ENTITY_SCRIPT_TABLE", "ram"),
+        "wram_entity_script_variable0": value("ENTITY_SCRIPT_VAR0_TABLE", "ram"),
+        "wram_entity_script_variable1": value("ENTITY_SCRIPT_VAR1_TABLE", "ram"),
+        # Read-only sprite descriptors retain full signed coordinates even
+        # when the native OAM builder clips the entity or some of its pieces.
+        "wram_first_entity": value("FIRST_ENTITY", "ram"),
+        "wram_entity_next": value("ENTITY_NEXT_ENTITY_TABLE", "ram"),
+        "wram_entity_screen_coordinates": {
+            'x': value('ENTITY_SCREEN_X_TABLE', 'ram'),
+            'y': value('ENTITY_SCREEN_Y_TABLE', 'ram'),
+        },
+        "wram_entity_world_coordinates": {
+            'x': value('ENTITY_ABS_X_TABLE', 'ram'),
+            'y': value('ENTITY_ABS_Y_TABLE', 'ram'),
+        },
+        "wram_entity_draw_priority": value("ENTITY_DRAW_PRIORITY", "ram"),
+        "wram_entity_spritemap_pointers": {
+            'low': value('ENTITY_SPRITEMAP_POINTER_LOW', 'ram'),
+            'high': value('ENTITY_SPRITEMAP_POINTER_HIGH', 'ram'),
+        },
+        "wram_entity_draw_callback": value("ENTITY_DRAW_CALLBACK", "ram"),
+        "wram_entity_animation_frame": value("ENTITY_ANIMATION_FRAME", "ram"),
+        "wram_entity_displayed_sprites": value("ENTITY_CURRENT_DISPLAYED_SPRITES", "ram"),
+        "wram_entity_spritemap_sizes": value("ENTITY_SPRITEMAP_SIZES", "ram"),
+        "wram_entity_surface_flags": value("ENTITY_SURFACE_FLAGS", "ram"),
+        "wram_entity_body_divides": value("ENTITY_UPPER_LOWER_BODY_DIVIDES", "ram"),
+        "entity_draw_callbacks": {
+            'screen_space': value('UNKNOWN_C0A3A4', 'rom') & 0xffff,
+            'world_space': value('UNKNOWN_C0A0FA', 'rom') & 0xffff,
+        },
+        "wram_lumine_text_header": buffer,
+        "wram_lumine_text_maps": {
+            'even_columns': buffer + (0x1000 if version == 'US' else 0x2000),
+            'odd_columns': buffer + 0x4000,
+        },
+        "rom_map_tile_chunks": [value(f"MAP_DATA_TILE_TABLE_CHUNK_{index}", "rom") for index in range(1, 11)],
+        "rom_map_tileset_palette_sectors": value("GLOBAL_MAP_TILESETPALETTE_DATA", "rom"),
+        "title_script_first": value("TITLE_SCREEN_1", "enum"),
+        "title_script_last": value("TITLE_SCREEN_11" if version == "US" else "TITLE_SCREEN_7", "enum"),
         # SHOW_TITLE_SCREEN uses distinct PPU layouts in the two releases. An
         # active title script plus this layout avoids mistaking gameplay's BGs
         # for a logo screen. Values are the source's BGMODE/BGnSC register bytes.
-        "title_bg_mode": 3 if version == "US" else 1,
-        "title_bg_maps": [0x58, 0] if version == "US" else [0x38, 0x3C],
+        "title_background_mode": 3 if version == "US" else 1,
+        "title_background_maps": {
+            'layer1': 88 if version == 'US' else 56,
+            'layer2': 0 if version == 'US' else 60,
+        },
         # C47A9E/C47B77 play animation sequence 1 (Franklin Badge reflection)
         # and sequence 2 (lightning strike) on BG3. Match these scripts and the
         # corresponding entity variable instead of all uses of the text layer.
-        "lightning_events": [value(name, "enum") for name in ("EVENT_452", "EVENT_705", "EVENT_706")],
+        "lightning_scripts": {
+            'franklin_badge_reflection': value('EVENT_452', 'enum'),
+            'strike_event_705': value('EVENT_705', 'enum'),
+            'strike_event_706': value('EVENT_706', 'enum'),
+        },
         # EVENT_860 explicitly alternates these two palettes. In JP its enum
         # value is shifted by four, so even shared script names need linking.
-        "gas_flash_event": value("EVENT_860", "enum"),
-        "wram_gas_base_palette": buffer,
-        "rom_gas_palettes": [value(name, "rom") for name in ("GAS_STATION_PALETTE", "GAS_STATION_PALETTE_2")],
-        "file_select_event": value("EVENT_787", "enum"),
-        "lumine_event": value("EVENT_353", "enum"),
+        "gas_station_flash_script": value("EVENT_860", "enum"),
+        "wram_gas_station_base_palette": buffer,
+        "rom_gas_station_palettes": {
+            'normal': value('GAS_STATION_PALETTE', 'rom'),
+            'alternate': value('GAS_STATION_PALETTE_2', 'rom'),
+        },
+        "file_select_script": value("EVENT_787", "enum"),
+        "lumine_text_script": value("EVENT_353", "enum"),
     }
 
 
@@ -658,19 +999,19 @@ def emit_profiles(output: Path, profiles: dict[str, dict]) -> None:
 #include <cstdint>
 #include "eb/game_version.hpp"
 namespace eb {
-class Cpu;
-bool translated_step(Cpu&);
+class MainCpu65816;
+bool execute_translated_main_instruction(MainCpu65816&);
 std::uint32_t canonical_rom_address(std::uint32_t);
 std::size_t translated_instruction_count(GameVersion version = GameVersion::US);
 }
 """)
-    write_changed(output / "translated_dispatch.cpp", generated + """#include "eb/cpu.hpp"
+    write_changed(output / "translated_dispatch.cpp", generated + """#include "eb/main_cpu_65816.hpp"
 #include "generated_code.hpp"
 #include "us/generated_code.hpp"
 #include "jp/generated_code.hpp"
 namespace eb {
-bool translated_step(Cpu& c) {
-    return c.version == GameVersion::JP ? jp::translated_step(c) : us::translated_step(c);
+bool execute_translated_main_instruction(MainCpu65816& cpu) {
+    return cpu.game_version == GameVersion::JP ? jp::execute_translated_main_instruction(cpu) : us::execute_translated_main_instruction(cpu);
 }
 std::uint32_t canonical_rom_address(std::uint32_t address) { return us::canonical_rom_address(address); }
 std::size_t translated_instruction_count(GameVersion version) {
@@ -678,7 +1019,11 @@ std::size_t translated_instruction_count(GameVersion version) {
 }
 }
 """)
-    write_changed(output / "generated_assets.hpp", generated + """#pragma once
+    write_changed(output / "generated_assets.hpp", generated + """// Common import interface for the frozen regional code templates. rom_data()
+// exposes sparse instruction bytes with zero-filled asset gaps, not a playable
+// cartridge. AssetLayout describes the gaps and complete-image fingerprint;
+// load_game_assets() reconstructs and validates the image before SnesBus uses it.
+#pragma once
 #include "eb/asset_store.hpp"
 #include "eb/game_version.hpp"
 namespace eb {
@@ -689,7 +1034,11 @@ AssetLayout asset_layout(GameVersion version = GameVersion::US);
 std::span<const AssetProfile> asset_profiles();
 }
 """)
-    write_changed(output / "generated_assets.cpp", generated + """#include "generated_assets.hpp"
+    write_changed(output / "generated_assets.cpp", generated + """// Route imports to each regional template without merging their layouts. The
+// registry has static lifetime, so profiles and their referenced code/range
+// spans remain valid during ROM identification and subsequent pack loading.
+// No retail asset payload is introduced by this common registry.
+#include "generated_assets.hpp"
 #include "us/generated_assets.hpp"
 #include "jp/generated_assets.hpp"
 #include <array>
@@ -706,29 +1055,62 @@ std::span<const AssetProfile> asset_profiles() {
 }
 }
 """)
-    declarations = []
-    for key, value in profiles["US"].items():
+    def declarations(profile: dict, indentation: str = "    ") -> str:
+        result = []
+        for name, value in profile.items():
+            if isinstance(value, dict):
+                type_name = "".join(part.capitalize() for part in name.split("_"))
+                result.append(f"{indentation}struct {type_name} {{\n")
+                result.append(declarations(value, indentation + "    "))
+                result.append(f"{indentation}}} {name};\n")
+            elif isinstance(value, list):
+                result.append(f"{indentation}std::array<std::uint32_t, {len(value)}> {name};\n")
+            else:
+                result.append(f"{indentation}std::uint32_t {name};\n")
+        return "".join(result)
+
+    def shape(value):
+        if isinstance(value, dict):
+            return tuple((key, shape(item)) for key, item in value.items())
         if isinstance(value, list):
-            declarations.append(f"    std::array<std::uint32_t, {len(value)}> {key};\n")
-        else:
-            declarations.append(f"    std::uint32_t {key};\n")
+            return [shape(item) for item in value]
+        if not isinstance(value, int):
+            raise ValueError(f"Source-profile offset is not an integer: {value!r}")
+        return "offset"
+
+    if shape(profiles["US"]) != shape(profiles["JP"]):
+        raise ValueError("US and JP source-profile schemas differ")
+
     write_changed(output / "generated_profile.hpp", generated + """#pragma once
 #include <array>
 #include <cstdint>
 #include "eb/game_version.hpp"
 namespace eb {
-// Offsets into WRAM/ROM spans, derived from each configuration's linked symbols.
+// Linked WRAM/ROM span offsets and structure-member offsets, not host pointers.
+// gameplay_timing/gameplay_routines contain full 65816 program addresses;
+// entity_draw_callbacks contain bank-relative source routine addresses.
+// Names within each layout match the upstream assembly structure members.
 struct SourceProfile {
-""" + "".join(declarations) + """};
+""" + declarations(profiles["US"]) + """};
 const SourceProfile& source_profile(GameVersion version);
 }
 """)
+    def initializer(profile: dict, indentation: str = "    ") -> str:
+        result = []
+        for name, value in profile.items():
+            if isinstance(value, dict):
+                result.append(f"{indentation}.{name} = {{\n")
+                result.append(initializer(value, indentation + "    "))
+                result.append(f"{indentation}}},\n")
+            else:
+                literal = "{" + ", ".join(hex(item) for item in value) + "}" if isinstance(value, list) else hex(value)
+                result.append(f"{indentation}.{name} = {literal},\n")
+        return "".join(result)
+
     lines = [generated, '#include "generated_profile.hpp"\nnamespace eb {\nnamespace {\n']
     for version, profile in profiles.items():
         lines.append(f"constexpr SourceProfile profile_{version.lower()}{{\n")
-        for key, value in profile.items():
-            initializer = "{" + ",".join(hex(item) for item in value) + "}" if isinstance(value, list) else hex(value)
-            lines.append(f"    {initializer}, // {key}\n")
+        lines.append(initializer(profile))
         lines.append("};\n")
     lines.append("}\nconst SourceProfile& source_profile(GameVersion version) { return version == GameVersion::JP ? profile_jp : profile_us; }\n}\n")
     write_changed(output / "generated_profiles.cpp", "".join(lines))
@@ -754,6 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, digest in spc_translation["source_hashes"].items():
             if sha256(root / name) != digest:
                 raise ValueError(f"SPC source changed: {name}; omit --no-assemble to rebuild")
+        spc700.attach_source_labels(root, spc_translation)
         profiles, reports = {}, {}
         for version, spec in asset_layout.VERSIONS.items():
             target = output / version.lower()
@@ -783,6 +1166,7 @@ def main(argv: list[str] | None = None) -> int:
             # Audit declared source before adding width-dependent overlaps so
             # inferred entries cannot hide missing ordinary source boundaries.
             instructions, mode_report = expand_mode_variants(instructions, image)
+            instructions = apply_frozen_program_overrides(version, instructions)
             provenance["immediate_mode_variant_count"] = mode_report["immediate_mode_variant_count"]
             provenance["overlapping_instruction_count"] = mode_report["overlapping_instruction_count"]
             provenance["unresolved_alternate_edge_count"] = len(mode_report["unresolved_alternate_edges"])
@@ -803,6 +1187,7 @@ def main(argv: list[str] | None = None) -> int:
             write_changed(output / name, json.dumps({"schema": 2, "versions": {
                 version: f"{version.lower()}/{name}" for version in profiles}}, indent=2) + "\n")
         spc700.emit(output, spc_translation)
+        emit_program_manifest(output)
         print(f"Translated {spc_translation['instruction_count']:,} exact SPC700 instruction sites")
         print("Code-only multi-version build: retail assets were not read.")
     except (OSError, ValueError, RuntimeError) as error:

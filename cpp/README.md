@@ -20,12 +20,15 @@ mapping, runtime M/X width handling, SPC700 source build, remaining static
 coverage limits, and reproducible instruction-contract audits. The current
 translation targets are the US EarthBound and Japanese Mother 2 retail source
 configurations. The imported pack selects its matching compiled program.
+[Source navigation](docs/source-navigation.md) maps the hardware modules,
+generated game routines, register names and regional metadata for contributors.
 
 For a release source tree containing only `cpp/` and the pre-generated program
 in a sibling `generated/` directory, configure with
 `cmake -S cpp -B build -DEB_PREGENERATED_DIR="$PWD/generated"`. This mode requires
 no original assembly, extraction YAML, ca65/ld65, or SPC assembler. All generated
-C++ sources and headers must be present; JSON reports are optional. Python is
+C++ sources, headers and `program_sources.cmake` must be present; JSON reports
+are useful for source navigation but are not needed to compile. Python is
 required only when tests are enabled (`-DEB_BUILD_TESTS=OFF` disables them).
 Assembler-dependent translator fixtures report skips when their tools are
 unavailable. Omitting `EB_PREGENERATED_DIR` keeps the normal source-generation
@@ -152,7 +155,7 @@ The source-translated SPC700 driver controls a separate S-DSP hardware synthesis
 backend. The desktop frontend queues its 32 kHz, signed 16-bit stereo output to
 SDL2. `--wav FILE` records that same output, including in headless runs;
 `--no-audio` disables the playback device while retaining hardware synthesis and
-WAV recording. Headless mode never opens an audio device. `dsp_tests` exercises a
+WAV recording. Headless mode never opens an audio device. `snes_audio_dsp_tests` exercises a
 known looping BRR waveform, clock partitioning, stereo levels, and muting. The
 vendored backend's source and license are in [external/spc_dsp](external/spc_dsp).
 
@@ -220,14 +223,36 @@ or defaults to zero. For example, this presses Start for six frames:
 1206 0
 ```
 
+Interactive runs combine physical game buttons with the current script/held
+mask by default. Use `--replay-only` to ignore physical game buttons while still
+processing window close, Settings and other UI events. It also works with
+`--buttons` alone, or with neither input option for a zero-button run. This is
+useful for windowed replay comparisons:
+
+```sh
+./build/cpp/eb_cpp --frames 1200 --input-script cpp/tests/new_game.input \
+  --replay-only --no-save --no-config
+```
+
+`InputReplay` owns the held mask and consumes every script entry due at the
+current hardware frame. `GameSession` receives the selected mask explicitly;
+it does not poll desktop input or use the host frame rate as simulation input.
+
 The window starts at 3× source resolution, preserves the 256:224 source pixel
 aspect ratio when resized, and uploads the framebuffer through an OpenGL 2.1
 texture with nearest-neighbor sampling. `--scale 1` through `--scale 8` changes
 the initial size. `--no-vsync` disables swap synchronization; the frame clock
-still limits interactive execution. Simulation follows the console's 60.0988 Hz
-clock independently of monitor refresh. When presentation falls behind, the
-frontend can omit an intermediate image while executing every game, input, and
-audio frame. Headless execution runs without throttling.
+still limits interactive execution. Fixed-refresh displays use a close refresh divisor (for example 60 Hz on a
+60/120/240 Hz monitor); other modes retain the native 60.0988 Hz cadence.
+Playback audio follows the selected cadence. Optional **Variable refresh rate
+(VRR)** in Display settings uses native pacing, capped below the monitor maximum;
+VRR must already be enabled in your display/graphics settings. `--vrr` and
+`--no-vrr` override the saved choice. Headless execution runs without throttling.
+
+Expensive overworld entity updates receive extra CPU capacity once they exceed
+the normal budget, while hardware waits and transfers keep their native timing.
+`--original-timing` restores the original CPU budget for comparisons. See
+[gameplay and display timing](docs/timing.md) for the policy, tests and limits.
 
 ## Optional control panel and widescreen
 
@@ -239,14 +264,18 @@ keyboard/controller input is captured while the panel is open. Scripted input
 continues independently. The Diagnostics tab displays copied CPU, sound, frame,
 and timing information without allowing game-state edits.
 
-Widescreen adds picture on either side of the original 256×224 view. It does
-not change the game's camera coordinates, timing, collision, entity activation,
-or spawn rules. Extra pixels come from read-only rendering of existing scene
-data. Map scenery uses the map data beyond the streamed tile buffer, battle
-patterns continue their existing layer transforms, and Lumine Hall's wall text
-uses its complete prepared text columns. Menus and HUD remain in the original
-view. Actors retain the original activation rules; wider scenery does not cause
-additional actors to spawn.
+Widescreen adds picture on either side of the original 256×224 view. Map
+scenery uses data beyond the streamed tile buffer, battle patterns continue
+their existing layer transforms, and Lumine Hall uses its complete prepared
+text columns. Menus and HUD remain in the original view.
+
+The desktop session also widens horizontal NPC/enemy loading queries to cover
+the selected view plus an offscreen preload band. Actors have a larger retention
+band so they do not unload at the old screen boundary. Source event conditions,
+encounter selection and entity limits still apply. This activates actors sooner
+and can change encounter timing/random-number consumption in wide modes; the
+native-width loading policy remains unchanged. Camera coordinates, collision
+and the read-only wider renderer are unchanged.
 
 Near a map region's edge, the wider display camera stops at the matching
 tileset-sector boundary. This covers the Fourside tunnel and desert road
@@ -272,3 +301,7 @@ stays at least 256 pixels wide so narrow windows never crop the original view.
 `--presentation-screenshot` writes the wider source picture, and
 `--gl-screenshot` captures the actual window including an open control panel.
 See [STATUS.md](STATUS.md) for the validation evidence and remaining limits.
+
+### Presentation frame rate
+
+Use **F1 → Display → Frame rate** for Native, 90–300 FPS or Uncapped. `--fps 300` caps presentation; `--fps 0` removes the cap. Gameplay and audio retain their native update rate. Optional **Interpolate frames** generates intermediate overworld and battle pictures with one game frame of visual latency. Motion matching samples every pixel and uncertain edges hold a source picture to avoid translucent trails; overlapping effects and fast motion can still step or match incorrectly. Use `--no-interpolation` for the original completed frames. Preferences persist across restarts and game switches. See [timing and verification](docs/timing.md).

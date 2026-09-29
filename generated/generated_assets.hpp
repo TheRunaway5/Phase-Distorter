@@ -2,7 +2,7 @@
 // Common import interface for the frozen regional code templates. rom_data()
 // exposes sparse instruction bytes with zero-filled asset gaps, not a playable
 // cartridge. AssetLayout describes the gaps and complete-image fingerprint;
-// load_game_assets() reconstructs and validates the image before Bus uses it.
+// load_game_assets() reconstructs and validates the image before SnesBus uses it.
 #pragma once
 #include "eb/asset_store.hpp"
 #include "eb/game_version.hpp"

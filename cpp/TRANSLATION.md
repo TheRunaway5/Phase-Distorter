@@ -24,23 +24,37 @@ supplies final addresses and resolved bytes. Listings are also retained with
 unlimited emitted bytes, but instruction extraction does not depend on the
 listings' collapsed macro text.
 
-Every source instruction becomes a fixed-opcode C++ call to `Cpu::execute<Op>`
-in `generated/us/translated_bank_*.cpp` or `generated/jp/translated_bank_*.cpp`.
-A common dispatcher selects the program using `Cpu::version`, which comes from
-the imported asset profile. Each bank dispatcher maps HiROM aliases
-while preserving the actual program bank in architectural state. Operands are
+Every source instruction becomes a fixed-opcode C++ call to `MainCpu65816::execute_instruction<Op>`
+in `generated/us/program/` or `generated/jp/program/`. Translation units are
+grouped by assembly subsystem, and functions derive their names from the owning
+source path. Instructions emitted by a macro retain both its definition and
+caller provenance. Source paths whose meaning is still unknown remain explicitly
+`unresolved`; the generator does not infer a role from the instruction address.
+A common dispatcher selects the program using `MainCpu65816::game_version`, which
+comes from the imported asset profile. Each regional `game_program_dispatch.cpp`
+maps HiROM aliases and routes to the owning source function while preserving the
+actual program bank in architectural state. Operands are
 embedded constants. Each profile's `generated_assets.cpp` contains a sparse
 image of declared 65816 and SPC700 instruction bytes only. All other locations
 in its 3 MiB image template are zero. The executable requires a locally imported asset pack before
 starting the game; it does not distribute the original game data.
 
-`Cpu` retains the architectural registers, status flags, stack behavior, and
+`MainCpu65816` retains the architectural registers, status flags, stack behavior, and
 addressing rules needed to execute those calls faithfully. Its instruction
 semantics use an opcode helper, but the game program counter selects compiled
 source sites: there is no runtime fetch/decode fallback for unknown code.
-`Bus` implements CPU-visible hardware and memory. SDL2/OpenGL presents the
+`SnesBus` implements CPU-visible hardware and memory. SDL2/OpenGL presents the
 resulting framebuffer and accepts input. SPC700 and S-DSP are separate sound
 hardware components.
+
+The current snapshot already contained wider entity-culling constants and
+corresponding alternate-width instruction cases that differ from the older
+original assembly checkout. `apply_frozen_program_overrides` retains those nine
+cases per region, asserting their expected linked inputs before applying the
+existing values. They are recorded under `snapshot_overrides` in each program
+index. The organization pass preserves the pre-existing executable instruction
+stream; it does not silently reset that behavior to the older assembly. The
+code-only cartridge import template remains the original linked bytes.
 
 ## Local asset import
 
@@ -49,7 +63,7 @@ hardware components.
 imported ranges, and the supported image SHA-256 values. `rom_data(version)` and
 `rom_size(version)` describe an incomplete code template, not a playable image.
 Callers use `load_game_assets()` to identify the pack and construct
-`Bus(assets.image, assets.version)` with its matching program.
+`SnesBus(assets.image, assets.version)` with its matching program.
 
 | Profile | Compiled instruction bytes | Imported noninstruction bytes | Ranges in each partition |
 | --- | ---: | ---: | ---: |
@@ -93,8 +107,12 @@ underlying instruction spans. Neither variant drops its branch sites.
 `generated_profile.hpp` exposes `source_profile(GameVersion)`. Its WRAM/ROM
 locations and event IDs come from each configuration's linked symbols; the few
 buffer-relative layouts follow the corresponding original source routines.
-`source_profiles.json` records the resulting values. The renderer consumes this
-profile rather than assuming US addresses for Japanese battle, world-map,
+`source_profiles.json` records the resulting values with named nested fields.
+Character and battler layouts expose members such as `current_hp` and `hp_target`;
+party, teleport, timing and DMA queue metadata likewise use source-derived names
+instead of array positions. Debug tools and gameplay timing use their own fields
+from the same regional profile. The renderer consumes the profile rather than
+assuming US addresses for Japanese battle, world-map,
 Lumine Hall, title, or file-selection state. See
 [the presentation source contracts](docs/presentation-scenes.md) for the source
 routines and regional differences.
@@ -148,10 +166,10 @@ Data macros remain data. A twelve-byte DB block in `main.spc700.s` is explicitly
 identified as six executable instructions, with asserted source bytes and
 instruction boundaries.
 
-`spc_translated.cpp` emits fixed-opcode calls to `Spc::execute<Op>`. It validates
+`audio_driver_instructions.cpp` emits fixed-opcode calls to `Spc700AudioCpu::execute_instruction<Op>`. It validates
 the loaded instruction's opcode and operand bytes before executing a compiled
 case. Changed or unknown code fails rather than silently using stale constants.
-The hardware IPL boot ROM is implemented separately by `Spc`; the driver's
+The hardware IPL boot ROM is implemented separately by `Spc700AudioCpu`; the driver's
 direct jump to `$FFC0` is recorded as an external hardware target. Source
 instruction macros are currently rejected if introduced; the existing SPC
 macros emit sound data only.
@@ -222,7 +240,17 @@ CMake tracks the reports and generated headers as outputs and dependencies of
   hashes, tool revision, original/instrumented binary equality, and control flow.
 * Each profile's `mode_variant_audit.json` records alternate immediate
   fall-throughs and unresolved edges; the root file indexes both reports.
-* `source_profiles.json` records per-version read-only presentation metadata.
+* `source_profiles.json` records per-version timing, debug and presentation
+  metadata: linked addresses, structure offsets, and source enums.
+* `us/program_index.json` and `jp/program_index.json` link each generated function
+  and translation unit to its source file, source-line range and address range.
+  They classify source-named versus unresolved routines and fingerprint the
+  executable instruction stream independently of the C++ names.
+* `audio_program_index.json` provides the equivalent label-based SPC700 lookup.
+* `program_sources.cmake` is the generated compilation inventory consumed by CMake.
+
+See [source navigation](docs/source-navigation.md) for concrete lookup examples,
+module responsibilities and register names.
 
 No report equates translation coverage with full game correctness.
 

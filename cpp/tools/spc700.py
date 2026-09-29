@@ -105,6 +105,7 @@ def annotate(root: Path) -> tuple[str, list[dict], dict[str, str]]:
             raise ValueError(f"Recursive SPC source include: {path}")
         hashes[str(path.relative_to(root))] = digest(path)
         macro_depth = 0
+        source_label = "unresolved_entry"
         for number, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             code = text.partition(";")[0].strip()
             include = INCLUDE.fullmatch(code)
@@ -112,6 +113,9 @@ def annotate(root: Path) -> tuple[str, list[dict], dict[str, str]]:
                 visit(path.parent / include.group(1), active | {path})
                 continue
             while LABEL.match(code):
+                label = LABEL.match(code)[0].rstrip().rstrip(":")
+                if label and not label.startswith("."):
+                    source_label = label
                 code = LABEL.sub("", code, count=1)
             token = code.split(None, 1)[0].split(".", 1)[0].upper() if code else ""
             if token == "MACRO":
@@ -126,7 +130,7 @@ def annotate(root: Path) -> tuple[str, list[dict], dict[str, str]]:
                     raise ValueError(f"SPC instruction macros need expansion-aware instrumentation: {path}:{number}")
                 index = len(sites)
                 output.extend([f"EB_CPP_SPC_START_{index}:", text, f"EB_CPP_SPC_END_{index}:"])
-                site = {"file": str(path.relative_to(root)), "line": number, "text": text.strip()}
+                site = {"file": str(path.relative_to(root)), "line": number, "text": text.strip(), "label": source_label}
                 if byte_code:
                     site["expected_bytes"] = byte_code[0].hex()
                     site["lengths"] = byte_code[1]
@@ -249,6 +253,17 @@ def build(root: Path, assembly: Path) -> dict:
     return result
 
 
+def attach_source_labels(root: Path, result: dict) -> None:
+    """Add organization metadata to a verified older assembly cache."""
+    _, sites, hashes = annotate(root)
+    if hashes != result["source_hashes"]:
+        raise ValueError("SPC source changed while recovering source label provenance")
+    by_source = {(site["file"], site["line"], site["text"]): site["label"] for site in sites}
+    for item in result["instructions"]:
+        source = item["source"]
+        source["label"] = by_source[(source["file"], source["line"], source["text"])]
+
+
 def emit(output: Path, result: dict) -> None:
     # SPC RAM is writable. Each fixed case checks that its loaded instruction
     # bytes still match this source build before invoking the compiled helper;
@@ -258,17 +273,47 @@ def emit(output: Path, result: dict) -> None:
         if not path.exists() or path.read_text(encoding="utf-8") != text:
             path.write_text(text, encoding="utf-8")
 
-    lines = ['// Generated from exact SPC700 assembly source sites. Do not edit.\n',
-             '#include "eb/spc.hpp"\n#include "generated_spc.hpp"\nnamespace eb {\n',
-             'bool spc_translated_step(Spc& c) {\n    switch (c.pc) {\n']
+    grouped = {}
     for item in result["instructions"]:
-        source = item["source"]
-        raw = bytes([item["opcode"]]) + item["operand"].to_bytes(item["length"] - 1, "little")
-        guard = " || ".join(f"c.read(0x{item['address'] + offset:04X}) != 0x{value:02X}"
-                            for offset, value in enumerate(raw))
-        lines.extend([f'    // {source["file"]}:{source["line"]} {source["text"].rstrip(chr(92))}\n',
-                      f'    case 0x{item["address"]:04X}: if ({guard}) return false; c.execute<0x{item["opcode"]:02X}>(0x{item["operand"]:04X}, {item["length"]}); return true;\n'])
+        label = item["source"].get("label", "unresolved_entry")
+        grouped.setdefault(label, []).append(item)
+    unresolved = lambda label: label.upper().startswith(("UNK", "UNRESOLVED"))
+    names = {label: "execute_audio_" + ("unresolved_" if unresolved(label) else "") +
+             re.sub(r"[^a-z0-9_]+", "_", label.lower()) + "_instruction" for label in grouped}
+    if len(set(names.values())) != len(names):
+        raise ValueError("SPC labels collide after C++ identifier normalization")
+    lines = ['// Generated from exact SPC700 assembly source sites. Do not edit.\n',
+             '#include "eb/spc700_audio_cpu.hpp"\n#include "generated_audio_program.hpp"\nnamespace eb {\nnamespace {\n']
+    for label, items in grouped.items():
+        lines.append(f'// Assembly source label: {label}.\nbool {names[label]}(Spc700AudioCpu& cpu) {{\n    switch (cpu.program_counter) {{\n')
+        for item in items:
+            source = item["source"]
+            raw = bytes([item["opcode"]]) + item["operand"].to_bytes(item["length"] - 1, "little")
+            guard = " || ".join(f"cpu.read_byte(0x{item['address'] + offset:04X}) != 0x{value:02X}"
+                                for offset, value in enumerate(raw))
+            lines.extend([f'    // {source["file"]}:{source["line"]} {source["text"].rstrip(chr(92))}\n',
+                          f'    case 0x{item["address"]:04X}: if ({guard}) return false; cpu.execute_instruction<0x{item["opcode"]:02X}>(0x{item["operand"]:04X}, {item["length"]}); return true;\n'])
+        lines.append('    default: return false;\n    }\n}\n')
+    # Keep direct static site selection on the audio hot path. The named
+    # source-label functions contain the same writable-code byte guards.
+    lines.append('}\nbool execute_translated_audio_instruction(Spc700AudioCpu& cpu) {\n    switch (cpu.program_counter) {\n')
+    for label, items in grouped.items():
+        lines.extend(f'    case 0x{item["address"]:04X}:\n' for item in items)
+        lines.append(f'        return {names[label]}(cpu);\n')
     lines.append('    default: return false;\n    }\n}\n} // namespace eb\n')
-    write("spc_translated.cpp", "".join(lines))
-    write("generated_spc.hpp", "#pragma once\nnamespace eb {\nclass Spc;\nbool spc_translated_step(Spc&);\n}\n")
+    write("audio_driver_instructions.cpp", "".join(lines))
+    write("generated_audio_program.hpp", "#pragma once\nnamespace eb {\nclass Spc700AudioCpu;\nbool execute_translated_audio_instruction(Spc700AudioCpu&);\n}\n")
     write("spc_source_map.json", json.dumps(result, separators=(",", ":")) + "\n")
+    stream = [(item["address"], item["opcode"], item["operand"], item["length"]) for item in result["instructions"]]
+    write("audio_program_index.json", json.dumps({"schema": 1,
+        "instruction_count": len(stream), "instruction_stream_sha256": hashlib.sha256(json.dumps(stream, separators=(",", ":")).encode()).hexdigest(),
+        "generated_source": "audio_driver_instructions.cpp", "source_hashes": result["source_hashes"],
+        "naming_evidence": "Original SPC source labels; UNK labels are explicitly unresolved and do not assert recovered semantics.",
+        "routines": [{"function": names[label], "source_label": label,
+                      "source_file": items[0]["source"]["file"], "source_line": items[0]["source"]["line"],
+                      "first_address": f"0x{items[0]['address']:04X}", "last_address": f"0x{items[-1]['address']:04X}",
+                      "instruction_count": len(items), "classification": "unresolved" if unresolved(label) else "source_named"}
+                     for label, items in grouped.items()]}, indent=2) + "\n")
+    for old in ("spc_translated.cpp", "generated_spc.hpp"):
+        if (output / old).is_file():
+            (output / old).unlink()

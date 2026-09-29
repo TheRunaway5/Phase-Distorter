@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL.h>
+#include "eb/game_debug.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -31,6 +32,7 @@ struct DebugDiagnostics {
     int source_width = 256, source_height = 224;
     int drawable_width{}, drawable_height{};
     bool fullscreen = false;
+    GameDebugSnapshot game_debug;
     std::array<AssetCacheInfo, 2> cache;
     std::string custom_asset_status;
 };
@@ -44,20 +46,22 @@ public:
     DebugPanel& operator=(const DebugPanel&) = delete;
 
     // Feed every event here before handling gameplay. F1 toggles settings and
-    // Escape cancels a confirmation or closes settings. The persistent top bar
+    // Escape cancels a confirmation or closes settings. The top bar
     // alone does not capture keyboard/controller input; true owns this event.
     bool process_event(const SDL_Event& event);
     bool captures_game_input() const;
-    bool visible() const; // Floating settings window; the top bar is always drawn.
+    bool visible() const; // Floating settings window.
     void set_visible(bool visible);
     // One-shot requests are handled by the application at a safe frame boundary.
     std::optional<PanelAction> take_action();
     void set_action_status(std::string status);
-    // Logical SDL pixels occupied by the persistent top bar. The frontend
-    // reserves this strip rather than cropping or covering the game picture.
+    const GameDebugSettings& game_settings() const;
+    std::optional<GameDebugRequest> take_game_action();
+    // Logical SDL height of the top bar. Windowed mode reserves this strip;
+    // fullscreen reveals it as an overlay only while the pointer is at the top.
     float menu_height() const;
     // Call after drawing the game framebuffer and before swapping the window.
-    // Only host display preferences are editable; diagnostics remain read-only.
+    // Debug controls emit commands; the UI never receives mutable hardware.
     void draw(DisplaySettings& settings, const DebugDiagnostics& diagnostics);
 
 private:

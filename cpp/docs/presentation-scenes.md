@@ -7,6 +7,10 @@ game, calling its map-loading routines, or changing WRAM, camera movement,
 collision, event flags, entity allocation, or spawn decisions. The original
 `runtime` and decompilation tools are not inputs to this analysis.
 
+The desktop session now also enables a separate [actor preload policy](entity-preload.md).
+It deliberately changes activation distances; the rendering contracts below
+and their state-equivalence tests concern the read-only renderer itself.
+
 ## World graphics and boundaries
 
 `src/system/center_screen.asm` subtracts 128 and 112 from the requested world
@@ -130,7 +134,39 @@ Do not suppress BG3 in every scene. `src/battle/load_battlebg.asm` targets BG2
 in one configuration and BG3 in another. The active animated-layer metadata and
 actual PPU configuration should control that case. The gas-station interference
 intro uses BG1 main-screen `$01`, BG2 sub-screen `$02`, and palette animation;
-it is distinct from the static title signature and should remain extended.
+it is distinct from the static title signature and uses its fixed 4:3 card.
+
+## Active entities and battle effects
+
+`UNKNOWN_C0DB0F` culls entity drawing outside the original screen neighborhood;
+`UNKNOWN_C08CD5` also drops individual spritemap pieces whose full X coordinate
+cannot be represented by its native output. Extending raw nine-bit OAM cannot
+recover those pieces or distinguish a hidden slot from a right-hand world actor.
+The wider renderer instead reads the `FIRST_ENTITY` list and the two source draw
+callbacks' descriptors. It observes `ENTITY_SPRITEMAP_POINTER_*`, screen/absolute
+coordinates, current frame, surface flags, body priorities, and visibility bits.
+The list is bounded to 30 unique slots and map chains are bounded. The complete
+OAM upload captures these descriptors before game code prepares the next frame.
+These host copies never invoke the draw callbacks or change their counters.
+
+`SHOW_PSI_ANIMATION` chooses BG2 over two-bit battle backgrounds and BG1 over
+four-bit backgrounds. The 34 animation configurations share this mechanism;
+palette cycling is optional and must not control whether the overlay is drawn.
+The wider presentation fits that animation canvas once across the display,
+with the scroll-derived target anchor preserved. Ordinary battle backgrounds,
+enemy sprites, and text retain their own coordinates.
+
+At battle exit, `BATTLE_ROUTINE` clears `BATTLE_MODE_FLAG` **before** `FADE_OUT`
+and its wait loop. The presentation therefore retains the matched battle PPU
+layout until black or a replacement layout, without delaying the actual flag
+write, fade, or subsequent world transition.
+
+`widescreen_tests` covers omitted sprite pieces, signed coordinates, hidden
+entities, publication timing, both PSI layer layouts and target anchors, effect
+metadata, and battle-exit fades in both regional profiles. The optional
+`battle_animation_tests --assets FILE` checks every frame of all 34 imported PSI
+sequences in both layouts at width 400, plus selected frames at width 1024.
+These are rendering fixtures, not a claim of naturally playing every battle.
 
 ## Verification boundary
 

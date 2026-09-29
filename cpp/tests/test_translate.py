@@ -40,13 +40,121 @@ class PresentationProfileTests(unittest.TestCase):
                     symbols[name] = {0x7E0000 + timer}
                 symbols["EVENT_860"] = {gas_event, 0xC42000}
                 symbols["BUFFER"] = {0x7F0000}
-                with mock.patch.object(translate, "linked_symbols", return_value=symbols):
+                with mock.patch.object(translate, "linked_symbols", return_value=symbols), \
+                     mock.patch.object(translate, "debug_profile", return_value={}):
                     profile = translate.source_profile(Path("unused.dbg"), region)
-                self.assertEqual(profile["wram_psi_animation"], psi)
-                self.assertEqual(profile["wram_flash_timers"], list(timers))
-                self.assertEqual(profile["gas_flash_event"], gas_event)
-                self.assertEqual(profile["wram_gas_base_palette"], 0x10000)
-                self.assertEqual(profile["title_bg_maps"], [0x58, 0] if region == "US" else [0x38, 0x3C])
+                self.assertEqual(profile["wram_psi_animation_state"], psi)
+                self.assertEqual(profile["wram_flash_timers"], dict(zip(("green", "red", "reflection", "green_background"), timers)))
+                self.assertEqual(profile["gas_station_flash_script"], gas_event)
+                self.assertEqual(profile["wram_gas_station_base_palette"], 0x10000)
+                self.assertEqual(profile["title_background_maps"], {"layer1": 0x58, "layer2": 0} if region == "US" else {"layer1": 0x38, "layer2": 0x3C})
+
+    def test_named_debug_layouts_follow_linked_structure_members(self):
+        # The two regional character records have different offsets and sizes.
+        # Reordered linker records exercise names rather than positional lookup.
+        character_members = {"level": 5, "max_hp": 10, "max_pp": 12, "afflictions": 14,
+            "current_hp_fraction": 67, "current_hp": 69, "current_hp_target": 71,
+            "current_pp_fraction": 73, "current_pp": 75, "current_pp_target": 77}
+        battler_members = {"hp": 17, "hp_target": 19, "hp_max": 21, "pp": 23,
+            "pp_target": 25, "pp_max": 27, "afflictions": 29, "consciousness": 12,
+            "ally_or_enemy": 14, "npc_id": 15, "id": 0}
+        party_members = {"party_members": 3, "party_count": 55,
+            "player_controlled_party_count": 56, "walking_style": 23,
+            "leader_x_coord": 11, "leader_y_coord": 15}
+        for region, shift, record_size in (("US", 0, 95), ("JP", 1, 94)):
+            with self.subTest(region=region), tempfile.TemporaryDirectory() as directory:
+                lines = ['sym\tid=100,name="MAIN_LOOP",val=0xc0b800',
+                         'sym\tparent=100,name="@LOOP_BEGIN",val=0xc0b814']
+                records = (("char_struct", record_size, {key: value - shift for key, value in character_members.items()}),
+                           ("battler", 78, battler_members), ("game_state", 100, party_members),
+                           ("psi_teleport_destination", 31, {"dest_x": 27, "dest_y": 29}))
+                for scope, (name, size, members) in enumerate(records):
+                    lines.append(f'scope\tid={scope},name="{name}",size={size}')
+                    for member, offset in reversed(list(members.items())):
+                        lines.append(f'sym\tscope={scope},name="{member}",val={offset}')
+                debug = Path(directory) / "linked.dbg"
+                debug.write_text("\n".join(lines))
+                def offset(name, kind):
+                    return {"PARTY_CHARACTERS": 0x9800, "BATTLERS_TABLE": 0x9900,
+                            "GAME_STATE": 0x9700, "WAIT_UNTIL_NEXT_FRAME": 0x8756,
+                            "ADD_CHAR_TO_PARTY": 0x228f8, "REMOVE_CHAR_FROM_PARTY": 0x229bb}.get(name, 0x1234)
+                profile = translate.debug_profile(debug, region, offset)
+                self.assertEqual(profile["character_layout"], {"table_address": 0x9800,
+                    "entry_size": record_size, **{key: value - shift for key, value in character_members.items()}})
+                self.assertEqual(profile["battler_layout"], {"table_address": 0x9900,
+                    "entry_size": 78, **battler_members})
+                self.assertEqual(profile["party_state"]["leader_x"], 0x970b)
+                self.assertEqual(profile["party_state"]["leader_y"], 0x970f)
+                self.assertEqual(profile["gameplay_routines"]["add_party_character"], 0xc228f8)
+                self.assertEqual(profile["gameplay_routines"]["remove_party_character"], 0xc229bb)
+                self.assertEqual(profile["gameplay_timing"], {"entity_update_call": 0xc0b818,
+                    "entity_update_return": 0xc0b81c, "wait_for_next_frame": 0xc08756})
+
+    def test_profile_emission_rejects_different_regional_schemas(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for japanese in ({"coordinates": {"y": 20}},
+                             {"coordinates": {"y": 20, "x": 10}}):
+                with self.subTest(japanese=japanese), self.assertRaisesRegex(ValueError, "schemas differ"):
+                    translate.emit_profiles(Path(directory), {
+                        "US": {"coordinates": {"x": 1, "y": 2}}, "JP": japanese})
+
+
+class ProgramNamingTests(unittest.TestCase):
+    def test_names_preserve_source_evidence_and_mark_unresolved_routines(self):
+        known = translate.Source("src/misc/battlebgs/generate_frame.asm", 1, "RTL", False)
+        self.assertEqual(translate.routine_identity(known), (
+            "miscellaneous", "execute_miscellaneous_battle_backgrounds_generate_frame_instruction", "source_named"))
+        unknown = translate.Source("src/unknown/C0/C0DB0F.asm", 1, "RTL", False)
+        self.assertEqual(translate.routine_identity(unknown), (
+            "unresolved_c0", "execute_unresolved_c0_c0db0f_instruction", "unresolved"))
+
+    def test_reorganization_retains_every_opcode_operand_and_runtime_width(self):
+        items = [translate.Instruction(0xC08000, 0xA9, 0x1234, 3,
+                    translate.Source("include/macros.asm", 10, "LDA #value", True), 0x1234,
+                    routine_source=translate.Source("src/battle/calculate_damage.asm", 12, "load_damage $1234", False)),
+                 translate.Instruction(0xC08003, 0x6B, 0, 1,
+                    translate.Source("src/overworld/move_party.asm", 20, "RTL", False)),
+                 translate.Instruction(0xC28000, 0xEA, 0, 1,
+                    translate.Source("src/unknown/C2/C28000.asm", 30, "NOP", False))]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            translate.emit_program_instructions(output, items, "eb::us")
+            index = json.loads((output / "program_index.json").read_text())
+            self.assertEqual(index["instruction_count"], 3)
+            self.assertEqual(index["classification_counts"], {"source_named": 2, "unresolved": 1})
+            self.assertEqual(index["instruction_stream_sha256"], translate.instruction_stream_digest(items))
+            self.assertEqual(sum(row["instruction_count"] for row in index["routines"]), 3)
+            cases = "\n".join(path.read_text() for path in output.glob("program/*.cpp"))
+            self.assertIn("case 0xC08000: if (cpu.status_register & 0x20) cpu.execute_instruction<0xA9>(0x000034, 2); else cpu.execute_instruction<0xA9>(0x001234, 3);", cases)
+            self.assertIn("case 0xC08003: cpu.execute_instruction<0x6B>(0x000000, 1);", cases)
+            self.assertIn("case 0xC28000: cpu.execute_instruction<0xEA>(0x000000, 1);", cases)
+            self.assertIn("Macro caller: src/battle/calculate_damage.asm:12", cases)
+            self.assertFalse(list(output.glob("translated_bank_*.cpp")))
+            # A renamed source removes only its previous owned generated file.
+            (output / "independent.cpp").write_text("// user-owned source\n")
+            translate.emit_program_instructions(output, items[1:], "eb::us")
+            self.assertFalse((output / "program/battle_01.cpp").exists())
+            self.assertTrue((output / "independent.cpp").exists())
+
+    def test_source_identifier_collision_is_rejected(self):
+        items = [translate.Instruction(0xC08000 + n, 0xEA, 0, 1,
+                    translate.Source(name, 1, "NOP", False))
+                 for n, name in enumerate(("src/system/a-b.asm", "src/system/a_b.asm"))]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "collide"):
+                translate.emit_program_instructions(Path(directory), items, "eb")
+
+    def test_frozen_presentation_overrides_require_the_exact_original_site(self):
+        for version, overrides in translate.FROZEN_PRESENTATION_OVERRIDES.items():
+            items = [translate.Instruction(row["address"], *row["expected"][:3],
+                     translate.Source("fixture.asm", 1, "NOP", False), row["expected"][3])
+                     for row in overrides]
+            actual = translate.apply_frozen_program_overrides(version, items)
+            self.assertEqual([[item.opcode, item.operand, item.length, item.wide_operand] for item in actual],
+                             [row["frozen"] for row in sorted(overrides, key=lambda row: row["address"])])
+            items[0] = replace(items[0], operand=items[0].operand ^ 1)
+            with self.assertRaisesRegex(ValueError, "source changed"):
+                translate.apply_frozen_program_overrides(version, items)
 
 
 class AssetPlaceholderTests(unittest.TestCase):
@@ -201,6 +309,16 @@ SEGMENTS {
         self.assertEqual(self.instructions[1].source.line, 4)
         self.assertFalse(self.instructions[5].source.macro_expansion)
 
+    def test_macro_ownership_uses_the_linked_call_span(self):
+        expanded = [item for item in self.instructions if item.source.macro_expansion]
+        self.assertTrue(expanded)
+        for item in expanded:
+            self.assertEqual(item.routine_source.file, "fixture.asm")
+            self.assertEqual(item.routine_source.text, "start: outer $1234")
+        variants, _ = translate.expand_mode_variants(self.instructions, self.rom)
+        by_address = {item.address: item for item in variants}
+        self.assertEqual(by_address[0xC08004].routine_source, by_address[0xC08002].routine_source)
+
     def test_source_and_linked_byte_disagreement_is_rejected(self):
         corrupted = bytearray(self.rom)
         corrupted[2] = 0xEA
@@ -280,30 +398,30 @@ finished: RTL
         jp_instructions = [replace(item, operand=0x5678, wide_operand=0x5678)
                            if item.address == 0xC08002 else item for item in self.instructions]
         translate.emit(generated / "jp", jp_instructions, jp_rom, {}, namespace="eb::jp")
-        translate.emit_profiles(generated, {"US": {"wram_battle_flag": 11}, "JP": {"wram_battle_flag": 22}})
+        translate.emit_profiles(generated, {"US": {"wram_battle_mode_flag": 11, "gameplay_timing": {"entity_update_call": 101, "entity_update_return": 105, "wait_for_next_frame": 99}}, "JP": {"wram_battle_mode_flag": 22, "gameplay_timing": {"entity_update_call": 201, "entity_update_return": 205, "wait_for_next_frame": 199}}})
         (self.root / "eb").mkdir()
         for header in ("asset_store.hpp", "game_version.hpp"):
             shutil.copyfile(TRANSLATOR.parents[1] / "include/eb" / header, self.root / "eb" / header)
-        (self.root / "eb/cpu.hpp").write_text("""#pragma once
+        (self.root / "eb/main_cpu_65816.hpp").write_text("""#pragma once
 #include <cstdint>
 #include "game_version.hpp"
-namespace eb { class Cpu { public:
-GameVersion version=GameVersion::US;
-std::uint32_t pc=0xC08002,operand=0;
-std::uint8_t p=0;
-template<std::uint8_t Op> void execute(std::uint32_t value,std::uint8_t) { operand=value; }
+namespace eb { class MainCpu65816 { public:
+GameVersion game_version=GameVersion::US;
+std::uint32_t program_counter=0xC08002,operand=0;
+std::uint8_t status_register=0;
+template<std::uint8_t Op> void execute_instruction(std::uint32_t value,std::uint8_t) { operand=value; }
 }; }
 """)
-        (self.root / "multi.cpp").write_text("""#include "eb/cpu.hpp"
+        (self.root / "multi.cpp").write_text("""#include "eb/main_cpu_65816.hpp"
 #include "generated_code.hpp"
 #include "generated_assets.hpp"
 #include "generated_profile.hpp"
 #include <cassert>
 int main() {
- eb::Cpu c;
- assert(eb::translated_step(c) && c.operand==0x1234);
- c.version=eb::GameVersion::JP;
- assert(eb::translated_step(c) && c.operand==0x5678);
+ eb::MainCpu65816 c;
+ assert(eb::execute_translated_main_instruction(c) && c.operand==0x1234);
+ c.game_version=eb::GameVersion::JP;
+ assert(eb::execute_translated_main_instruction(c) && c.operand==0x5678);
  assert(eb::rom_data(eb::GameVersion::US)[3]==0x34);
  assert(eb::rom_data(eb::GameVersion::JP)[3]==0x78);
  assert(eb::asset_profiles().size()==2);
@@ -311,8 +429,10 @@ int main() {
    assert(profile.layout.ranges.size()==1 && profile.layout.ranges[0].offset==15);
    for(auto range:profile.layout.ranges) for(unsigned i=0;i<range.size;++i) assert(profile.layout.code_image[range.offset+i]==0);
  }
- assert(eb::source_profile(eb::GameVersion::US).wram_battle_flag==11);
- assert(eb::source_profile(eb::GameVersion::JP).wram_battle_flag==22);
+ assert(eb::source_profile(eb::GameVersion::US).wram_battle_mode_flag==11);
+ assert(eb::source_profile(eb::GameVersion::JP).wram_battle_mode_flag==22);
+ assert(eb::source_profile(eb::GameVersion::US).gameplay_timing.entity_update_call==101);
+ assert(eb::source_profile(eb::GameVersion::JP).gameplay_timing.entity_update_return==205);
 }
 """)
         translate.run(["c++", "-std=c++20", "-I", str(self.root), "-I", str(generated),
@@ -323,59 +443,64 @@ int main() {
     @unittest.skipUnless(shutil.which("c++"), "C++ compiler required")
     def test_generated_dispatch_and_linked_assets_execute(self):
         generated = self.root / "generated"
-        translate.emit(generated, self.instructions, self.rom, self.provenance)
+        # Deliberately interleave source owners within one ROM page. Every
+        # boundary and hole must still dispatch by its original fixed address.
+        paths = ("src/system/test_routine.asm", "src/battle/test_routine.asm", "src/unknown/C0/C08000.asm")
+        items = [replace(item, routine_source=translate.Source(paths[number % 3], number + 1, item.source.text, False))
+                 for number, item in enumerate(self.instructions)]
+        translate.emit(generated, items, self.rom, self.provenance)
         (self.root / "eb").mkdir()
         shutil.copyfile(TRANSLATOR.parents[1] / "include/eb/asset_store.hpp", self.root / "eb/asset_store.hpp")
         shutil.copyfile(TRANSLATOR.parents[1] / "include/eb/game_version.hpp", self.root / "eb/game_version.hpp")
-        (self.root / "eb/cpu.hpp").write_text("""#pragma once
+        (self.root / "eb/main_cpu_65816.hpp").write_text("""#pragma once
 #include <cstdint>
 namespace eb {
-class Cpu {
+class MainCpu65816 {
 public:
-    std::uint32_t pc = 0;
-    std::uint8_t p = 0;
+    std::uint32_t program_counter = 0;
+    std::uint8_t status_register = 0;
     std::uint8_t opcode = 0, length = 0;
     std::uint32_t operand = 0;
-    template<std::uint8_t Op> void execute(std::uint32_t value, std::uint8_t size) {
+    template<std::uint8_t Op> void execute_instruction(std::uint32_t value, std::uint8_t size) {
         opcode = Op; operand = value; length = size;
     }
 };
 }
 """)
         (self.root / "main.cpp").write_text("""#include <initializer_list>
-#include "eb/cpu.hpp"
+#include "eb/main_cpu_65816.hpp"
 #include "generated_code.hpp"
 #include "generated_assets.hpp"
 #include <cassert>
 int main() {
-    eb::Cpu c;
+    eb::MainCpu65816 c;
     for (auto address : {0xC08002u, 0x008002u, 0x808002u, 0x408002u}) {
-        c.pc = address;
-        assert(eb::translated_step(c));
+        c.program_counter = address;
+        assert(eb::execute_translated_main_instruction(c));
         assert(c.opcode == 0xA9 && c.operand == 0x1234 && c.length == 3);
-        assert(c.pc == address); // preserve caller's program bank
+        assert(c.program_counter == address); // preserve caller's program bank
     }
     for (auto address : {0xC0800Fu, 0x7E8002u, 0x000002u}) {
-        c.pc = address;
-        assert(!eb::translated_step(c));
+        c.program_counter = address;
+        assert(!eb::execute_translated_main_instruction(c));
     }
     assert(eb::canonical_rom_address(0xF08002) == 0xE08002);
-    c.pc = 0xC08016;
-    c.p = 0;
-    assert(eb::translated_step(c));
+    c.program_counter = 0xC08016;
+    c.status_register = 0;
+    assert(eb::execute_translated_main_instruction(c));
     assert(c.opcode == 0x29 && c.operand == 0x1800 && c.length == 3);
-    c.p = 0x20;
-    assert(eb::translated_step(c));
+    c.status_register = 0x20;
+    assert(eb::execute_translated_main_instruction(c));
     assert(c.opcode == 0x29 && c.operand == 0 && c.length == 2);
-    c.pc = 0xC0801A;
-    c.p = 0;
-    assert(eb::translated_step(c));
+    c.program_counter = 0xC0801A;
+    c.status_register = 0;
+    assert(eb::execute_translated_main_instruction(c));
     assert(c.opcode == 0xC9 && c.operand == 0 && c.length == 3);
-    c.p = 0x20;
-    assert(eb::translated_step(c));
+    c.status_register = 0x20;
+    assert(eb::execute_translated_main_instruction(c));
     assert(c.opcode == 0xC9 && c.operand == 0 && c.length == 2);
-    c.pc = 0xC0801C;
-    assert(eb::translated_step(c));
+    c.program_counter = 0xC0801C;
+    assert(eb::execute_translated_main_instruction(c));
     assert(c.opcode == 0x00 && c.operand == 0xF0 && c.length == 2);
     assert(eb::translated_instruction_count() == 21);
     assert(eb::rom_size() == 36 && eb::rom_data()[2] == 0xA9);
@@ -386,7 +511,7 @@ int main() {
 }
 """)
         translate.run(["c++", "-std=c++20", "-I", str(self.root), "-I", str(generated),
-                       "main.cpp", *(str(path) for path in sorted(generated.glob("*.cpp"))),
+                       "main.cpp", *(str(path) for path in sorted(generated.rglob("*.cpp"))),
                        "-o", "verify"], self.root)
         translate.run([str(self.root / "verify")], self.root)
         coverage = json.loads((generated / "coverage.json").read_text())
@@ -458,43 +583,43 @@ endmacro
         generated.mkdir()
         spc700.emit(generated, self.result)
         (self.root / "eb").mkdir()
-        (self.root / "eb/spc.hpp").write_text("""#pragma once
+        (self.root / "eb/spc700_audio_cpu.hpp").write_text("""#pragma once
 #include <array>
 #include <cstdint>
 namespace eb {
-class Spc {
+class Spc700AudioCpu {
 public:
-    std::uint16_t pc = 0, operand = 0;
+    std::uint16_t program_counter = 0, operand = 0;
     std::uint8_t opcode = 0, length = 0;
-    std::array<std::uint8_t, 65536> ram{};
-    std::uint8_t read(std::uint16_t address) { return ram[address]; }
-    template<std::uint8_t Op> void execute(std::uint16_t value, std::uint8_t size) {
+    std::array<std::uint8_t, 65536> audio_ram{};
+    std::uint8_t read_byte(std::uint16_t address) { return audio_ram[address]; }
+    template<std::uint8_t Op> void execute_instruction(std::uint16_t value, std::uint8_t size) {
         opcode = Op; operand = value; length = size;
     }
 };
 }
 """)
-        (self.root / "main.cpp").write_text("""#include "eb/spc.hpp"
-#include "generated_spc.hpp"
+        (self.root / "main.cpp").write_text("""#include "eb/spc700_audio_cpu.hpp"
+#include "generated_audio_program.hpp"
 #include <cassert>
 int main() {
-    eb::Spc c;
-    c.ram[0x0500] = 0xE8;
-    c.ram[0x0501] = 5;
-    c.pc = 0x0500;
-    assert(eb::spc_translated_step(c));
+    eb::Spc700AudioCpu c;
+    c.audio_ram[0x0500] = 0xE8;
+    c.audio_ram[0x0501] = 5;
+    c.program_counter = 0x0500;
+    assert(eb::execute_translated_audio_instruction(c));
     assert(c.opcode == 0xE8 && c.operand == 5 && c.length == 2);
-    c.ram[0x0500] = 0xEA;
-    assert(!eb::spc_translated_step(c));
-    c.ram[0x0500] = 0xE8;
-    c.ram[0x0501] = 6;
-    assert(!eb::spc_translated_step(c));
-    c.pc = 0x0506;
-    assert(!eb::spc_translated_step(c));
+    c.audio_ram[0x0500] = 0xEA;
+    assert(!eb::execute_translated_audio_instruction(c));
+    c.audio_ram[0x0500] = 0xE8;
+    c.audio_ram[0x0501] = 6;
+    assert(!eb::execute_translated_audio_instruction(c));
+    c.program_counter = 0x0506;
+    assert(!eb::execute_translated_audio_instruction(c));
 }
 """)
         spc700.command(["c++", "-std=c++20", "-I", str(self.root), "-I", str(generated),
-                        "main.cpp", str(generated / "spc_translated.cpp"), "-o", "verify"], self.root)
+                        "main.cpp", str(generated / "audio_driver_instructions.cpp"), "-o", "verify"], self.root)
         spc700.command([str(self.root / "verify")], self.root)
 
 

@@ -308,7 +308,7 @@ class Oracle:
         if not self.core.retro_load_game(C.byref(game)):
             raise RuntimeError("Core rejected source-linked ROM")
         self.core.retro_set_controller_port_device(0, 1)
-        # Match eb::Bus fresh SRAM (0xff); never read or write a user save file.
+        # Match eb::SnesBus fresh SRAM (0xff); never read or write a user save file.
         sram_size = self.core.retro_get_memory_size(0)
         sram = self.core.retro_get_memory_data(0)
         if sram and sram_size:

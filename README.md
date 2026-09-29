@@ -5,7 +5,7 @@
 Phase Distorter brings EarthBound (US, English) and Mother 2 (Japanese) to a
 native desktop application for Linux and Windows. It includes keyboard and
 controller input, audio, persistent saves, a Settings window, and
-widescreen presentation designed to preserve the original gameplay and spawning.
+widescreen presentation with offscreen actor preloading.
 
 Version **0.1** is a development release. Both games run their respective
 compiled program and use assets imported from the player's own supported ROM.
@@ -21,8 +21,8 @@ Saturn artwork.
 
 ### Downloaded a release ZIP?
 
-1. Choose [windows-0.1.zip](windows-0.1.zip) for Windows or
-   [linux-0.1.zip](linux-0.1.zip) for Linux.
+1. Choose the [Windows ZIP](releases/Phase-Distorter-0.1-windows-x86_64.zip) or
+   [Linux ZIP](releases/Phase-Distorter-0.1-linux-x86_64.zip) from `releases/`.
 2. Use **Extract All** or your archive manager to extract the entire application
    folder. **Do not run the application from inside the ZIP.** Keep its files
    together.
@@ -40,12 +40,7 @@ Saturn artwork.
    the extracted folder. Back up your `.srm` files before updating, then extract
    the next release into a fresh folder; see [save locations](#saves-settings-and-updating).
 
-[linux-0.1.zup](linux-0.1.zup) is a byte-identical ZIP alias using the requested
-filename; rename it to `.zip` if your archive tool does not recognize that
-extension.
-
-The same platform archives remain available with versioned names in
-**`releases/`**:
+Platform archives are stored only in **`releases/`**:
 
 | Package | Contents |
 | --- | --- |
@@ -61,15 +56,21 @@ packs, saves, or source/build trees. Supply your own supported ROM on first
 launch. Each ZIP includes `README.txt`, a file manifest and checksums;
 `releases/SHA256SUMS` records the two archive hashes.
 
-Download this repository as a ZIP and extract it, or clone it to a folder of
-your choice if you also want the full source snapshot. Keep the directory
-structure intact. The version 0.1 snapshot
-includes **`Phase Distorter`** for Linux and **`Phase Distorter.exe`** for Windows
-beside this README. These are native executables: open the appropriate file
-directly to play. No shell or batch launcher, installation script, or compiler
-is required on a compatible system. Play commands below start from the folder
-containing the native executable; source-build commands start from the full
-repository folder containing this README.
+### Running from the source repository
+
+Download this repository as a ZIP and extract it, or clone it if you also want
+the full source snapshot. Keep the directory structure intact. The supplied
+native applications live in **`launchers/linux/bin/eb_cpp`** and
+**`launchers/windows/bin/eb_cpp.exe`**. Open the appropriate executable directly,
+or use `./launch.sh` on Linux or `launch.bat` on Windows; those scripts prefer a
+local build when one exists. Windows keeps `SDL2.dll` in the same `bin/` folder;
+Linux libraries and their notices live in `launchers/linux/lib/`.
+
+The root `install-linux.sh` and `install-shortcuts.vbs` scripts also support this
+layout. The platform instructions and play commands below refer to an extracted
+release ZIP, where the executable is named `Phase Distorter` or
+`Phase Distorter.exe`. Source-build commands start from the repository folder
+containing this README.
 
 ### Windows (x86-64)
 
@@ -129,8 +130,8 @@ require administrator access. Keep the project folder in place or rerun the
 installer after moving it. Both platforms also use the icon on the game window
 and Windows embeds it in the executable.
 
-The application remembers the last game selected. The top-level native
-executables always run the supplied snapshot. Source builds are separate; run
+The application remembers the last game selected. The supplied native
+executables run the release snapshot. Source builds are separate; run
 their executable or install the build as described below.
 
 ### Optional developer launch scripts
@@ -205,9 +206,10 @@ pack supplied. Invalid imports leave an existing valid pack intact.
 | Close Settings / quit | Escape | — |
 
 Controller mappings follow button position, so printed button labels may vary.
-Closing the window also exits the game. Once a game is loaded, an always-visible
-top bar offers **Settings (F1)** and **Fullscreen (F11)**. The game picture fits
-below that bar. Settings opens a floating window; while it is open, keyboard and
+Closing the window also exits the game. Once a game is loaded, the top bar offers
+**Settings (F1)** and **Fullscreen (F11)**. In windowed mode the picture fits below
+the bar. In fullscreen the bar hides until the pointer reaches the top edge, then
+overlays the picture without resizing it. Settings opens a floating window; while it is open, keyboard and
 controller input is captured by the window and the game continues running. The
 initial ROM import view appears before gameplay and does not show this bar.
 
@@ -216,12 +218,38 @@ aspect, 4:3, 16:10, 16:9, 21:9, the window's aspect, or a custom ratio. Preferen
 persist between desktop sessions. The **Diagnostics** tab shows frame, CPU,
 sound, and timing information.
 
-Widescreen renders additional scenery without changing the original game
-camera, movement, collision, entity activation, or spawn rules. Battle patterns
-and Lumine Hall's scrolling wall text adapt to the wider picture. The display
+The optional **Variable refresh rate (VRR)** checkbox uses native-rate pacing
+with vsync, capped below the monitor maximum. Enable VRR in your monitor and
+graphics settings first; the checkbox controls application pacing. It defaults
+to off and is saved between sessions. `--vrr` / `--no-vrr` override it.
+Fixed-refresh 60/120/240 Hz displays use a stable 60 Hz cadence with matching
+playback audio. Expensive overworld entity updates also receive extra CPU
+capacity; `--original-timing` restores the console CPU budget for comparisons.
+See [timing behavior and verification](cpp/docs/timing.md).
+
+**F1 → Debug** provides infinite health and PSI/PP at **999/999**, noclip, and
+an **Enemies ignore you** switch that prevents overworld pursuit and contact
+battles. Story battles still work. The searchable teleport picker includes all
+**385 named map areas**, including interiors, dungeons and endgame locations,
+plus every scripted warp and door landing: **1,472 choices** in total.
+Select a destination and press **Teleport now**. Check Ness, Paula, Jeff and Poo
+as desired and press **Apply party**; keep at least one playable member.
+Guest companions stay with the party. Teleports and party changes wait until
+free movement is available, so close dialogue or finish the current battle.
+These are debug actions and can affect saved progress; entering an area does
+not complete its story events. Cheat switches reset when restarting or switching
+games. See [debug tool details](cpp/docs/debug-tools.md).
+
+Widescreen renders additional scenery while preserving the original game
+camera, movement and collision. NPCs and enemies load in an offscreen band
+beyond the selected view and remain active past its edges, using the source
+event conditions and entity limits. This can change encounter timing.
+PSI effects, including Rockin, fill the wider canvas while targeted effects stay
+aligned with their enemy. Battle backgrounds stay wide throughout the exit fade,
+and Lumine Hall's scrolling wall text adapts to the wider picture. The display
 camera stops at map-region boundaries, including the Fourside tunnel and desert
 road; areas narrower than the selected view use side borders. Menus and HUD
-remain centered, and the wider picture does not activate extra actors.
+remain centered.
 
 Fixed intro artwork, including **The War Against Giygas!**, uses a centered 4:3
 view instead of repeating into the margins. The selected wider view returns
@@ -240,6 +268,12 @@ Pass command-line display options directly to the executable:
 In Windows Command Prompt, use `"Phase Distorter.exe"` with the same options.
 `--help` lists all options, including frame limits, screenshots, audio capture,
 and deterministic input playback.
+
+For a repeatable windowed input run, combine `--input-script FILE` with
+`--replay-only`. Physical game buttons are then ignored while window controls
+and Settings still work. `--buttons MASK` supplies the initial held state;
+script entries replace it at their hardware-frame boundaries. Without
+`--replay-only`, physical game buttons combine with scripted or held buttons.
 
 ### Imported assets and switching games
 
@@ -287,6 +321,8 @@ verified. **It cannot guarantee seizure safety or eliminate every trigger.**
 See [filter behavior and sources](cpp/docs/photosensitivity.md) for its scope,
 parameters, and limitations.
 
+Higher frame rates are available under **F1 → Display → Frame rate**: Native, 90–300 FPS, or Uncapped (`--fps 0`). Optional **Interpolate frames** generates intermediate overworld and battle pictures while gameplay and audio keep their original speed. Frame generation adds one game frame of visual latency and can show blending artifacts; disable it for original pixel frames. VRR limits presentation below the display ceiling. See [timing details](cpp/docs/timing.md).
+
 ## Building from source
 
 The standalone repository contains the C++ implementation and generated C++
@@ -330,8 +366,8 @@ cmake --build build --parallel 4
 ```
 
 The freshly built executable is `build/cpp/eb_cpp`. Run it directly to test your
-changes; the top-level `Phase Distorter` remains the supplied snapshot until you
-replace it with an installed build. Other Linux distributions need the
+changes; `launchers/linux/bin/eb_cpp` remains the supplied snapshot until you
+update it explicitly. Other Linux distributions need the
 equivalent compiler, CMake, SDL2, and OpenGL development packages.
 
 ### Windows build
@@ -361,7 +397,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 Run `build/cpp/eb_cpp.exe` directly to use the freshly compiled version; the
-top-level `Phase Distorter.exe` remains the supplied snapshot. Keep its matching
+`launchers/windows/bin/eb_cpp.exe` remains the supplied snapshot. Keep its matching
 `SDL2.dll` beside the executable; CMake copies the DLL when SDL2 exposes a
 shared-library target. A build made with a different toolchain may need that
 toolchain's runtime DLLs when launched outside its shell.
@@ -486,12 +522,11 @@ ROM import.
 | --- | --- |
 | `cpp/` | C++ implementation, tests, tools, documentation, and dependencies |
 | `generated/` | Compiled-program C++ sources and import layouts for both games |
-| `Phase Distorter` / `Phase Distorter.exe` | Directly runnable Linux / Windows native applications |
-| `SDL2.dll` | SDL2 runtime beside the Windows application |
-| `lib/` | Bundled Linux shared runtimes and their provenance/licenses |
-| `windows-0.1.zip` / `linux-0.1.zip` / `linux-0.1.zup` | Ready-to-run downloads containing one platform-specific application folder; both Linux files are identical ZIPs |
 | `releases/` | Runnable Windows/Linux ZIPs and archive checksums |
-| `launchers/` | Platform packages and dependency notices |
+| `launchers/linux/bin/` | Supplied Linux native application |
+| `launchers/linux/lib/` | Bundled Linux shared runtimes and their provenance/licenses |
+| `launchers/windows/bin/` | Supplied Windows native application and its matching SDL2 DLL |
+| `launchers/*/share/` | Platform icons and dependency notices/source |
 | `launch*.sh` / `launch*.bat` | Optional developer shortcuts with local-build priority |
 | `build-linux.sh` | Linux CMake build helper |
 | `install-linux.sh` / `install-shortcuts.vbs` | Optional Saturn-icon menu/desktop shortcut setup targeting the native applications |
@@ -511,28 +546,35 @@ steps, and any terminal error. Do not attach ROMs or extracted game assets.
 
 The implementation includes comments explaining module ownership, hardware
 contracts, rendering boundaries, asset validation, and test coverage. Begin with
-[`main.cpp`](cpp/src/main.cpp) for startup and the frame loop,
-[`bus.hpp`](cpp/include/eb/bus.hpp) for hardware state, and
-[`asset_store.hpp`](cpp/include/eb/asset_store.hpp) for the ROM import boundary.
+the [source navigation guide](cpp/docs/source-navigation.md) for module ownership,
+original assembly provenance and the CPU register naming crosswalk.
+[`desktop_application.cpp`](cpp/src/desktop_application.cpp) composes the run;
+[`GameSession`](cpp/include/eb/game_session.hpp) owns simulation without SDL,
+[`PresentationPipeline`](cpp/include/eb/presentation_pipeline.hpp) owns picture
+history and host pacing, and [`DesktopDisplay`](cpp/include/eb/desktop_display.hpp)
+owns the window and input. The scene renderer reads hardware through
+[`SceneReadView`](cpp/include/eb/scene_read_view.hpp), while
+[`asset_store.hpp`](cpp/include/eb/asset_store.hpp) defines the ROM import boundary.
 To regenerate the icons, first place the source artwork at `saturn.png` in the
 project root, then run `python3 cpp/tools/make_app_icon.py` with ImageMagick 7's
 `magick` command installed. The original artwork file is not required for
 ordinary builds, which use the checked-in derived icons.
 
-After finalizing the native executables and `lib/` runtimes, maintainers can
-validate and recreate the whitelisted runnable packages using Python 3:
+After updating the native executables in `launchers/*/bin/` and Linux runtimes
+in `launchers/linux/lib/`, maintainers can validate and recreate the whitelisted
+runnable packages using Python 3:
 
 ```sh
 python3 cpp/tools/package_release.py --check
 python3 cpp/tools/package_release.py
 ```
 
-The packager writes versioned archives to this snapshot's `releases/` directory
-and identical download copies to `windows-0.1.zip`, `linux-0.1.zip`, and `linux-0.1.zup` at
-the project root. It preserves executable permissions and records payload
-hashes relative to each archive's application folder. It excludes working-tree
+The packager writes versioned archives only to this snapshot's `releases/`
+directory. Each archive contains the branded native executable and its runtime
+dependencies together for direct launching. It preserves executable permissions
+and records payload hashes relative to each archive's application folder. It excludes working-tree
 assets and rejects supported ROMs or imported packs even if renamed. `--check`
-validates the inputs without writing archives or download copies.
+validates the inputs without writing archives.
 
 Source attribution and dependency licenses are documented in
 [NOTICE.md](NOTICE.md). Phase Distorter is an independent project and is not

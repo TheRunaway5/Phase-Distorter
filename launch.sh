@@ -5,7 +5,7 @@ set -eu
 release_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # Prefer a developer's local build. The packaged binary remains a fallback for
 # users who have only extracted the release and have no compiler installed.
-for program in "$release_dir/build/cpp/eb_cpp" "$release_dir/Phase Distorter" "$release_dir/launchers/linux/bin/eb_cpp"; do
+for program in "$release_dir/build/cpp/eb_cpp" "$release_dir/launchers/linux/bin/eb_cpp"; do
     if [ -x "$program" ]; then
         exec "$program" "$@"
     fi

@@ -79,6 +79,7 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
     background();
     const auto baseline = capture();
     eb::DisplaySettings settings;
+    require(!settings.variable_refresh, "VRR did not default to off");
     require(!settings.reduce_flashing, "Photosensitivity filter did not default to off");
     settings.widescreen = true;
     settings.aspect = eb::AspectRatio::TwentyOneNine;
@@ -155,6 +156,29 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         click(window, panel, draw, 100, 256 + menu_offset);
         require(!settings.reduce_flashing && !settings.widescreen && settings.aspect == eb::AspectRatio::SixteenNine,
             "Restore game display did not reset the photosensitivity filter and aspect preferences");
+        click(window, panel, draw, 43, 295 + menu_offset);
+        require(settings.variable_refresh, "VRR checkbox did not enable the saved display preference");
+        click(window, panel, draw, 43, 295 + menu_offset);
+        require(!settings.variable_refresh, "VRR checkbox did not disable the saved display preference");
+        const auto select_rate = [&](int row) {
+            click(window, panel, draw, 110, 333 + menu_offset);
+            auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+            require(!popups.empty() && popups.back().Window, "Frame-rate picker did not open");
+            const auto* popup = popups.back().Window;
+            const int y = int(popup->Pos.y + ImGui::GetStyle().WindowPadding.y +
+                ImGui::GetFontSize() * .5f + row * ImGui::GetTextLineHeightWithSpacing());
+            click(window, panel, draw, int(popup->Pos.x + 70), y);
+        };
+        select_rate(6);
+        require(settings.frame_limit == 300, "Frame-rate picker did not select 300 FPS");
+        require(settings.interpolate_frames, "Intermediate frames did not default to enabled");
+        click(window, panel, draw, 43, 362 + menu_offset);
+        require(!settings.interpolate_frames, "Frame interpolation could not be disabled");
+        select_rate(7);
+        require(settings.frame_limit == 0, "Frame-rate picker did not select uncapped FPS");
+        click(window, panel, draw, 100, 256 + menu_offset);
+        require(settings.frame_limit == 60 && settings.interpolate_frames && !settings.variable_refresh,
+            "Restore game display did not restore native presentation defaults");
         panel.process_event(key(window, SDLK_F1));
         require(!panel.visible(), "F1 did not close visible panel");
     }
@@ -280,6 +304,81 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(capture() != shown, "Import status/error text did not update");
         panel.process_event(key(window, SDLK_ESCAPE));
         require(panel.exit_requested(), "Import screen Escape did not request exit");
+    }
+    {
+        eb::DebugPanel panel(window, context);
+        stats.fullscreen=true;
+        auto draw=[&]{background();panel.draw(settings,stats);};
+        const auto move=[&](int x,int y) {
+            SDL_WarpMouseInWindow(window,x,y);SDL_PumpEvents();
+            SDL_Event event{};while(SDL_PollEvent(&event))panel.process_event(event);
+            event={};event.type=SDL_MOUSEMOTION;event.motion.windowID=SDL_GetWindowID(window);
+            event.motion.x=x;event.motion.y=y;panel.process_event(event);draw();draw();
+        };
+        move(400,400);
+        require(capture()==baseline,"Fullscreen bar remained visible away from the top edge");
+        require(!panel.captures_game_input(),"Hidden fullscreen bar captured gameplay input");
+        move(50,5);
+        require(capture()!=baseline,"Fullscreen top-edge hover did not reveal the bar");
+        click(window,panel,draw,50,9);
+        require(panel.visible(),"Revealed fullscreen Settings button did not work");
+        panel.set_visible(false);move(400,400);
+        require(capture()==baseline,"Fullscreen bar did not hide after the pointer left");
+        stats.fullscreen=false;draw();draw();
+        require(capture()!=baseline,"Windowed mode did not restore the persistent bar");
+    }
+    {
+        eb::DebugPanel panel(window,context);
+        stats.game_debug.ready=true;stats.game_debug.party={true,false,false,false};
+        panel.set_visible(true);
+        auto draw=[&]{background();panel.draw(settings,stats);};draw();draw();
+        // Select the actual tab by its ImGui geometry, independent of labels'
+        // pixel widths or whether the application is built for Linux/Windows.
+        auto* window_layout=ImGui::FindWindowByName("EarthBound control panel###EBControlPanel");
+        require(window_layout,"Missing debug settings window");
+        auto* tabbar=ImGui::GetCurrentContext()->TabBars.GetByKey(window_layout->GetID("Control panel tabs"));
+        require(tabbar,"Missing settings tab bar");
+        const ImGuiTabItem* debug_tab=nullptr;
+        for(auto& tab:tabbar->Tabs)if(std::string(ImGui::TabBarGetTabName(tabbar,&tab))=="Debug")debug_tab=&tab;
+        require(debug_tab,"Missing Debug tab");
+        click(window,panel,draw,int(tabbar->BarRect.Min.x+debug_tab->Offset+debug_tab->Width/2),int(tabbar->BarRect.GetCenter().y));
+        // Four parallel checkboxes at the top of the Debug tab.
+        const auto row=ImGui::GetFrameHeight()+ImGui::GetStyle().ItemSpacing.y;
+        const auto first_y=tabbar->BarRect.Max.y+ImGui::GetStyle().ItemSpacing.y+ImGui::GetFrameHeight()/2;
+        for(unsigned i=0;i<4;++i)click(window,panel,draw,int(window_layout->Pos.x+30),int(first_y+i*row));
+        const auto cheats=panel.game_settings();
+        require(cheats.infinite_hp && cheats.infinite_pp && cheats.noclip && cheats.enemies_ignore,
+                "Debug checkboxes did not enable all four gameplay tools");
+        require(!panel.take_game_action(),"Toggling a cheat emitted an unrelated party/teleport command");
+        click(window,panel,draw,80,300);
+        auto command=panel.take_game_action();
+        require(command && command->kind==eb::GameDebugRequest::Kind::Teleport && command->destination==1,
+                "Teleport button did not emit the selected destination");
+        require(!panel.take_game_action(),"Teleport command was emitted twice");
+        click(window,panel,draw,104,358); // Paula
+        click(window,panel,draw,172,358); // Jeff
+        click(window,panel,draw,233,358); // Poo
+        click(window,panel,draw,80,387);
+        command=panel.take_game_action();
+        require(command && command->kind==eb::GameDebugRequest::Kind::Party &&
+                command->party==std::array<bool,4>{true,true,true,true},"Party button did not emit the selected membership");
+        require(!panel.take_game_action(),"Party command was emitted twice");
+        if(!prefix.empty())save(prefix+"-game-debug.ppm",capture());
+        click(window,panel,draw,150,270);
+        SDL_Event text{};text.type=SDL_TEXTINPUT;text.text.windowID=SDL_GetWindowID(window);
+        SDL_strlcpy(text.text.text,"Area: Magicant / Sea of Eden",sizeof(text.text.text));
+        panel.process_event(text);draw();draw();
+        ImGuiWindow* choices=nullptr;
+        for(auto* item:ImGui::GetCurrentContext()->Windows)
+            if(item->Active && std::string(item->Name).find("Destinations")!=std::string::npos)choices=item;
+        require(choices,"Searchable destination list did not open");
+        if(!prefix.empty())save(prefix+"-teleport-search.ppm",capture());
+        click(window,panel,draw,int(choices->Pos.x+80),int(choices->Pos.y+ImGui::GetTextLineHeight()/2));
+        click(window,panel,draw,80,300);
+        command=panel.take_game_action();
+        require(command && command->kind==eb::GameDebugRequest::Kind::Teleport && command->destination==1149,
+                "Searching for an endgame area did not select its teleport destination");
+        stats.game_debug={};
     }
     // Both dialogs must remain operable at the original 1x window size. Inspect
     // their actual ImGui layout after drawing and scrolling, not a copied model.

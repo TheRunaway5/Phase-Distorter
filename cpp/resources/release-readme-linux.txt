@@ -32,9 +32,10 @@ explicitly, open a terminal in this folder; examples:
 
 Controls: arrows move; Z=B, X=A, A=Y, S=X, Q=L, W=R; Enter=Start;
 Right Shift=Select. Controllers are supported. F11 toggles fullscreen.
-Once a game loads, the always-visible top bar has Settings (F1) and Fullscreen
-(F11) buttons; the game picture fits below it. Settings opens a floating window
-with display, assets and diagnostics tabs. Its Display tab includes widescreen
+Once a game loads, the top bar has Settings (F1) and Fullscreen (F11) buttons.
+Windowed mode fits the picture below it. Fullscreen hides the bar until the
+pointer reaches the top edge; it then overlays the picture without resizing.
+Settings opens a floating window with Display, Assets, Diagnostics and Debug tabs. Its Display tab includes widescreen
 and the default-off Photosensitivity filter. Escape closes Settings or exits.
 The game continues while Settings captures physical game input. The initial
 ROM import view has no gameplay bar.
@@ -46,6 +47,16 @@ and Franklin Badge lightning, while preserving ordinary picture pixels. It is
 an independent implementation, not Nintendo's exact filter, and cannot guarantee
 seizure safety or eliminate every trigger. Enable it before play with:
   "./Phase Distorter" --reduce-flashing
+
+Settings -> Debug offers infinite health and PSI/PP at 999/999, noclip, and
+Enemies ignore you (overworld pursuit/contact only; story battles still work).
+Search the teleport picker for any of 385 named areas, including interiors,
+dungeons and endgame maps; all scripted warps and door landings are also listed
+(1,472 choices). Select a place and press Teleport now. Check Ness, Paula, Jeff
+and Poo, then Apply party; keep one playable member. Guest companions stay.
+Actions wait for free movement; close dialogue or finish the battle first.
+Debug changes can affect saved progress and do not complete story events.
+Cheat switches reset when restarting or switching games.
 
 Settings -> Assets lists both games' default caches. Clear cached assets asks
 for confirmation and removes only the chosen default .ebpak. The current game
@@ -81,3 +92,22 @@ the detailed README, verification evidence, and documented fidelity limits.
 MANIFEST.json lists packaged files, permissions and hashes. SHA256SUMS covers
 those files and the manifest; it is an integrity record, not a signature.
 See NOTICE.txt, licenses/, and lib/PROVENANCE.md for attribution and licenses.
+
+Timing and VRR
+--------------
+Expensive overworld entity updates receive extra CPU capacity to reduce the
+original console slowdown. --original-timing restores the console CPU budget.
+Settings (F1) > Display > Variable refresh rate (VRR) is optional and defaults
+to off. Enable VRR in your display and graphics settings first. This checkbox
+selects VRR-friendly application pacing; it does not enable driver VRR.
+--vrr / --no-vrr override the saved choice. Fixed-refresh displays use a nearby
+refresh divisor where possible, with playback audio matched to that cadence.
+
+HIGHER FRAME RATES
+F1 > Display > Frame rate: Native (default), 90-300 FPS, or Uncapped.
+--fps 300 caps presentation; --fps 0 removes the cap. Game and audio speed stay
+native. Interpolate frames generates intermediate overworld and battle pictures;
+it adds one game frame of visual latency and can show blending artifacts. Turn
+it off (or use --no-interpolation) for the original completed pictures. With VRR,
+output stays below the display ceiling; without VRR, higher rates disable vsync
+and may tear. Actual FPS depends on the computer, window system and driver.

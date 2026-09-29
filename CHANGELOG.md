@@ -1,3 +1,44 @@
+# Unreleased
+## Module ownership
+
+- Make `GameSession` own deterministic simulation, processor/DSP lifetimes, diagnostics and completed-frame observers without SDL or filesystem dependencies.
+- Make `PresentationPipeline` own frame history, filtering and deadline coordination for Native, high-FPS and VRR presentation.
+- Move scene buffers and caches into `GameSceneRenderer`, fed by synchronous read-only hardware views.
+- Reduce the desktop application to composition; isolate display/input, CLI/preferences, storage and audio output.
+- Add `--replay-only` for desktop replay validation independent of physical gameplay buttons.
+- Serialize virtual-display UI tests to avoid parallel Xvfb display-number races.
+
+## Source organization
+
+- Name the main CPU, audio CPU, DSP, registers, clock units and memory regions explicitly.
+- Separate memory/timing, PPU register access, native rendering and game-specific scene rendering into descriptive files.
+- Group generated instructions by their original subsystem and routine, with source indices, macro-call provenance and explicit unresolved names.
+- Replace positional regional metadata with named character, battle, party, teleport, timing and rendering fields.
+- Preserve the existing executable instruction streams, including earlier widened culling constants, and add a source-navigation guide.
+
+## Frame rate, timing and optional VRR
+
+- Add saved Native, 90–300 FPS and Uncapped presentation choices, independent of gameplay/audio speed.
+- Add optional motion-based intermediate frames for overworld and battle pictures, with scene-cut/history resets and an exact-frame opt-out.
+- Reduce overworld slowdown with a bounded extra entity-update CPU budget; retain hardware arithmetic, transfers and wait timing.
+- Stabilize fixed-refresh presentation and match playback audio to its cadence.
+- Use precise SDL-backed Windows waits; avoid 3 ms presentation sleeps rounding to approximately 16 ms.
+- Add a saved, default-off VRR pacing toggle in Display settings and --vrr / --no-vrr overrides.
+
+
+- Add a Debug tab with infinite HP/PP at 999/999, noclip, enemy avoidance,
+  party selection, and a searchable teleport picker covering all 385 named
+  areas plus every scripted warp and door landing (1,472 choices).
+- Hide the fullscreen top bar until the pointer reaches the top edge; reveal
+  it over the picture without changing the viewport size.
+- Draw active world entities across the wider view from their published sprite
+  descriptors, preserving original spawning, hidden states, and game timing.
+- Fit every PSI animation across the wider canvas while keeping targeted effects
+  anchored on their enemy; retain battle backgrounds through the exit fade.
+- Consolidate native executables and runtime libraries under `launchers/` and
+  downloadable archives under `releases/`, removing duplicate root files.
+- Package releases from those canonical inputs without recreating root aliases.
+
 # Phase Distorter 0.1 — 2026-09-27
 
 - Standalone C++20 source snapshot with compiled US and Japanese program profiles.

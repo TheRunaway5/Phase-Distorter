@@ -1,6 +1,7 @@
 // A synthetic monotonic clock makes pacing independent of host scheduling.
 // Catch-up must preserve simulation work even when a display update is omitted.
 #include "eb/frame_pacer.hpp"
+#include "eb/presentation_clock.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -15,18 +16,21 @@ using Time = eb::FramePacer::Time;
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
-void simulate(unsigned refresh_rate, bool slow_frame) {
+void simulate(unsigned refresh_rate, bool slow_frame, unsigned work_us) {
     Time now{};
-    eb::FramePacer pacer(now);
+    const auto rate = eb::FramePacer::rate_for_refresh(refresh_rate);
+    eb::FramePacer pacer(now, rate);
     const auto display_period = Nanoseconds(1'000'000'000 / refresh_rate);
     const auto end = now + std::chrono::seconds(60);
     std::uint64_t simulated{}, presented{}, omitted{}, audio_ticks{};
     bool delayed = false;
+    Time last{};
+    long long max_gap=0;
     while (now < end) {
         // Simulation/input/audio always happen, including catch-up iterations.
         ++simulated;
         audio_ticks += 32;
-        now += std::chrono::microseconds(200);
+        now += std::chrono::microseconds(work_us);
         if (pacer.advance(now)) {
             ++presented;
             if (slow_frame && !delayed && presented == 30) {
@@ -35,29 +39,72 @@ void simulate(unsigned refresh_rate, bool slow_frame) {
             }
             const auto ticks = std::chrono::duration_cast<Nanoseconds>(now.time_since_epoch()).count();
             now = Time(Nanoseconds((ticks / display_period.count() + 1) * display_period.count()));
+            if (last != Time{}) max_gap=std::max(max_gap, (long long)std::chrono::duration_cast<Nanoseconds>(now-last).count());
+            last=now;
             if (pacer.deadline() > now) now = pacer.deadline();
         } else {
             ++omitted;
         }
     }
-    const auto expected = 60 * eb::FramePacer::frame_rate;
+    const auto expected = 60 * rate;
     require(std::abs(double(simulated) - expected) < 2, "Display refresh rate changed emulated frame rate");
     require(simulated == presented + omitted && audio_ticks == simulated * 32,
         "Catch-up dropped or duplicated simulation/audio frames");
-    if (refresh_rate == 60) require(omitted >= 5, "60 Hz display never allowed the game clock to catch up");
-    if (refresh_rate == 144 && !slow_frame) require(omitted == 0, "144 Hz presentation omitted unnecessary frames");
-    if (slow_frame) require(omitted >= 4, "Slow presentation was not recovered by catch-up simulation");
-    std::cout << refresh_rate << "Hz" << (slow_frame ? " +80ms stall" : "")
-              << ": simulated=" << simulated << " presented=" << presented << " omitted=" << omitted << '\n';
+    if (!slow_frame && refresh_rate == 60) require(max_gap <= display_period.count(), "Missed refresh despite work fitting within one refresh");
+
+    if (slow_frame) require(omitted >= 3, "Slow presentation was not recovered by catch-up simulation");
+    std::cout << "work=" << work_us << "us " << refresh_rate << "Hz" << (slow_frame ? " +80ms stall" : "")
+              << " max_present_gap_ms=" << max_gap/1e6 << ": simulated=" << simulated << " presented=" << presented << " omitted=" << omitted << '\n';
 }
 }
 
 int main() {
     try {
-        simulate(60, false);
-        simulate(144, false);
-        simulate(60, true);
-        simulate(144, true);
+        for (auto rate : {60u, 75u, 120u, 144u, 240u})
+            for (auto work : {200u, 8000u, 12000u}) {
+                simulate(rate, false, work);
+                simulate(rate, true, work);
+            }
+        require(eb::FramePacer::rate_for_refresh(0)==eb::FramePacer::frame_rate,
+                "Unknown monitor changed the native cadence");
+        require(std::abs(eb::FramePacer::rate_for_refresh(59.94)-59.94)<1e-6,
+                "Fractional refresh did not select its matching cadence");
+        require(eb::FramePacer::rate_for_refresh(144,true)==eb::FramePacer::frame_rate,
+                "VRR did not retain native cadence inside its refresh range");
+        require(eb::FramePacer::rate_for_refresh(60,true)<60,
+                "VRR pacing exceeds a 60 Hz panel ceiling");
+        // The actual high-FPS scheduler must preserve the same game/audio tick
+        // count while generating additional host frames, including uncapped mode.
+        for (double fps : {90.,120.,144.,165.,240.,300.,0.}) {
+            Time now{};
+            eb::PresentationClock clock(now, fps);
+            unsigned ticks=0, draws=0;
+            const auto end=now+std::chrono::seconds(10);
+            while(now<end) {
+                clock.resume(now);
+                if(clock.simulation_due(now)) { ++ticks; clock.simulated(1); now+=std::chrono::microseconds(100); }
+                if(clock.presentation_due(now)) { ++draws; now+=std::chrono::microseconds(100); clock.presented(now); }
+                now=std::max(now,clock.wake(now));
+            }
+            require(ticks==601,"High presentation rate accelerated or dropped game/audio ticks");
+            require(fps==0 ? draws>3000 : std::abs(double(draws)-fps*10)<=2,
+                "High presentation limit failed to produce the requested frame rate");
+            std::cout<<"limit="<<fps<<" ticks="<<ticks<<" draws="<<draws<<'\n';
+        }
+        eb::PresentationClock high(Time{},300);
+        require(high.simulation_due(Time{}),"First game tick was not due");
+        high.simulated(2);
+        require(!high.simulation_due(Time{}+eb::FramePacer::period()),"Multi-frame DMA lost simulation time");
+        high.reset(Time{},0); high.simulated(1);
+        require(high.fraction(Time{}+eb::FramePacer::period()/2)>.499 && high.fraction(Time{}+eb::FramePacer::period()/2)<.501,
+            "Presentation fraction does not track game cadence");
+        high.resume(Time{}+std::chrono::seconds(5)); high.simulated(1);
+        require(!high.simulation_due(Time{}+std::chrono::seconds(5)),"Host suspension created a game tick backlog");
+        eb::FramePacer switched(Time{});
+        const auto changed=Time{}+std::chrono::seconds(30);
+        switched.set_rate(changed, eb::FramePacer::rate_for_refresh(144,true));
+        require(switched.advance(changed) && switched.deadline()==changed+eb::FramePacer::period(),
+                "Changing VRR mode created catch-up work at the previous cadence");
         eb::FramePacer suspended(Time{});
         const auto resumed = Time{} + std::chrono::seconds(5);
         require(suspended.advance(resumed) && suspended.deadline() == resumed,

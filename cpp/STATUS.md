@@ -1,9 +1,18 @@
 # Port verification record
 
-This records the independent C++ port's evidence as of 2026-09-27. Build and
+This records the independent C++ port's evidence, updated 2026-09-29. Build and
 launch instructions are in the standalone [project README](../README.md). The implementation and all
 new tests live in `cpp/`; the pre-existing C runtime and decompilation tools are
 not inputs to this build.
+
+The desktop is composed from explicit module owners. `GameSession` contains the
+hardware/processors/debug lifetime and exposes frame advancement, audio, save
+memory and diagnostics without SDL or file access. `GameSceneRenderer` receives
+read-only hardware views and owns presentation caches. `PresentationPipeline`
+contains frame history, filtering/interpolation and host pacing; `DesktopDisplay`
+contains window, UI and physical input. CLI/preferences, input replay, persistence
+and audio output have focused modules. `--replay-only` suppresses physical game
+buttons while retaining desktop/UI events.
 
 ## Implemented
 
@@ -23,9 +32,16 @@ SRAM persistence uses an atomic file replacement. Headless frame/step limits,
 frame-indexed input scripts, PPM/GL screenshots, and WAV capture support
 reproducible verification.
 
-An always-visible gameplay bar exposes Settings (F1) and Fullscreen (F11), with
+The gameplay bar exposes Settings (F1) and Fullscreen (F11), with
 the picture fitted below it. The floating ImGui Settings window provides aspect
 preferences, read-only diagnostics and an Assets tab for both default caches.
+In fullscreen the bar appears only at the pointer's top-edge hover and overlays
+the full-height picture. The Debug tab adds opt-in infinite HP/PP (999/999),
+noclip, enemy avoidance, playable-party selection and 1,472 searchable teleport
+destinations covering 385 named areas and every scripted warp/door landing.
+Regional source metadata supplies the existing party and instant-warp routines;
+commands wait for the main loop's free-movement boundary. Details and reproduction
+commands are in [docs/debug-tools.md](docs/debug-tools.md).
 Confirmed cache clearing removes only the selected regular `.ebpak`; current
 gameplay retains its in-memory assets. Confirmed switching restarts the selected
 game, preserves normal SRAM and display/fullscreen preferences, and opens ROM
@@ -34,6 +50,11 @@ intentional menu switch and their files are never deleted. The startup importer
 has no gameplay bar. A separate wider presentation buffer draws existing scene data
 without changing emulated camera coordinates, entity activation, or spawn rules.
 The original 256×224 framebuffer remains available for strict comparisons.
+Active world sprites now extend from the source's published entity descriptors,
+including parts clipped out of OAM, while invisibility and allocation remain
+unchanged. PSI animations fit the wider canvas with their target anchors
+preserved. Battle-exit fades retain the battle background until it is black or
+replaced, even after the game clears its battle-mode flag.
 An optional, default-off photosensitivity filter changes only the presentation
 pixels of identified flashing effects, including battle animations and Franklin
 Badge lightning. Ordinary picture pixels remain unchanged. It advances once
@@ -52,8 +73,81 @@ overlapping 65816 entries preserve runtime width behavior. Every retained code
 byte matches its respective supported donor image, and filling the imported
 data ranges reconstructs each image's complete SHA-256 fingerprint.
 
+The source navigation pass names the main processor `MainCpu65816`, the audio
+processor `Spc700AudioCpu`, the hardware model `SnesBus`, and audio synthesis
+`SnesAudioDsp`. Architectural registers have descriptive member names. Hardware
+memory/timing, PPU register access, native rendering and game-scene presentation
+have separate source files. Generated game code is grouped by its assembly
+subsystem and source routine, with indices that preserve original addresses,
+macro provenance and explicitly unresolved names. Regional metadata uses named
+fields; all 125 numeric values per region were compared with the pre-rename
+metadata and remained unchanged. This organization makes existing implementation
+ownership visible; it does not establish new gameplay or console fidelity.
+See [source navigation](docs/source-navigation.md).
+
 ## Evidence
 
+- Current source modernization: all 19 native Linux CTests and all 18 Windows
+  C++ tests pass under Wine/Xvfb. The Windows run excludes Python translation
+  fixtures; its asset-cache symlink cases explicitly skip because Wine cannot
+  create them. The tests include session lifecycle and observers, independent
+  scene-renderer ownership, presentation scheduling/history, and 60 desktop
+  support contracts covering options/preferences, replay, persistence and audio.
+- A separate SDL-free, frontend-disabled build compiles and passes
+  `game_session_tests`, exercising the session without desktop dependencies.
+- Native Linux and Wine asset-backed session/direct-core comparisons pass for
+  EarthBound and Mother 2 through 900 frames under both original and enhanced
+  timing policies. Each comparison preserves completed-frame callbacks, PCM
+  audio and machine state. These are bounded boot slices, not full playthroughs.
+- Native Linux and Wine source-backed rendering fixtures pass 73 scene checks
+  per region and all 34 PSI sequences with 2,126 rendered frames per region,
+  covering both battle layer layouts. These fixtures validate sampled map
+  boundaries and authored animation mapping; they are not natural visits to
+  every map or live battles with every effect.
+
+- September 29 timing update: all 14 Linux CTests pass. Both regional compiled
+  entity stress fixtures retain ordered writes and movement callbacks while a
+  30-entity pass drops from 920,660 to 241,299 master clocks. Ordinary and
+  pending-upload passes retain native timing. Hardware arithmetic, DMA,
+  interrupt and frame-wait boundary checks pass; the timing fixtures also pass
+  under Wine. See [timing policy](docs/timing.md) for precise scope.
+- Fixed-refresh tests cover 60/75/120/144/240 Hz under 0.2/8/12 ms workloads and
+  injected stalls. A live Linux run presented all 300 frames in 5.000 seconds at
+  60 Hz with no catch-up skips. VRR defaults off; Linux and Wine/X11 UI clicks and Linux CLI persistence
+  passed. Physical variable-refresh scanout and native Windows remain unverified.
+- The improved application's 26,097-frame US exploration and 15,000-frame JP
+  new-game replays completed. These are bounded gameplay checks, not claims
+  that the new policy preserves every original frame-indexed replay position.
+
+- September 29 debug tools: all 14 Linux CTests pass, and all 14 pass under Wine.
+  The 3,055-check debug fixture validates both regions and all 1,472 catalogue
+  entries. Asset-backed EarthBound and Mother 2 routes exercise party changes,
+  seven exact-coordinate teleports across towns/interiors/endgame maps, and
+  noclip through a blocking wall. SDL/ImGui tests cover the four switches,
+  party editing, searching/selecting Sea of Eden, and fullscreen hover behavior.
+  A 20,295-frame comparison with the controller disabled preserves CPU/SPC
+  state, all game/entity/PPU memory, clocks, 61,451,822 ordered writes, audio
+  and native pixels. See [debug tools](docs/debug-tools.md) for scope and limits.
+- September 29 widescreen update: all 12 Linux CTests pass. The new 172-check
+  widescreen fixture and existing 300-check bus fixture also pass under Wine.
+  The widescreen tests cover both regions, left/right entity margins, hidden
+  entities, synchronization with OAM uploads, targeted PSI in both background
+  layouts, and battle fades after the mode flag clears. No gameplay or spawn
+  routines were changed.
+- All 34 imported PSI animation sequences in each game pass frame-by-frame
+  rendering comparisons in both battle layer layouts: 2,126 rendered frames
+  per game, including selected ultrawide frames. The source-target anchor and
+  flash-filter metadata have separate synthetic checks. This does not establish
+  live visual coverage of every battle or unrelated effects.
+- The updated 20,295-frame EarthBound route preserves all CPU/SPC, game/entity/
+  PPU memory, clocks, ordered writes (61,451,822), audio (10,806,203 frames), and
+  native pixels with changing presentation widths. Mother 2's 1,200-frame
+  comparison passes as well. The rebuilt release ZIPs pass extraction,
+  manifests, permissions, and checksums in paths with spaces. Exact packaged
+  Linux and Wine runs of both games through frame 1,800 match native/adapted
+  pixels, WAV bytes, and CPU/SPC summaries; Linux loads its packaged runtimes.
+- The evidence below records the original September 27 release unless stated
+  otherwise; its counts and captures are historical.
 - The final native applications start directly, without shell/batch launchers.
   Windows' GUI entry was tested detached under Wine: first-run import, embedded
   icon, no console window, and visible startup errors. Redirected diagnostics,
@@ -78,7 +172,7 @@ data ranges reconstructs each image's complete SHA-256 fingerprint.
   runtimes. Loaded-library inspection confirmed all three bundled files, without
   SDL3 or SDL2-compat. App/startup and runtime ISA requirements were audited for
   baseline x86-64; the maximum required glibc symbol version is 2.43. Build,
-  signature, source, and license provenance is in `../lib/PROVENANCE.md`.
+  signature, source, and license provenance is in `../launchers/linux/lib/PROVENANCE.md`.
 - Top-level CMake installs on Linux and Windows contain the same native
   executable as the tested build; Windows also installs SDL2.dll beside it.
   Runnable archives use explicit input whitelists, reject ROM/asset-pack content,
@@ -88,15 +182,15 @@ data ranges reconstructs each image's complete SHA-256 fingerprint.
   Windows Mother 2 frame-1,800 filtered runs reproduce the tested native/adapted
   pixels and WAV bytes; Windows execution was under Wine. Linux loads its own
   three runtime libraries with no SDL3 dependency. The Linux archive contains
-  21 regular files and the Windows archive contains 14; root downloads,
-  versioned copies, and the Linux `.zup` alias are byte-identical per platform.
+  21 regular files and the Windows archive contains 14. The versioned archives
+  in `releases/` are the canonical downloads; duplicate root aliases were removed.
   Archive hashes are recorded in [RELEASE.md](../RELEASE.md).
-- The final asset audit covers all 346 tracked or unignored source/release
-  files and every ZIP entry. No supported ROM image or imported asset pack is
-  present.
+- The original release's final asset audit covered all 346 tracked or unignored
+  source/release files and every ZIP entry. No supported ROM image or imported
+  asset pack was present.
 - Native Linux and MinGW Windows executables build. Windows execution and
   graphics were tested under Wine, not on a native Windows installation.
-- The separate version 0.1 snapshot builds directly from its 136 frozen generated
+- The original version 0.1 snapshot was verified with 136 frozen generated
   C++ sources and eight headers, without the parent assembly tree, metadata YAML,
   or assemblers. Its eleven CTests pass on Linux and under Wine; four optional SPC assembler fixtures are
   explicitly skipped when their tool is absent. A fresh standalone Japanese
@@ -252,6 +346,11 @@ reference emulators are test inputs, not production dependencies.
 Install-layout packages are in `build/cpp-package/linux` and
 `build/cpp-package/windows`; the Windows package includes `SDL2.dll`.
 
+- Both refreshed release ZIPs pass their manifests and contain the exact tested
+  executables. Extracted Linux and Windows/Wine builds complete the same
+  16,000-frame EarthBound gameplay replay with identical final pixels, CPU/SPC
+  registers, instruction counts and 8,519,303 audio sample frames.
+
 ## Limits of the evidence
 
 Whole-game and console-level equivalence has not been established. The source
@@ -275,3 +374,33 @@ Matched platform outputs prove consistency between builds. They do not by
 themselves establish matching original-console pixels or sound. Nonzero WAV
 output and DSP tests establish synthesis; no human audible-playback assessment
 is claimed.
+
+
+## 2026-09-29 higher presentation rates
+
+Saved 90–300 FPS and Uncapped presentation modes now use an independent clock.
+Optional image-motion interpolation covers the presented overworld and battle
+canvas; gameplay/audio remain native. Native mode retains the prior path.
+All 15 Linux CTests pass. Deterministic clock tests, nonlinear moving artwork,
+static HUD checks, actual ImGui controls, and both regional 600-frame differential
+runs pass. The differential compares ordered writes, all machine state, audio
+samples and native pixels while generating five pictures per hardware tick.
+Desktop boot runs measure roughly 120/144/165/240/298 FPS at the matching limits,
+with identical final CPU/SPC state, WAV bytes and native pixels across modes.
+A 20,900-frame actual overworld probe and imported battle-artwork/wave fixture
+produce inspected intermediate pictures. See `docs/timing.md` for interpolation
+latency/artifacts and the distinction between presentation submissions and
+physical display scanout.
+
+The Windows deadline wait was also corrected after a real desktop probe reproduced
+about 64 FPS at a 300 FPS cap. The MinGW sleep path rounded 3 ms requests to
+15–16 ms; the SDL-backed deadline wait measures 3.333 ms under Wine and the
+updated application reaches about 299 FPS. The optional
+`presentation_wait_probe` checks this separately from deterministic CTest.
+Native Windows and physical VRR scanout remain unverified.
+
+Final extracted Linux and Windows/Wine packages pass manifests and executable
+parity. Both games complete 300-frame headless, 300 FPS and Uncapped runs with
+identical CPU/SPC state, WAV bytes and native pixels across platforms/modes.
+The GPU-backed capped runs measure about 299 FPS on both builds. These are
+short boot/intro presentation measurements, not sustained full-game benchmarks.

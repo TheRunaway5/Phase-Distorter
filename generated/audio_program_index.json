@@ -1,0 +1,3454 @@
+{
+  "schema": 1,
+  "instruction_count": 2163,
+  "instruction_stream_sha256": "3e79d4024427a33151dfd933bf9a9c0507d0d13e3632695219fd43178fd2faf9",
+  "generated_source": "audio_driver_instructions.cpp",
+  "source_hashes": {
+    "src/spc700/main.spc700.s": "35844085de63b909d0217b0197827481f46d648e859082d95834a9a0cd814158",
+    "src/spc700/globals.spc700.s": "2ff8e736edf9fd0fb993043d5d7d07c2dc2889cb82e656a0fa42ed031351a8ed",
+    "src/spc700/sfx.spc700.s": "204bc845a8c5c8e437c5ce21381f0434eb53feeddb287c20ff24c63943270ed2"
+  },
+  "naming_evidence": "Original SPC source labels; UNK labels are explicitly unresolved and do not assert recovered semantics.",
+  "routines": [
+    {
+      "function": "execute_audio_start_instruction",
+      "source_label": "start",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 5,
+      "first_address": "0x0500",
+      "last_address": "0x0506",
+      "instruction_count": 5,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0507_instruction",
+      "source_label": "UNK0507",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 11,
+      "first_address": "0x0507",
+      "last_address": "0x0541",
+      "instruction_count": 27,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0543_instruction",
+      "source_label": "UNK0543",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 39,
+      "first_address": "0x0543",
+      "last_address": "0x0543",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_main_loop_instruction",
+      "source_label": "MAIN_LOOP",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 42,
+      "first_address": "0x0546",
+      "last_address": "0x054A",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk054c_instruction",
+      "source_label": "UNK054C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 46,
+      "first_address": "0x054C",
+      "last_address": "0x0555",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0557_instruction",
+      "source_label": "UNK0557",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 52,
+      "first_address": "0x0557",
+      "last_address": "0x0557",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk055a_instruction",
+      "source_label": "UNK055A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 54,
+      "first_address": "0x055A",
+      "last_address": "0x0565",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0568_instruction",
+      "source_label": "UNK0568",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 61,
+      "first_address": "0x0568",
+      "last_address": "0x0577",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0579_instruction",
+      "source_label": "UNK0579",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 72,
+      "first_address": "0x0579",
+      "last_address": "0x0589",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk058c_instruction",
+      "source_label": "UNK058C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 84,
+      "first_address": "0x058C",
+      "last_address": "0x0593",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0596_instruction",
+      "source_label": "UNK0596",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 89,
+      "first_address": "0x0596",
+      "last_address": "0x05CB",
+      "instruction_count": 20,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05cd_instruction",
+      "source_label": "UNK05CD",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 110,
+      "first_address": "0x05CD",
+      "last_address": "0x05D6",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05d8_instruction",
+      "source_label": "UNK05D8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 118,
+      "first_address": "0x05D8",
+      "last_address": "0x05DE",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05e0_instruction",
+      "source_label": "UNK05E0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 122,
+      "first_address": "0x05E0",
+      "last_address": "0x05E6",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05e9_instruction",
+      "source_label": "UNK05E9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 127,
+      "first_address": "0x05E9",
+      "last_address": "0x05ED",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05f0_instruction",
+      "source_label": "UNK05F0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 131,
+      "first_address": "0x05F0",
+      "last_address": "0x05F4",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05f6_instruction",
+      "source_label": "UNK05F6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 136,
+      "first_address": "0x05F6",
+      "last_address": "0x05F6",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05f9_instruction",
+      "source_label": "UNK05F9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 139,
+      "first_address": "0x05F9",
+      "last_address": "0x05F9",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk05fc_instruction",
+      "source_label": "UNK05FC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 142,
+      "first_address": "0x05FC",
+      "last_address": "0x0622",
+      "instruction_count": 17,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_read_port_0_instruction",
+      "source_label": "READ_PORT_0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 161,
+      "first_address": "0x0625",
+      "last_address": "0x0627",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk062a_instruction",
+      "source_label": "UNK062A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 164,
+      "first_address": "0x062A",
+      "last_address": "0x0634",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_read_port_instruction",
+      "source_label": "READ_PORT",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 171,
+      "first_address": "0x0635",
+      "last_address": "0x0638",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk063a_instruction",
+      "source_label": "UNK063A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 174,
+      "first_address": "0x063A",
+      "last_address": "0x064E",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0650_instruction",
+      "source_label": "UNK0650",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 184,
+      "first_address": "0x0650",
+      "last_address": "0x0650",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0653_instruction",
+      "source_label": "UNK0653",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 186,
+      "first_address": "0x0653",
+      "last_address": "0x0653",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_play_note_instruction",
+      "source_label": "PLAY_NOTE",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 189,
+      "first_address": "0x0654",
+      "last_address": "0x065B",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk065d_instruction",
+      "source_label": "UNK065D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 194,
+      "first_address": "0x065D",
+      "last_address": "0x06AE",
+      "instruction_count": 37,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk06b1_instruction",
+      "source_label": "UNK06B1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 232,
+      "first_address": "0x06B1",
+      "last_address": "0x06B8",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk06bb_instruction",
+      "source_label": "UNK06BB",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 237,
+      "first_address": "0x06BB",
+      "last_address": "0x06BB",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk06be_instruction",
+      "source_label": "UNK06BE",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 239,
+      "first_address": "0x06BE",
+      "last_address": "0x06CF",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk06d0_instruction",
+      "source_label": "UNK06D0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 251,
+      "first_address": "0x06D0",
+      "last_address": "0x06D2",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk06d4_instruction",
+      "source_label": "UNK06D4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 254,
+      "first_address": "0x06D4",
+      "last_address": "0x0701",
+      "instruction_count": 26,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0703_instruction",
+      "source_label": "UNK0703",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 281,
+      "first_address": "0x0703",
+      "last_address": "0x0706",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0707_instruction",
+      "source_label": "UNK0707",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 285,
+      "first_address": "0x0707",
+      "last_address": "0x073F",
+      "instruction_count": 33,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0741_instruction",
+      "source_label": "UNK0741",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 320,
+      "first_address": "0x0741",
+      "last_address": "0x0747",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_write_dsp_instruction",
+      "source_label": "WRITE_DSP",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 326,
+      "first_address": "0x0749",
+      "last_address": "0x074C",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk074f_instruction",
+      "source_label": "UNK074F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 329,
+      "first_address": "0x074F",
+      "last_address": "0x074F",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0750_instruction",
+      "source_label": "UNK0750",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 332,
+      "first_address": "0x0750",
+      "last_address": "0x075D",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk075e_instruction",
+      "source_label": "UNK075E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 343,
+      "first_address": "0x075E",
+      "last_address": "0x0770",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0772_instruction",
+      "source_label": "UNK0772",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 352,
+      "first_address": "0x0772",
+      "last_address": "0x077F",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0782_instruction",
+      "source_label": "UNK0782",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 362,
+      "first_address": "0x0782",
+      "last_address": "0x0784",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0787_instruction",
+      "source_label": "UNK0787",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 365,
+      "first_address": "0x0787",
+      "last_address": "0x0799",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk079a_instruction",
+      "source_label": "UNK079A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 375,
+      "first_address": "0x079A",
+      "last_address": "0x07A6",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07a9_instruction",
+      "source_label": "UNK07A9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 384,
+      "first_address": "0x07A9",
+      "last_address": "0x07AB",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07ae_instruction",
+      "source_label": "UNK07AE",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 387,
+      "first_address": "0x07AE",
+      "last_address": "0x07E0",
+      "instruction_count": 23,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07e3_instruction",
+      "source_label": "UNK07E3",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 411,
+      "first_address": "0x07E3",
+      "last_address": "0x07E3",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07e4_instruction",
+      "source_label": "UNK07E4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 414,
+      "first_address": "0x07E4",
+      "last_address": "0x07E4",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07e7_instruction",
+      "source_label": "UNK07E7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 416,
+      "first_address": "0x07E7",
+      "last_address": "0x07E7",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07ea_instruction",
+      "source_label": "UNK07EA",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 419,
+      "first_address": "0x07EA",
+      "last_address": "0x07F8",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07f9_instruction",
+      "source_label": "UNK07F9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 428,
+      "first_address": "0x07F9",
+      "last_address": "0x07FD",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk07ff_instruction",
+      "source_label": "UNK07FF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 432,
+      "first_address": "0x07FF",
+      "last_address": "0x080D",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk080f_instruction",
+      "source_label": "UNK080F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 441,
+      "first_address": "0x080F",
+      "last_address": "0x0817",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk081a_instruction",
+      "source_label": "UNK081A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 448,
+      "first_address": "0x081A",
+      "last_address": "0x082A",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk082c_instruction",
+      "source_label": "UNK082C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 458,
+      "first_address": "0x082C",
+      "last_address": "0x082E",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0830_instruction",
+      "source_label": "UNK0830",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 461,
+      "first_address": "0x0830",
+      "last_address": "0x0834",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0836_instruction",
+      "source_label": "UNK0836",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 465,
+      "first_address": "0x0836",
+      "last_address": "0x083F",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0841_instruction",
+      "source_label": "UNK0841",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 472,
+      "first_address": "0x0841",
+      "last_address": "0x0843",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0845_instruction",
+      "source_label": "UNK0845",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 475,
+      "first_address": "0x0845",
+      "last_address": "0x084F",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0852_instruction",
+      "source_label": "UNK0852",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 482,
+      "first_address": "0x0852",
+      "last_address": "0x085D",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0860_instruction",
+      "source_label": "UNK0860",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 489,
+      "first_address": "0x0860",
+      "last_address": "0x086F",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0871_instruction",
+      "source_label": "UNK0871",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 500,
+      "first_address": "0x0871",
+      "last_address": "0x0875",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0878_instruction",
+      "source_label": "UNK0878",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 504,
+      "first_address": "0x0878",
+      "last_address": "0x0880",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0882_instruction",
+      "source_label": "UNK0882",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 510,
+      "first_address": "0x0882",
+      "last_address": "0x089C",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk089e_instruction",
+      "source_label": "UNK089E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 524,
+      "first_address": "0x089E",
+      "last_address": "0x08BD",
+      "instruction_count": 16,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08c0_instruction",
+      "source_label": "UNK08C0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 541,
+      "first_address": "0x08C0",
+      "last_address": "0x08C7",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08c9_instruction",
+      "source_label": "UNK08C9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 547,
+      "first_address": "0x08C9",
+      "last_address": "0x08D1",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08d4_instruction",
+      "source_label": "UNK08D4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 553,
+      "first_address": "0x08D4",
+      "last_address": "0x08DD",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08de_instruction",
+      "source_label": "UNK08DE",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 559,
+      "first_address": "0x08DE",
+      "last_address": "0x08E1",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08e2_instruction",
+      "source_label": "UNK08E2",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 563,
+      "first_address": "0x08E2",
+      "last_address": "0x08E4",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08e6_instruction",
+      "source_label": "UNK08E6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 567,
+      "first_address": "0x08E6",
+      "last_address": "0x08EA",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08ed_instruction",
+      "source_label": "UNK08ED",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 571,
+      "first_address": "0x08ED",
+      "last_address": "0x08ED",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk08f0_instruction",
+      "source_label": "UNK08F0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 573,
+      "first_address": "0x08F0",
+      "last_address": "0x0901",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0903_instruction",
+      "source_label": "UNK0903",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 584,
+      "first_address": "0x0903",
+      "last_address": "0x0903",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0905_instruction",
+      "source_label": "UNK0905",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 586,
+      "first_address": "0x0905",
+      "last_address": "0x091A",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk091c_instruction",
+      "source_label": "UNK091C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 598,
+      "first_address": "0x091C",
+      "last_address": "0x091C",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk091e_instruction",
+      "source_label": "UNK091E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 600,
+      "first_address": "0x091E",
+      "last_address": "0x0929",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk092b_instruction",
+      "source_label": "UNK092B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 607,
+      "first_address": "0x092B",
+      "last_address": "0x092D",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0930_instruction",
+      "source_label": "UNK0930",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 610,
+      "first_address": "0x0930",
+      "last_address": "0x0932",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0935_instruction",
+      "source_label": "UNK0935",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 613,
+      "first_address": "0x0935",
+      "last_address": "0x0939",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk093c_instruction",
+      "source_label": "UNK093C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 617,
+      "first_address": "0x093C",
+      "last_address": "0x0942",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0943_instruction",
+      "source_label": "UNK0943",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 624,
+      "first_address": "0x0943",
+      "last_address": "0x0953",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0955_instruction",
+      "source_label": "UNK0955",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 636,
+      "first_address": "0x0955",
+      "last_address": "0x0955",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0957_instruction",
+      "source_label": "UNK0957",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 638,
+      "first_address": "0x0957",
+      "last_address": "0x095B",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk095d_instruction",
+      "source_label": "UNK095D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 642,
+      "first_address": "0x095D",
+      "last_address": "0x095E",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk095f_instruction",
+      "source_label": "UNK095F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 646,
+      "first_address": "0x095F",
+      "last_address": "0x095F",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0962_instruction",
+      "source_label": "UNK0962",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 648,
+      "first_address": "0x0962",
+      "last_address": "0x0969",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk096b_instruction",
+      "source_label": "UNK096B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 655,
+      "first_address": "0x096B",
+      "last_address": "0x0996",
+      "instruction_count": 24,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0998_instruction",
+      "source_label": "UNK0998",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 680,
+      "first_address": "0x0998",
+      "last_address": "0x099A",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk099d_instruction",
+      "source_label": "UNK099D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 683,
+      "first_address": "0x099D",
+      "last_address": "0x099D",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk099f_instruction",
+      "source_label": "UNK099F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 685,
+      "first_address": "0x099F",
+      "last_address": "0x09B4",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09b7_instruction",
+      "source_label": "UNK09B7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 698,
+      "first_address": "0x09B7",
+      "last_address": "0x09B7",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09b8_instruction",
+      "source_label": "UNK09B8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 701,
+      "first_address": "0x09B8",
+      "last_address": "0x09C3",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09c6_instruction",
+      "source_label": "UNK09C6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 708,
+      "first_address": "0x09C6",
+      "last_address": "0x09C6",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09c8_instruction",
+      "source_label": "UNK09C8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 710,
+      "first_address": "0x09C8",
+      "last_address": "0x09D5",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09d6_instruction",
+      "source_label": "UNK09D6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 718,
+      "first_address": "0x09D6",
+      "last_address": "0x09D9",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09dc_instruction",
+      "source_label": "UNK09DC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 722,
+      "first_address": "0x09DC",
+      "last_address": "0x09E5",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09e8_instruction",
+      "source_label": "UNK09E8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 728,
+      "first_address": "0x09E8",
+      "last_address": "0x09FC",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk09fd_instruction",
+      "source_label": "UNK09FD",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 740,
+      "first_address": "0x09FD",
+      "last_address": "0x0A06",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a09_instruction",
+      "source_label": "UNK0A09",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 745,
+      "first_address": "0x0A09",
+      "last_address": "0x0A13",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a14_instruction",
+      "source_label": "UNK0A14",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 752,
+      "first_address": "0x0A14",
+      "last_address": "0x0A23",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a24_instruction",
+      "source_label": "UNK0A24",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 763,
+      "first_address": "0x0A24",
+      "last_address": "0x0A28",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a29_instruction",
+      "source_label": "UNK0A29",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 768,
+      "first_address": "0x0A29",
+      "last_address": "0x0A2E",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a30_instruction",
+      "source_label": "UNK0A30",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 772,
+      "first_address": "0x0A30",
+      "last_address": "0x0A3A",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a3b_instruction",
+      "source_label": "UNK0A3B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 780,
+      "first_address": "0x0A3B",
+      "last_address": "0x0A3F",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a40_instruction",
+      "source_label": "UNK0A40",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 785,
+      "first_address": "0x0A40",
+      "last_address": "0x0A45",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a47_instruction",
+      "source_label": "UNK0A47",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 789,
+      "first_address": "0x0A47",
+      "last_address": "0x0A51",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a52_instruction",
+      "source_label": "UNK0A52",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 797,
+      "first_address": "0x0A52",
+      "last_address": "0x0A54",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a55_instruction",
+      "source_label": "UNK0A55",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 801,
+      "first_address": "0x0A55",
+      "last_address": "0x0A58",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a59_instruction",
+      "source_label": "UNK0A59",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 805,
+      "first_address": "0x0A59",
+      "last_address": "0x0A62",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a65_instruction",
+      "source_label": "UNK0A65",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 810,
+      "first_address": "0x0A65",
+      "last_address": "0x0A67",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a68_instruction",
+      "source_label": "UNK0A68",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 814,
+      "first_address": "0x0A68",
+      "last_address": "0x0A6A",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a6c_instruction",
+      "source_label": "UNK0A6C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 818,
+      "first_address": "0x0A6C",
+      "last_address": "0x0A6C",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a6e_instruction",
+      "source_label": "UNK0A6E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 820,
+      "first_address": "0x0A6E",
+      "last_address": "0x0A81",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a82_instruction",
+      "source_label": "UNK0A82",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 830,
+      "first_address": "0x0A82",
+      "last_address": "0x0A85",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a86_instruction",
+      "source_label": "UNK0A86",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 834,
+      "first_address": "0x0A86",
+      "last_address": "0x0A8E",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a8f_instruction",
+      "source_label": "UNK0A8F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 840,
+      "first_address": "0x0A8F",
+      "last_address": "0x0A92",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0a95_instruction",
+      "source_label": "UNK0A95",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 844,
+      "first_address": "0x0A95",
+      "last_address": "0x0AA7",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0aa8_instruction",
+      "source_label": "UNK0AA8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 855,
+      "first_address": "0x0AA8",
+      "last_address": "0x0AAB",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0aac_instruction",
+      "source_label": "UNK0AAC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 859,
+      "first_address": "0x0AAC",
+      "last_address": "0x0AC1",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ac4_instruction",
+      "source_label": "UNK0AC4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 869,
+      "first_address": "0x0AC4",
+      "last_address": "0x0ACE",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0acf_instruction",
+      "source_label": "UNK0ACF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 876,
+      "first_address": "0x0ACF",
+      "last_address": "0x0AE1",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ae2_instruction",
+      "source_label": "UNK0AE2",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 887,
+      "first_address": "0x0AE2",
+      "last_address": "0x0B02",
+      "instruction_count": 16,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b03_instruction",
+      "source_label": "UNK0B03",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 905,
+      "first_address": "0x0B03",
+      "last_address": "0x0B09",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b0a_instruction",
+      "source_label": "UNK0B0A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 911,
+      "first_address": "0x0B0A",
+      "last_address": "0x0B19",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b1b_instruction",
+      "source_label": "UNK0B1B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 920,
+      "first_address": "0x0B1B",
+      "last_address": "0x0B2B",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_set_echo_delay_instruction",
+      "source_label": "SET_ECHO_DELAY",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 932,
+      "first_address": "0x0B2C",
+      "last_address": "0x0B3E",
+      "instruction_count": 9,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b41_instruction",
+      "source_label": "UNK0B41",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 942,
+      "first_address": "0x0B41",
+      "last_address": "0x0B42",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b44_instruction",
+      "source_label": "UNK0B44",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 945,
+      "first_address": "0x0B44",
+      "last_address": "0x0B46",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b48_instruction",
+      "source_label": "UNK0B48",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 948,
+      "first_address": "0x0B48",
+      "last_address": "0x0B62",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b65_instruction",
+      "source_label": "UNK0B65",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 961,
+      "first_address": "0x0B65",
+      "last_address": "0x0B6F",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b72_instruction",
+      "source_label": "UNK0B72",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 971,
+      "first_address": "0x0B72",
+      "last_address": "0x0B74",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b75_instruction",
+      "source_label": "UNK0B75",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 975,
+      "first_address": "0x0B75",
+      "last_address": "0x0B78",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b79_instruction",
+      "source_label": "UNK0B79",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 979,
+      "first_address": "0x0B79",
+      "last_address": "0x0B7D",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b7e_instruction",
+      "source_label": "UNK0B7E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 984,
+      "first_address": "0x0B7E",
+      "last_address": "0x0B7E",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b7f_instruction",
+      "source_label": "UNK0B7F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 986,
+      "first_address": "0x0B7F",
+      "last_address": "0x0B81",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b84_instruction",
+      "source_label": "UNK0B84",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 989,
+      "first_address": "0x0B84",
+      "last_address": "0x0B91",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0b94_instruction",
+      "source_label": "UNK0B94",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 997,
+      "first_address": "0x0B94",
+      "last_address": "0x0BA1",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ba4_instruction",
+      "source_label": "UNK0BA4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1005,
+      "first_address": "0x0BA4",
+      "last_address": "0x0BB8",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bbb_instruction",
+      "source_label": "UNK0BBB",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1017,
+      "first_address": "0x0BBB",
+      "last_address": "0x0BBB",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bbc_instruction",
+      "source_label": "UNK0BBC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1020,
+      "first_address": "0x0BBC",
+      "last_address": "0x0BBF",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bc1_instruction",
+      "source_label": "UNK0BC1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1023,
+      "first_address": "0x0BC1",
+      "last_address": "0x0BC6",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bc7_instruction",
+      "source_label": "UNK0BC7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1028,
+      "first_address": "0x0BC7",
+      "last_address": "0x0BCE",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bcf_instruction",
+      "source_label": "UNK0BCF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1034,
+      "first_address": "0x0BCF",
+      "last_address": "0x0BD7",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0bd9_instruction",
+      "source_label": "UNK0BD9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1042,
+      "first_address": "0x0BD9",
+      "last_address": "0x0BE0",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0be2_instruction",
+      "source_label": "UNK0BE2",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1047,
+      "first_address": "0x0BE2",
+      "last_address": "0x0BE2",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c40_instruction",
+      "source_label": "UNK0C40",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1092,
+      "first_address": "0x0C40",
+      "last_address": "0x0C4A",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c4d_instruction",
+      "source_label": "UNK0C4D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1099,
+      "first_address": "0x0C4D",
+      "last_address": "0x0C64",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c66_instruction",
+      "source_label": "UNK0C66",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1111,
+      "first_address": "0x0C66",
+      "last_address": "0x0C67",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c6a_instruction",
+      "source_label": "UNK0C6A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1114,
+      "first_address": "0x0C6A",
+      "last_address": "0x0C70",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c72_instruction",
+      "source_label": "UNK0C72",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1118,
+      "first_address": "0x0C72",
+      "last_address": "0x0C72",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c74_instruction",
+      "source_label": "UNK0C74",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1120,
+      "first_address": "0x0C74",
+      "last_address": "0x0C76",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c79_instruction",
+      "source_label": "UNK0C79",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1123,
+      "first_address": "0x0C79",
+      "last_address": "0x0C83",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c86_instruction",
+      "source_label": "UNK0C86",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1130,
+      "first_address": "0x0C86",
+      "last_address": "0x0C93",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c95_instruction",
+      "source_label": "UNK0C95",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1138,
+      "first_address": "0x0C95",
+      "last_address": "0x0C98",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0c9a_instruction",
+      "source_label": "UNK0C9A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1143,
+      "first_address": "0x0C9A",
+      "last_address": "0x0CB9",
+      "instruction_count": 17,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cba_instruction",
+      "source_label": "UNK0CBA",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1161,
+      "first_address": "0x0CBA",
+      "last_address": "0x0CBF",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cc0_instruction",
+      "source_label": "UNK0CC0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1166,
+      "first_address": "0x0CC0",
+      "last_address": "0x0CCF",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cd2_instruction",
+      "source_label": "UNK0CD2",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1175,
+      "first_address": "0x0CD2",
+      "last_address": "0x0CD2",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cd3_instruction",
+      "source_label": "UNK0CD3",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1178,
+      "first_address": "0x0CD3",
+      "last_address": "0x0CD3",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cd6_instruction",
+      "source_label": "UNK0CD6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1180,
+      "first_address": "0x0CD6",
+      "last_address": "0x0CE7",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ce9_instruction",
+      "source_label": "UNK0CE9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1192,
+      "first_address": "0x0CE9",
+      "last_address": "0x0CEF",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cf0_instruction",
+      "source_label": "UNK0CF0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1196,
+      "first_address": "0x0CF0",
+      "last_address": "0x0CF0",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cf2_instruction",
+      "source_label": "UNK0CF2",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1198,
+      "first_address": "0x0CF2",
+      "last_address": "0x0CF6",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0cf7_instruction",
+      "source_label": "UNK0CF7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1203,
+      "first_address": "0x0CF7",
+      "last_address": "0x0D01",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d04_instruction",
+      "source_label": "UNK0D04",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1210,
+      "first_address": "0x0D04",
+      "last_address": "0x0D0A",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d0c_instruction",
+      "source_label": "UNK0D0C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1215,
+      "first_address": "0x0D0C",
+      "last_address": "0x0D0E",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d10_instruction",
+      "source_label": "UNK0D10",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1218,
+      "first_address": "0x0D10",
+      "last_address": "0x0D14",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d16_instruction",
+      "source_label": "UNK0D16",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1222,
+      "first_address": "0x0D16",
+      "last_address": "0x0D1B",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d1d_instruction",
+      "source_label": "UNK0D1D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1227,
+      "first_address": "0x0D1D",
+      "last_address": "0x0D30",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d32_instruction",
+      "source_label": "UNK0D32",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1240,
+      "first_address": "0x0D32",
+      "last_address": "0x0D42",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d44_instruction",
+      "source_label": "UNK0D44",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1250,
+      "first_address": "0x0D44",
+      "last_address": "0x0D4C",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d4e_instruction",
+      "source_label": "UNK0D4E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1256,
+      "first_address": "0x0D4E",
+      "last_address": "0x0D57",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d59_instruction",
+      "source_label": "UNK0D59",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1265,
+      "first_address": "0x0D59",
+      "last_address": "0x0D5D",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d60_instruction",
+      "source_label": "UNK0D60",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1269,
+      "first_address": "0x0D60",
+      "last_address": "0x0D6C",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d6e_instruction",
+      "source_label": "UNK0D6E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1277,
+      "first_address": "0x0D6E",
+      "last_address": "0x0D76",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d79_instruction",
+      "source_label": "UNK0D79",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1283,
+      "first_address": "0x0D79",
+      "last_address": "0x0D91",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d93_instruction",
+      "source_label": "UNK0D93",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1294,
+      "first_address": "0x0D93",
+      "last_address": "0x0D9A",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0d9c_instruction",
+      "source_label": "UNK0D9C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1301,
+      "first_address": "0x0D9C",
+      "last_address": "0x0D9D",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0da0_instruction",
+      "source_label": "UNK0DA0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1304,
+      "first_address": "0x0DA0",
+      "last_address": "0x0DA9",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dac_instruction",
+      "source_label": "UNK0DAC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1310,
+      "first_address": "0x0DAC",
+      "last_address": "0x0DB2",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0db4_instruction",
+      "source_label": "UNK0DB4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1316,
+      "first_address": "0x0DB4",
+      "last_address": "0x0DBE",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dc0_instruction",
+      "source_label": "UNK0DC0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1325,
+      "first_address": "0x0DC0",
+      "last_address": "0x0DC2",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dc4_instruction",
+      "source_label": "UNK0DC4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1329,
+      "first_address": "0x0DC4",
+      "last_address": "0x0DC4",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dc7_instruction",
+      "source_label": "UNK0DC7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1331,
+      "first_address": "0x0DC7",
+      "last_address": "0x0DC7",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dca_instruction",
+      "source_label": "UNK0DCA",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1334,
+      "first_address": "0x0DCA",
+      "last_address": "0x0DCA",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dcc_instruction",
+      "source_label": "UNK0DCC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1336,
+      "first_address": "0x0DCC",
+      "last_address": "0x0DCF",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dd0_instruction",
+      "source_label": "UNK0DD0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1340,
+      "first_address": "0x0DD0",
+      "last_address": "0x0DDC",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ddf_instruction",
+      "source_label": "UNK0DDF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1347,
+      "first_address": "0x0DDF",
+      "last_address": "0x0DF3",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0df6_instruction",
+      "source_label": "UNK0DF6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1358,
+      "first_address": "0x0DF6",
+      "last_address": "0x0DF9",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0dfc_instruction",
+      "source_label": "UNK0DFC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1361,
+      "first_address": "0x0DFC",
+      "last_address": "0x0E10",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e13_instruction",
+      "source_label": "UNK0E13",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1372,
+      "first_address": "0x0E13",
+      "last_address": "0x0E28",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e2b_instruction",
+      "source_label": "UNK0E2B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1385,
+      "first_address": "0x0E2B",
+      "last_address": "0x0E3F",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e41_instruction",
+      "source_label": "UNK0E41",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1398,
+      "first_address": "0x0E41",
+      "last_address": "0x0E48",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e49_instruction",
+      "source_label": "UNK0E49",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1404,
+      "first_address": "0x0E49",
+      "last_address": "0x0E53",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e56_instruction",
+      "source_label": "UNK0E56",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1412,
+      "first_address": "0x0E56",
+      "last_address": "0x0E59",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e5b_instruction",
+      "source_label": "UNK0E5B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1416,
+      "first_address": "0x0E5B",
+      "last_address": "0x0E5F",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0e61_instruction",
+      "source_label": "UNK0E61",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1421,
+      "first_address": "0x0E61",
+      "last_address": "0x0E72",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ee1_instruction",
+      "source_label": "UNK0EE1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1482,
+      "first_address": "0x0EE1",
+      "last_address": "0x0EE8",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0eeb_instruction",
+      "source_label": "UNK0EEB",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1487,
+      "first_address": "0x0EEB",
+      "last_address": "0x0EF2",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ef4_instruction",
+      "source_label": "UNK0EF4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1492,
+      "first_address": "0x0EF4",
+      "last_address": "0x0EF7",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0ef9_instruction",
+      "source_label": "UNK0EF9",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1495,
+      "first_address": "0x0EF9",
+      "last_address": "0x0F0B",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f0d_instruction",
+      "source_label": "UNK0F0D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1505,
+      "first_address": "0x0F0D",
+      "last_address": "0x0F12",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f14_instruction",
+      "source_label": "UNK0F14",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1509,
+      "first_address": "0x0F14",
+      "last_address": "0x0F2F",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f31_instruction",
+      "source_label": "UNK0F31",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1523,
+      "first_address": "0x0F31",
+      "last_address": "0x0F3B",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f3c_instruction",
+      "source_label": "UNK0F3C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1531,
+      "first_address": "0x0F3C",
+      "last_address": "0x0F3E",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f40_instruction",
+      "source_label": "UNK0F40",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1534,
+      "first_address": "0x0F40",
+      "last_address": "0x0F4A",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f4b_instruction",
+      "source_label": "UNK0F4B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1542,
+      "first_address": "0x0F4B",
+      "last_address": "0x0F55",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f56_instruction",
+      "source_label": "UNK0F56",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1549,
+      "first_address": "0x0F56",
+      "last_address": "0x0F82",
+      "instruction_count": 21,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f85_instruction",
+      "source_label": "UNK0F85",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1571,
+      "first_address": "0x0F85",
+      "last_address": "0x0F8C",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0f8f_instruction",
+      "source_label": "UNK0F8F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1577,
+      "first_address": "0x0F8F",
+      "last_address": "0x0FA0",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0fa1_instruction",
+      "source_label": "UNK0FA1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1587,
+      "first_address": "0x0FA1",
+      "last_address": "0x0FB3",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0fb6_instruction",
+      "source_label": "UNK0FB6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1598,
+      "first_address": "0x0FB6",
+      "last_address": "0x0FB6",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0fb7_instruction",
+      "source_label": "UNK0FB7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1601,
+      "first_address": "0x0FB7",
+      "last_address": "0x0FC8",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk0fcb_instruction",
+      "source_label": "UNK0FCB",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1612,
+      "first_address": "0x0FCB",
+      "last_address": "0x1008",
+      "instruction_count": 31,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk100b_instruction",
+      "source_label": "UNK100B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1645,
+      "first_address": "0x100B",
+      "last_address": "0x100B",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk100e_instruction",
+      "source_label": "UNK100E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1648,
+      "first_address": "0x100E",
+      "last_address": "0x101D",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1020_instruction",
+      "source_label": "UNK1020",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1656,
+      "first_address": "0x1020",
+      "last_address": "0x1026",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1028_instruction",
+      "source_label": "UNK1028",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1661,
+      "first_address": "0x1028",
+      "last_address": "0x102A",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk102c_instruction",
+      "source_label": "UNK102C",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1664,
+      "first_address": "0x102C",
+      "last_address": "0x1034",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1036_instruction",
+      "source_label": "UNK1036",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1670,
+      "first_address": "0x1036",
+      "last_address": "0x1055",
+      "instruction_count": 15,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1058_instruction",
+      "source_label": "UNK1058",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1687,
+      "first_address": "0x1058",
+      "last_address": "0x1062",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1064_instruction",
+      "source_label": "UNK1064",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1694,
+      "first_address": "0x1064",
+      "last_address": "0x1067",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk10b6_instruction",
+      "source_label": "UNK10B6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1710,
+      "first_address": "0x10B6",
+      "last_address": "0x10D2",
+      "instruction_count": 13,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk10d5_instruction",
+      "source_label": "UNK10D5",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1724,
+      "first_address": "0x10D5",
+      "last_address": "0x10E4",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk10e7_instruction",
+      "source_label": "UNK10E7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1733,
+      "first_address": "0x10E7",
+      "last_address": "0x10FB",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk10fc_instruction",
+      "source_label": "UNK10FC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1747,
+      "first_address": "0x10FC",
+      "last_address": "0x110C",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk110d_instruction",
+      "source_label": "UNK110D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1757,
+      "first_address": "0x110D",
+      "last_address": "0x1121",
+      "instruction_count": 14,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1124_instruction",
+      "source_label": "UNK1124",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1773,
+      "first_address": "0x1124",
+      "last_address": "0x112D",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1130_instruction",
+      "source_label": "UNK1130",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1782,
+      "first_address": "0x1130",
+      "last_address": "0x1143",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1144_instruction",
+      "source_label": "UNK1144",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1794,
+      "first_address": "0x1144",
+      "last_address": "0x1151",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1152_instruction",
+      "source_label": "UNK1152",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1804,
+      "first_address": "0x1152",
+      "last_address": "0x116F",
+      "instruction_count": 14,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1170_instruction",
+      "source_label": "UNK1170",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1820,
+      "first_address": "0x1170",
+      "last_address": "0x1173",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1176_instruction",
+      "source_label": "UNK1176",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1824,
+      "first_address": "0x1176",
+      "last_address": "0x1179",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1184_instruction",
+      "source_label": "UNK1184",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1831,
+      "first_address": "0x1184",
+      "last_address": "0x1196",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1198_instruction",
+      "source_label": "UNK1198",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1840,
+      "first_address": "0x1198",
+      "last_address": "0x11B8",
+      "instruction_count": 13,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk11ba_instruction",
+      "source_label": "UNK11BA",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1854,
+      "first_address": "0x11BA",
+      "last_address": "0x11DA",
+      "instruction_count": 13,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk11dc_instruction",
+      "source_label": "UNK11DC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1868,
+      "first_address": "0x11DC",
+      "last_address": "0x1204",
+      "instruction_count": 16,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1207_instruction",
+      "source_label": "UNK1207",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1885,
+      "first_address": "0x1207",
+      "last_address": "0x1258",
+      "instruction_count": 41,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk126d_instruction",
+      "source_label": "UNK126D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1939,
+      "first_address": "0x126D",
+      "last_address": "0x126D",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1270_instruction",
+      "source_label": "UNK1270",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1942,
+      "first_address": "0x1270",
+      "last_address": "0x1275",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1278_instruction",
+      "source_label": "UNK1278",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1948,
+      "first_address": "0x1278",
+      "last_address": "0x127D",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1280_instruction",
+      "source_label": "UNK1280",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1954,
+      "first_address": "0x1280",
+      "last_address": "0x1285",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1288_instruction",
+      "source_label": "UNK1288",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1960,
+      "first_address": "0x1288",
+      "last_address": "0x12C4",
+      "instruction_count": 32,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk12c7_instruction",
+      "source_label": "UNK12C7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 1994,
+      "first_address": "0x12C7",
+      "last_address": "0x12F0",
+      "instruction_count": 21,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk12f3_instruction",
+      "source_label": "UNK12F3",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2017,
+      "first_address": "0x12F3",
+      "last_address": "0x12FD",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1300_instruction",
+      "source_label": "UNK1300",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2024,
+      "first_address": "0x1300",
+      "last_address": "0x130A",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk130d_instruction",
+      "source_label": "UNK130D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2031,
+      "first_address": "0x130D",
+      "last_address": "0x1317",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk131a_instruction",
+      "source_label": "UNK131A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2038,
+      "first_address": "0x131A",
+      "last_address": "0x132A",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk132d_instruction",
+      "source_label": "UNK132D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2047,
+      "first_address": "0x132D",
+      "last_address": "0x132D",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1340_instruction",
+      "source_label": "UNK1340",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2061,
+      "first_address": "0x1340",
+      "last_address": "0x1340",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1343_instruction",
+      "source_label": "UNK1343",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2064,
+      "first_address": "0x1343",
+      "last_address": "0x1345",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1348_instruction",
+      "source_label": "UNK1348",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2067,
+      "first_address": "0x1348",
+      "last_address": "0x1348",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk134b_instruction",
+      "source_label": "UNK134B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2069,
+      "first_address": "0x134B",
+      "last_address": "0x134B",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk134e_instruction",
+      "source_label": "UNK134E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2072,
+      "first_address": "0x134E",
+      "last_address": "0x1382",
+      "instruction_count": 27,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1384_instruction",
+      "source_label": "UNK1384",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2100,
+      "first_address": "0x1384",
+      "last_address": "0x1384",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1385_instruction",
+      "source_label": "UNK1385",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2103,
+      "first_address": "0x1385",
+      "last_address": "0x138E",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1391_instruction",
+      "source_label": "UNK1391",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2109,
+      "first_address": "0x1391",
+      "last_address": "0x1391",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1394_instruction",
+      "source_label": "UNK1394",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2111,
+      "first_address": "0x1394",
+      "last_address": "0x139F",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13a0_instruction",
+      "source_label": "UNK13A0",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2120,
+      "first_address": "0x13A0",
+      "last_address": "0x13C5",
+      "instruction_count": 17,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13c7_instruction",
+      "source_label": "UNK13C7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2138,
+      "first_address": "0x13C7",
+      "last_address": "0x13CD",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13cf_instruction",
+      "source_label": "UNK13CF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2143,
+      "first_address": "0x13CF",
+      "last_address": "0x13CF",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13d1_instruction",
+      "source_label": "UNK13D1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2145,
+      "first_address": "0x13D1",
+      "last_address": "0x13D1",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13d4_instruction",
+      "source_label": "UNK13D4",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2147,
+      "first_address": "0x13D4",
+      "last_address": "0x13D7",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13d8_instruction",
+      "source_label": "UNK13D8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2151,
+      "first_address": "0x13D8",
+      "last_address": "0x13DD",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13df_instruction",
+      "source_label": "UNK13DF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2155,
+      "first_address": "0x13DF",
+      "last_address": "0x13E8",
+      "instruction_count": 5,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk13ea_instruction",
+      "source_label": "UNK13EA",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2161,
+      "first_address": "0x13EA",
+      "last_address": "0x1406",
+      "instruction_count": 13,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1409_instruction",
+      "source_label": "UNK1409",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2175,
+      "first_address": "0x1409",
+      "last_address": "0x1417",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk141a_instruction",
+      "source_label": "UNK141A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2184,
+      "first_address": "0x141A",
+      "last_address": "0x1437",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1438_instruction",
+      "source_label": "UNK1438",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2197,
+      "first_address": "0x1438",
+      "last_address": "0x1452",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1453_instruction",
+      "source_label": "UNK1453",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2209,
+      "first_address": "0x1453",
+      "last_address": "0x145C",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk145d_instruction",
+      "source_label": "UNK145D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2215,
+      "first_address": "0x145D",
+      "last_address": "0x146A",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk146b_instruction",
+      "source_label": "UNK146B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2224,
+      "first_address": "0x146B",
+      "last_address": "0x1478",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1479_instruction",
+      "source_label": "UNK1479",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2233,
+      "first_address": "0x1479",
+      "last_address": "0x1486",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx148a_instruction",
+      "source_label": "FX148A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2244,
+      "first_address": "0x148A",
+      "last_address": "0x148A",
+      "instruction_count": 1,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk148b_instruction",
+      "source_label": "UNK148B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2247,
+      "first_address": "0x148B",
+      "last_address": "0x1490",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1491_instruction",
+      "source_label": "UNK1491",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2252,
+      "first_address": "0x1491",
+      "last_address": "0x14DE",
+      "instruction_count": 32,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk14df_instruction",
+      "source_label": "UNK14DF",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2286,
+      "first_address": "0x14DF",
+      "last_address": "0x14EB",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk14ee_instruction",
+      "source_label": "UNK14EE",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2294,
+      "first_address": "0x14EE",
+      "last_address": "0x14FA",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk14fc_instruction",
+      "source_label": "UNK14FC",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2302,
+      "first_address": "0x14FC",
+      "last_address": "0x14FE",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1500_instruction",
+      "source_label": "UNK1500",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2305,
+      "first_address": "0x1500",
+      "last_address": "0x1502",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1505_instruction",
+      "source_label": "UNK1505",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2308,
+      "first_address": "0x1505",
+      "last_address": "0x150E",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1510_instruction",
+      "source_label": "UNK1510",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2313,
+      "first_address": "0x1510",
+      "last_address": "0x1546",
+      "instruction_count": 24,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1547_instruction",
+      "source_label": "UNK1547",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2339,
+      "first_address": "0x1547",
+      "last_address": "0x1556",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1557_instruction",
+      "source_label": "UNK1557",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2349,
+      "first_address": "0x1557",
+      "last_address": "0x156D",
+      "instruction_count": 12,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk156f_instruction",
+      "source_label": "UNK156F",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2362,
+      "first_address": "0x156F",
+      "last_address": "0x1574",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1576_instruction",
+      "source_label": "UNK1576",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2366,
+      "first_address": "0x1576",
+      "last_address": "0x15AE",
+      "instruction_count": 26,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk15b1_instruction",
+      "source_label": "UNK15B1",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2393,
+      "first_address": "0x15B1",
+      "last_address": "0x15D5",
+      "instruction_count": 18,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx15db_instruction",
+      "source_label": "FX15DB",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2415,
+      "first_address": "0x15DB",
+      "last_address": "0x15E3",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx15e7_instruction",
+      "source_label": "FX15E7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2423,
+      "first_address": "0x15E7",
+      "last_address": "0x15F1",
+      "instruction_count": 5,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx15f6_instruction",
+      "source_label": "FX15F6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2432,
+      "first_address": "0x15F6",
+      "last_address": "0x15FD",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1600_instruction",
+      "source_label": "UNK1600",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2437,
+      "first_address": "0x1600",
+      "last_address": "0x1606",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1609_instruction",
+      "source_label": "UNK1609",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2443,
+      "first_address": "0x1609",
+      "last_address": "0x1624",
+      "instruction_count": 13,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1627_instruction",
+      "source_label": "UNK1627",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2457,
+      "first_address": "0x1627",
+      "last_address": "0x1627",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1628_instruction",
+      "source_label": "UNK1628",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2460,
+      "first_address": "0x1628",
+      "last_address": "0x162D",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk162e_instruction",
+      "source_label": "UNK162E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2465,
+      "first_address": "0x162E",
+      "last_address": "0x162F",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1632_instruction",
+      "source_label": "UNK1632",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2468,
+      "first_address": "0x1632",
+      "last_address": "0x1635",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1638_instruction",
+      "source_label": "UNK1638",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2472,
+      "first_address": "0x1638",
+      "last_address": "0x1638",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk163b_instruction",
+      "source_label": "UNK163B",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2474,
+      "first_address": "0x163B",
+      "last_address": "0x1652",
+      "instruction_count": 11,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1654_instruction",
+      "source_label": "UNK1654",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2486,
+      "first_address": "0x1654",
+      "last_address": "0x1661",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1663_instruction",
+      "source_label": "UNK1663",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2495,
+      "first_address": "0x1663",
+      "last_address": "0x1669",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk166a_instruction",
+      "source_label": "UNK166A",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2502,
+      "first_address": "0x166A",
+      "last_address": "0x166D",
+      "instruction_count": 2,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk166e_instruction",
+      "source_label": "UNK166E",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2506,
+      "first_address": "0x166E",
+      "last_address": "0x167E",
+      "instruction_count": 10,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk1680_instruction",
+      "source_label": "UNK1680",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2517,
+      "first_address": "0x1680",
+      "last_address": "0x16A2",
+      "instruction_count": 17,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk16a5_instruction",
+      "source_label": "UNK16A5",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2538,
+      "first_address": "0x16A5",
+      "last_address": "0x16A5",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk16a7_instruction",
+      "source_label": "UNK16A7",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2540,
+      "first_address": "0x16A7",
+      "last_address": "0x16B3",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk16b6_instruction",
+      "source_label": "UNK16B6",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2548,
+      "first_address": "0x16B6",
+      "last_address": "0x16C4",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx1810_instruction",
+      "source_label": "FX1810",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 69,
+      "first_address": "0x1810",
+      "last_address": "0x1810",
+      "instruction_count": 1,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx1814_instruction",
+      "source_label": "FX1814",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 76,
+      "first_address": "0x181B",
+      "last_address": "0x181F",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2501_instruction",
+      "source_label": "FX2501",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 2733,
+      "first_address": "0x2501",
+      "last_address": "0x2507",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2c92_instruction",
+      "source_label": "FX2C92",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4246,
+      "first_address": "0x2C92",
+      "last_address": "0x2C94",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2c9a_instruction",
+      "source_label": "FX2C9A",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4252,
+      "first_address": "0x2C9A",
+      "last_address": "0x2C9C",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2ca2_instruction",
+      "source_label": "FX2CA2",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4258,
+      "first_address": "0x2CA2",
+      "last_address": "0x2CA4",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2caa_instruction",
+      "source_label": "FX2CAA",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4264,
+      "first_address": "0x2CAA",
+      "last_address": "0x2CAC",
+      "instruction_count": 2,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2cda_instruction",
+      "source_label": "FX2CDA",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4272,
+      "first_address": "0x2CDA",
+      "last_address": "0x2CE0",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2ce6_instruction",
+      "source_label": "FX2CE6",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4279,
+      "first_address": "0x2CE6",
+      "last_address": "0x2CEC",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2cf2_instruction",
+      "source_label": "FX2CF2",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4286,
+      "first_address": "0x2CF2",
+      "last_address": "0x2CF8",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2cfe_instruction",
+      "source_label": "FX2CFE",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4293,
+      "first_address": "0x2CFE",
+      "last_address": "0x2D04",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d0a_instruction",
+      "source_label": "FX2D0A",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4300,
+      "first_address": "0x2D0A",
+      "last_address": "0x2D10",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d16_instruction",
+      "source_label": "FX2D16",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4307,
+      "first_address": "0x2D16",
+      "last_address": "0x2D1C",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d22_instruction",
+      "source_label": "FX2D22",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4314,
+      "first_address": "0x2D22",
+      "last_address": "0x2D28",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d2e_instruction",
+      "source_label": "FX2D2E",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4321,
+      "first_address": "0x2D2E",
+      "last_address": "0x2D34",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2d37_instruction",
+      "source_label": "UNK2D37",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4326,
+      "first_address": "0x2D37",
+      "last_address": "0x2D7E",
+      "instruction_count": 41,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx2d82_instruction",
+      "source_label": "FX2D82",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4371,
+      "first_address": "0x2D82",
+      "last_address": "0x2D89",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d8d_instruction",
+      "source_label": "FX2D8D",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4379,
+      "first_address": "0x2D8D",
+      "last_address": "0x2D94",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2d98_instruction",
+      "source_label": "FX2D98",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4387,
+      "first_address": "0x2D98",
+      "last_address": "0x2D9F",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_fx2da3_instruction",
+      "source_label": "FX2DA3",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4395,
+      "first_address": "0x2DA3",
+      "last_address": "0x2DAA",
+      "instruction_count": 4,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2dab_instruction",
+      "source_label": "UNK2DAB",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4401,
+      "first_address": "0x2DAB",
+      "last_address": "0x2DB0",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2db2_instruction",
+      "source_label": "UNK2DB2",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4405,
+      "first_address": "0x2DB2",
+      "last_address": "0x2DB2",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2db3_instruction",
+      "source_label": "UNK2DB3",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4407,
+      "first_address": "0x2DB3",
+      "last_address": "0x2DC0",
+      "instruction_count": 7,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx2dc6_instruction",
+      "source_label": "FX2DC6",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4418,
+      "first_address": "0x2DC6",
+      "last_address": "0x2DD2",
+      "instruction_count": 6,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2dd5_instruction",
+      "source_label": "UNK2DD5",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4426,
+      "first_address": "0x2DD5",
+      "last_address": "0x2DDA",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2ddc_instruction",
+      "source_label": "UNK2DDC",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4430,
+      "first_address": "0x2DDC",
+      "last_address": "0x2DDC",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2ddd_instruction",
+      "source_label": "UNK2DDD",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4432,
+      "first_address": "0x2DDD",
+      "last_address": "0x2DE7",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx2ded_instruction",
+      "source_label": "FX2DED",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4442,
+      "first_address": "0x2DED",
+      "last_address": "0x2DF2",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2df3_instruction",
+      "source_label": "UNK2DF3",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4447,
+      "first_address": "0x2DF3",
+      "last_address": "0x2DF8",
+      "instruction_count": 3,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2df7_instruction",
+      "source_label": "UNK2DF7",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4451,
+      "first_address": "0x2DFA",
+      "last_address": "0x2DFA",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2df8_instruction",
+      "source_label": "UNK2DF8",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4453,
+      "first_address": "0x2DFB",
+      "last_address": "0x2E05",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_fx2e0b_instruction",
+      "source_label": "FX2E0B",
+      "source_file": "src/spc700/sfx.spc700.s",
+      "source_line": 4463,
+      "first_address": "0x2E0B",
+      "last_address": "0x2E10",
+      "instruction_count": 3,
+      "classification": "source_named"
+    },
+    {
+      "function": "execute_audio_unresolved_unk180d_instruction",
+      "source_label": "UNK180D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2727,
+      "first_address": "0x2E11",
+      "last_address": "0x2E1C",
+      "instruction_count": 6,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2e1d_instruction",
+      "source_label": "UNK2E1D",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2729,
+      "first_address": "0x2E1D",
+      "last_address": "0x2E23",
+      "instruction_count": 4,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2e25_instruction",
+      "source_label": "UNK2E25",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2734,
+      "first_address": "0x2E25",
+      "last_address": "0x2E34",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2e37_instruction",
+      "source_label": "UNK2E37",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2743,
+      "first_address": "0x2E37",
+      "last_address": "0x2E37",
+      "instruction_count": 1,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2e38_instruction",
+      "source_label": "UNK2E38",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2745,
+      "first_address": "0x2E38",
+      "last_address": "0x2E48",
+      "instruction_count": 8,
+      "classification": "unresolved"
+    },
+    {
+      "function": "execute_audio_unresolved_unk2fc8_instruction",
+      "source_label": "UNK2FC8",
+      "source_file": "src/spc700/main.spc700.s",
+      "source_line": 2948,
+      "first_address": "0x2FC8",
+      "last_address": "0x2FDC",
+      "instruction_count": 9,
+      "classification": "unresolved"
+    }
+  ]
+}

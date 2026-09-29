@@ -7,8 +7,8 @@ namespace eb {
 // Numeric values are persisted by the frontend; keep their order stable.
 enum class AspectRatio { Native, FourThree, SixteenTen, SixteenNine, TwentyOneNine, Window, Custom };
 
-// Presentation preferences only. These values must never drive CPU timing,
-// camera coordinates, controller sampling, or the game's entity visibility.
+// Host presentation preferences. Picture settings never change game state;
+// VRR selects host pacing without altering the emulated hardware clock ratios.
 struct DisplaySettings {
     static constexpr int native_width = 256;
     static constexpr int native_height = 224;
@@ -17,6 +17,12 @@ struct DisplaySettings {
     // Optional host-picture processing, independent of aspect ratio. Keeping it
     // off by default preserves the original output until a user opts in.
     bool reduce_flashing = false;
+    bool variable_refresh = false;
+    // 60 selects the original cadence; 0 means uncapped presentation.
+    int frame_limit = 60;
+    bool interpolate_frames = true;
+    bool high_frame_rate() const { return frame_limit == 0 || frame_limit > 60; }
+    static bool valid_frame_limit(int value) { return value == 0 || (value >= 60 && value <= 300); }
     AspectRatio aspect = AspectRatio::SixteenNine;
     float custom_aspect = 16.f / 9.f;
 

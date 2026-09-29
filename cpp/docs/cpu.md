@@ -1,8 +1,8 @@
 # Translated CPU semantics
 
-`Cpu` retains the assembly's accumulator, index registers, flags, banks, direct
+`MainCpu65816` retains the assembly's accumulator, index registers, flags, banks, direct
 page, stack, and instruction address. Generated C++ dispatch selects a compiled
-instruction site by its original address. Each site calls `execute<opcode>` with
+instruction site by its original address. Each site calls `execute_instruction<opcode>` with
 its linked operand and architectural instruction length. Instruction-fetch bus
 reads preserve open-bus state and memory-speed costs; their returned bytes never
 select or decode an operation. An unknown instruction address is an error.
@@ -16,8 +16,8 @@ local vectors.
 
 ```sh
 python3 cpp/tests/fetch_vectors.py --count 200
-cmake --build build/cpp --target cpu_vectors
-build/cpp/cpu_vectors --cycles --limit 200 build/cpp/vectors/*.json
+cmake --build build/cpp --target main_cpu_instruction_vectors
+build/cpp/main_cpu_instruction_vectors --cycles --limit 200 build/cpp/vectors/*.json
 ```
 
 The optional vector runner requires the development package for nlohmann JSON.
@@ -40,7 +40,7 @@ speeds. The hardware scheduler separately charges explicit instruction fetches,
 data reads, and writes at their region's 6/8/12-clock rate, including MEMSEL's
 high-bank FastROM selection. Internal cycles take six clocks. Refresh stalls and
 DMA/HDMA advance the video and audio clock without executing CPU instructions.
-`Cpu::cycles` excludes these stalls; `Bus::master_clocks()` includes them.
+`MainCpu65816::cycle_count` excludes these stalls; `SnesBus::master_clocks()` includes them.
 
 Focused CPU/bus integration cases check those rates, interrupt fetch/stack/vector
 accesses, and wide memory operands. Missing dummy accesses, instruction-internal
@@ -65,7 +65,7 @@ published corrected inputs explicitly:
 mkdir -p build/cpp/vector-corrections
 curl -fL https://raw.githubusercontent.com/DirtyHairy/65816/8304ada8c0ae85b5e2a637fbdff4b0491c00520c/v1/e1.e.json -o build/cpp/vector-corrections/e1.e.json
 curl -fL https://raw.githubusercontent.com/DirtyHairy/65816/75ee13c6c4bacd2fa1f9e265cbedb1140d01b9e0/v1/fc.e.json -o build/cpp/vector-corrections/fc.e.json
-build/cpp/cpu_vectors --cycles --corrections build/cpp/vector-corrections build/cpp/vectors/*.json
+build/cpp/main_cpu_instruction_vectors --cycles --corrections build/cpp/vector-corrections build/cpp/vectors/*.json
 ```
 
 `--corrections` selects separate input files by basename and reports each

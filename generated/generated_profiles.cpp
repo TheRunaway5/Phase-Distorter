@@ -1,72 +1,322 @@
 // Generated from independent US and JP source builds. Do not edit.
-// Frozen linked-symbol metadata for the two source configurations. Returning a
-// const reference avoids copying this table and keeps it immutable throughout
-// rendering. The values guide presentation reads; they do not alter emulated
-// addresses, game scripts, entity activation or camera state.
 #include "generated_profile.hpp"
 namespace eb {
 namespace {
 constexpr SourceProfile profile_us{
-    0x9643, // wram_battle_flag
-    {0xadd4,0xae4b}, // wram_bg_records
-    0x1b9e, // wram_psi_animation
-    0xaee7, // wram_psi_targets
-    0xaec2, // wram_swirl_timer
-    0x200, // wram_palettes
-    {0xad9e,0xada0,0xada8,0xadaa}, // wram_flash_timers
-    0xad8a, // wram_current_layer_config
-    0xaff1, // rom_layer_config
-    0x436e, // wram_map_combo
-    {0x31,0x33,0x35,0x37}, // wram_bg_scroll
-    0x18000, // wram_map_arrangements
-    0xa62, // wram_entity_script
-    0xe5e, // wram_entity_var0
-    0xe9a, // wram_entity_var1
-    0x10000, // wram_lumine_header
-    {0x11000,0x14000}, // wram_lumine_maps
-    {0x160000,0x162800,0x165000,0x168000,0x16a800,0x16d000,0x170000,0x172800,0x175000,0x178000}, // rom_map_chunks
-    0x17a800, // rom_map_sectors
-    0x314, // title_event_first
-    0x31e, // title_event_last
-    0x3, // title_bg_mode
-    {0x58,0x0}, // title_bg_maps
-    {0x1c4,0x2c1,0x2c2}, // lightning_events
-    0x35c, // gas_flash_event
-    0x10000, // wram_gas_base_palette
-    {0x21a9b7,0x21aa5d}, // rom_gas_palettes
-    0x313, // file_select_event
-    0x161, // lumine_event
+    .gameplay_timing = {
+        .entity_update_call = 0xc0b818,
+        .entity_update_return = 0xc0b81c,
+        .wait_for_next_frame = 0xc08756,
+    },
+    .character_layout = {
+        .table_address = 0x99ce,
+        .entry_size = 0x5f,
+        .level = 0x5,
+        .max_hp = 0xa,
+        .max_pp = 0xc,
+        .afflictions = 0xe,
+        .current_hp_fraction = 0x43,
+        .current_hp = 0x45,
+        .current_hp_target = 0x47,
+        .current_pp_fraction = 0x49,
+        .current_pp = 0x4b,
+        .current_pp_target = 0x4d,
+    },
+    .battler_layout = {
+        .table_address = 0x9fac,
+        .entry_size = 0x4e,
+        .hp = 0x11,
+        .hp_target = 0x13,
+        .hp_max = 0x15,
+        .pp = 0x17,
+        .pp_target = 0x19,
+        .pp_max = 0x1b,
+        .afflictions = 0x1d,
+        .consciousness = 0xc,
+        .ally_or_enemy = 0xe,
+        .npc_id = 0xf,
+        .id = 0x0,
+    },
+    .party_state = {
+        .members = 0x986f,
+        .count = 0x98a3,
+        .player_controlled_count = 0x98a4,
+        .walking_style = 0x9883,
+        .leader_x = 0x9877,
+        .leader_y = 0x987b,
+    },
+    .action_gates = {
+        .battle_mode = 0x4dc2,
+        .battle_swirl_countdown = 0x5d60,
+        .enemy_touched = 0x4dba,
+        .teleport_destination = 0x9f3f,
+        .using_door = 0x5dc2,
+        .input_disable_frames = 0x5d74,
+        .pending_interactions = 0x5d9a,
+    },
+    .movement_state = {
+        .flags = 0x5d56,
+        .intangibility_frames = 0x5d58,
+    },
+    .teleport_state = {
+        .destination = 0x9f3f,
+        .style = 0x9f41,
+        .destination_table = 0x157880,
+        .entry_size = 0x1f,
+        .destination_x = 0x1b,
+        .destination_y = 0x1d,
+    },
+    .gameplay_routines = {
+        .main_loop = 0xc0b814,
+        .add_party_character = 0xc228f8,
+        .remove_party_character = 0xc229bb,
+    },
+    .dma_queue = {
+        .write_index = 0x0,
+        .last_completed_index = 0x1,
+    },
+    .wram_battle_mode_flag = 0x9643,
+    .wram_battle_backgrounds = {
+        .layer1 = 0xadd4,
+        .layer2 = 0xae4b,
+    },
+    .wram_psi_animation_state = 0x1b9e,
+    .rom_psi_animation_config = 0xcf04d,
+    .rom_psi_animation_pointers = 0xcf58f,
+    .rom_psi_animation_palettes = 0xcf47f,
+    .rom_psi_animation_graphics_bank = 0xc0000,
+    .wram_psi_animation_targets = 0xaee7,
+    .wram_swirl_update_timer = 0xaec2,
+    .wram_palettes = 0x200,
+    .wram_flash_timers = {
+        .green = 0xad9e,
+        .red = 0xada0,
+        .reflection = 0xada8,
+        .green_background = 0xadaa,
+    },
+    .wram_current_layer_config = 0xad8a,
+    .rom_layer_config_table = 0xaff1,
+    .wram_loaded_map_tile_combination = 0x436e,
+    .wram_background_scroll = {
+        .layer1_x = 0x31,
+        .layer1_y = 0x33,
+        .layer2_x = 0x35,
+        .layer2_y = 0x37,
+    },
+    .wram_map_tile_arrangements = 0x18000,
+    .wram_entity_script_ids = 0xa62,
+    .wram_entity_script_variable0 = 0xe5e,
+    .wram_entity_script_variable1 = 0xe9a,
+    .wram_first_entity = 0xa50,
+    .wram_entity_next = 0xa9e,
+    .wram_entity_screen_coordinates = {
+        .x = 0xb16,
+        .y = 0xb52,
+    },
+    .wram_entity_world_coordinates = {
+        .x = 0xb8e,
+        .y = 0xbca,
+    },
+    .wram_entity_draw_priority = 0x103e,
+    .wram_entity_spritemap_pointers = {
+        .low = 0x112e,
+        .high = 0x116a,
+    },
+    .wram_entity_draw_callback = 0x11e2,
+    .wram_entity_animation_frame = 0x10f2,
+    .wram_entity_displayed_sprites = 0x341a,
+    .wram_entity_spritemap_sizes = 0x2916,
+    .wram_entity_surface_flags = 0x2baa,
+    .wram_entity_body_divides = 0x2be6,
+    .entity_draw_callbacks = {
+        .screen_space = 0xa3a4,
+        .world_space = 0xa0fa,
+    },
+    .wram_lumine_text_header = 0x10000,
+    .wram_lumine_text_maps = {
+        .even_columns = 0x11000,
+        .odd_columns = 0x14000,
+    },
+    .rom_map_tile_chunks = {0x160000, 0x162800, 0x165000, 0x168000, 0x16a800, 0x16d000, 0x170000, 0x172800, 0x175000, 0x178000},
+    .rom_map_tileset_palette_sectors = 0x17a800,
+    .title_script_first = 0x314,
+    .title_script_last = 0x31e,
+    .title_background_mode = 0x3,
+    .title_background_maps = {
+        .layer1 = 0x58,
+        .layer2 = 0x0,
+    },
+    .lightning_scripts = {
+        .franklin_badge_reflection = 0x1c4,
+        .strike_event_705 = 0x2c1,
+        .strike_event_706 = 0x2c2,
+    },
+    .gas_station_flash_script = 0x35c,
+    .wram_gas_station_base_palette = 0x10000,
+    .rom_gas_station_palettes = {
+        .normal = 0x21a9b7,
+        .alternate = 0x21aa5d,
+    },
+    .file_select_script = 0x313,
+    .lumine_text_script = 0x161,
 };
 constexpr SourceProfile profile_jp{
-    0x993b, // wram_battle_flag
-    {0xafa9,0xb020}, // wram_bg_records
-    0x1b44, // wram_psi_animation
-    0xb0bc, // wram_psi_targets
-    0xb097, // wram_swirl_timer
-    0x200, // wram_palettes
-    {0xaf73,0xaf75,0xaf7d,0xaf7f}, // wram_flash_timers
-    0xaf5f, // wram_current_layer_config
-    0xafd0, // rom_layer_config
-    0x46f4, // wram_map_combo
-    {0x31,0x33,0x35,0x37}, // wram_bg_scroll
-    0x18000, // wram_map_arrangements
-    0xa58, // wram_entity_script
-    0xe54, // wram_entity_var0
-    0xe90, // wram_entity_var1
-    0x10000, // wram_lumine_header
-    {0x12000,0x14000}, // wram_lumine_maps
-    {0x160000,0x162800,0x165000,0x168000,0x16a800,0x16d000,0x170000,0x172800,0x175000,0x178000}, // rom_map_chunks
-    0x17a800, // rom_map_sectors
-    0x314, // title_event_first
-    0x31a, // title_event_last
-    0x1, // title_bg_mode
-    {0x38,0x3c}, // title_bg_maps
-    {0x1c4,0x2c1,0x2c2}, // lightning_events
-    0x358, // gas_flash_event
-    0x10000, // wram_gas_base_palette
-    {0x219cb9,0x219d5f}, // rom_gas_palettes
-    0x313, // file_select_event
-    0x161, // lumine_event
+    .gameplay_timing = {
+        .entity_update_call = 0xc0b7f3,
+        .entity_update_return = 0xc0b7f7,
+        .wait_for_next_frame = 0xc0874c,
+    },
+    .character_layout = {
+        .table_address = 0x9c7f,
+        .entry_size = 0x5e,
+        .level = 0x4,
+        .max_hp = 0x9,
+        .max_pp = 0xb,
+        .afflictions = 0xd,
+        .current_hp_fraction = 0x42,
+        .current_hp = 0x44,
+        .current_hp_target = 0x46,
+        .current_pp_fraction = 0x48,
+        .current_pp = 0x4a,
+        .current_pp_target = 0x4c,
+    },
+    .battler_layout = {
+        .table_address = 0xa1ae,
+        .entry_size = 0x4e,
+        .hp = 0x11,
+        .hp_target = 0x13,
+        .hp_max = 0x15,
+        .pp = 0x17,
+        .pp_target = 0x19,
+        .pp_max = 0x1b,
+        .afflictions = 0x1d,
+        .consciousness = 0xc,
+        .ally_or_enemy = 0xe,
+        .npc_id = 0xf,
+        .id = 0x0,
+    },
+    .party_state = {
+        .members = 0x9b20,
+        .count = 0x9b54,
+        .player_controlled_count = 0x9b55,
+        .walking_style = 0x9b34,
+        .leader_x = 0x9b28,
+        .leader_y = 0x9b2c,
+    },
+    .action_gates = {
+        .battle_mode = 0x5148,
+        .battle_swirl_countdown = 0x60e6,
+        .enemy_touched = 0x5140,
+        .teleport_destination = 0xa141,
+        .using_door = 0x6148,
+        .input_disable_frames = 0x60fa,
+        .pending_interactions = 0x6120,
+    },
+    .movement_state = {
+        .flags = 0x60dc,
+        .intangibility_frames = 0x60de,
+    },
+    .teleport_state = {
+        .destination = 0xa141,
+        .style = 0xa143,
+        .destination_table = 0x15899e,
+        .entry_size = 0x10,
+        .destination_x = 0xc,
+        .destination_y = 0xe,
+    },
+    .gameplay_routines = {
+        .main_loop = 0xc0b7ef,
+        .add_party_character = 0xc227c4,
+        .remove_party_character = 0xc228b3,
+    },
+    .dma_queue = {
+        .write_index = 0x0,
+        .last_completed_index = 0x1,
+    },
+    .wram_battle_mode_flag = 0x993b,
+    .wram_battle_backgrounds = {
+        .layer1 = 0xafa9,
+        .layer2 = 0xb020,
+    },
+    .wram_psi_animation_state = 0x1b44,
+    .rom_psi_animation_config = 0xcf164,
+    .rom_psi_animation_pointers = 0xcf6a6,
+    .rom_psi_animation_palettes = 0xcf596,
+    .rom_psi_animation_graphics_bank = 0xc0000,
+    .wram_psi_animation_targets = 0xb0bc,
+    .wram_swirl_update_timer = 0xb097,
+    .wram_palettes = 0x200,
+    .wram_flash_timers = {
+        .green = 0xaf73,
+        .red = 0xaf75,
+        .reflection = 0xaf7d,
+        .green_background = 0xaf7f,
+    },
+    .wram_current_layer_config = 0xaf5f,
+    .rom_layer_config_table = 0xafd0,
+    .wram_loaded_map_tile_combination = 0x46f4,
+    .wram_background_scroll = {
+        .layer1_x = 0x31,
+        .layer1_y = 0x33,
+        .layer2_x = 0x35,
+        .layer2_y = 0x37,
+    },
+    .wram_map_tile_arrangements = 0x18000,
+    .wram_entity_script_ids = 0xa58,
+    .wram_entity_script_variable0 = 0xe54,
+    .wram_entity_script_variable1 = 0xe90,
+    .wram_first_entity = 0xa46,
+    .wram_entity_next = 0xa94,
+    .wram_entity_screen_coordinates = {
+        .x = 0xb0c,
+        .y = 0xb48,
+    },
+    .wram_entity_world_coordinates = {
+        .x = 0xb84,
+        .y = 0xbc0,
+    },
+    .wram_entity_draw_priority = 0x1034,
+    .wram_entity_spritemap_pointers = {
+        .low = 0x1124,
+        .high = 0x1160,
+    },
+    .wram_entity_draw_callback = 0x11d8,
+    .wram_entity_animation_frame = 0x10e8,
+    .wram_entity_displayed_sprites = 0x1ab8,
+    .wram_entity_spritemap_sizes = 0x2d14,
+    .wram_entity_surface_flags = 0x2fa8,
+    .wram_entity_body_divides = 0x2fe4,
+    .entity_draw_callbacks = {
+        .screen_space = 0xa383,
+        .world_space = 0xa0d9,
+    },
+    .wram_lumine_text_header = 0x10000,
+    .wram_lumine_text_maps = {
+        .even_columns = 0x12000,
+        .odd_columns = 0x14000,
+    },
+    .rom_map_tile_chunks = {0x160000, 0x162800, 0x165000, 0x168000, 0x16a800, 0x16d000, 0x170000, 0x172800, 0x175000, 0x178000},
+    .rom_map_tileset_palette_sectors = 0x17a800,
+    .title_script_first = 0x314,
+    .title_script_last = 0x31a,
+    .title_background_mode = 0x1,
+    .title_background_maps = {
+        .layer1 = 0x38,
+        .layer2 = 0x3c,
+    },
+    .lightning_scripts = {
+        .franklin_badge_reflection = 0x1c4,
+        .strike_event_705 = 0x2c1,
+        .strike_event_706 = 0x2c2,
+    },
+    .gas_station_flash_script = 0x358,
+    .wram_gas_station_base_palette = 0x10000,
+    .rom_gas_station_palettes = {
+        .normal = 0x219cb9,
+        .alternate = 0x219d5f,
+    },
+    .file_select_script = 0x313,
+    .lumine_text_script = 0x161,
 };
 }
 const SourceProfile& source_profile(GameVersion version) { return version == GameVersion::JP ? profile_jp : profile_us; }

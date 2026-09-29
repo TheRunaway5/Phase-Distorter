@@ -1,8 +1,8 @@
 #include "eb/debug_panel.hpp"
 #include "eb/display_settings.hpp"
 
-// Both panels are host UI only. The runtime panel edits display preferences and
-// reads copied diagnostics; the startup panel emits paths for main to validate.
+// Both panels are host UI only. The runtime panel edits display preferences,
+// emits debug commands, and reads snapshots; startup emits import paths.
 // Neither receives a bus, CPU, or mutable game-memory reference.
 
 #include "imgui.h"
@@ -25,6 +25,12 @@ struct DebugPanel::Impl {
     bool visible{}, focus_next_frame{};
     bool bar_mouse_down{}, open_confirmation{}, cancel_confirmation{};
     float menu_height = 19.0f;
+    GameDebugSettings game_settings;
+    std::optional<GameDebugRequest> game_action;
+    std::array<bool,4> party{};
+    bool party_editing{};
+    unsigned destination{};
+    ImGuiTextFilter destination_filter;
     std::optional<PanelAction> action, confirmation;
     unsigned confirmation_cache{};
     std::string action_status;
@@ -87,7 +93,7 @@ bool DebugPanel::process_event(const SDL_Event& event) {
     }
     // Merely hovering over the persistent bar must not pause game controls.
     // Its mouse interaction is captured, while F1 remains the keyboard entry.
-    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.y < impl_->menu_height)
+    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.y >= 0 && event.button.y < impl_->menu_height)
         impl_->bar_mouse_down = true;
     if (event.type == SDL_MOUSEBUTTONUP) {
         const bool owned = impl_->bar_mouse_down || event.button.y < impl_->menu_height;
@@ -119,13 +125,18 @@ void DebugPanel::set_visible(bool visible) {
 std::optional<PanelAction> DebugPanel::take_action() { return std::exchange(impl_->action, std::nullopt); }
 void DebugPanel::set_action_status(std::string status) { impl_->action_status = std::move(status); }
 float DebugPanel::menu_height() const { return impl_->menu_height; }
+const GameDebugSettings& DebugPanel::game_settings() const {return impl_->game_settings;}
+std::optional<GameDebugRequest> DebugPanel::take_game_action() {return std::exchange(impl_->game_action,std::nullopt);}
 
 void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnostics) {
     ImGui::SetCurrentContext(impl_->context);
     ImGui_ImplOpenGL2_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
-    if (ImGui::BeginMainMenuBar()) {
+    const auto mouse=ImGui::GetIO().MousePos;
+    const bool bar_visible=!diagnostics.fullscreen || (mouse.x>=0 && mouse.x<ImGui::GetIO().DisplaySize.x &&
+        mouse.y>=0 && mouse.y<impl_->menu_height) || impl_->bar_mouse_down;
+    if (bar_visible && ImGui::BeginMainMenuBar()) {
         impl_->menu_height = ImGui::GetWindowHeight();
         // Keep gameplay Enter/arrows from activating a previously clicked bar
         // item. F1/F11 are explicit shortcuts; the floating window supports nav.
@@ -198,6 +209,29 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     ImGui::Spacing();
                     if (ImGui::Button("Restore game display")) settings = DisplaySettings{};
                     ImGui::Spacing();
+                    ImGui::Checkbox("Variable refresh rate (VRR)", &settings.variable_refresh);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Cap presentation below the monitor maximum with vsync.\nRequires VRR enabled on your display and in your graphics settings.\nFullscreen may be required by your desktop. This does not enable driver VRR.");
+                    ImGui::Spacing();
+                    ImGui::SetNextItemWidth(190.0f);
+                    const auto fps_label = settings.frame_limit == 0 ? std::string("Uncapped") :
+                        settings.frame_limit == 60 ? std::string("Native (~60 FPS)") : std::to_string(settings.frame_limit) + " FPS";
+                    if (ImGui::BeginCombo("Frame rate", fps_label.c_str())) {
+                        for (int limit : {60, 90, 120, 144, 165, 240, 300, 0}) {
+                            const auto label = limit == 0 ? std::string("Uncapped") : limit == 60 ?
+                                std::string("Native (~60 FPS)") : std::to_string(limit) + " FPS";
+                            if (ImGui::Selectable(label.c_str(), settings.frame_limit == limit)) settings.frame_limit = limit;
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Higher rates affect presentation, not gameplay or audio speed.\nVRR limits output to the display range. Without VRR, higher rates disable vsync and may tear.");
+                    ImGui::BeginDisabled(!settings.high_frame_rate());
+                    ImGui::Checkbox("Interpolate frames", &settings.interpolate_frames);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Generate intermediate overworld and battle pictures from completed frames.\nAdds one game frame of visual latency. Fast motion and overlapping effects may show blending artifacts.\nDisable for the original pixel frames at the selected presentation rate.");
+                    ImGui::EndDisabled();
+                    ImGui::Spacing();
                     ImGui::TextDisabled("F1 or Escape closes this panel.");
                     ImGui::TextWrapped("The game continues while this panel is open. Close it to resume controls.");
                     ImGui::EndTabItem();
@@ -244,6 +278,53 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                         ImGui::EndDisabled();
                         ImGui::PopID();
                     }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Debug")) {
+                    ImGui::Checkbox("Infinite health (999/999)", &impl_->game_settings.infinite_hp);
+                    ImGui::Checkbox("Infinite PSI / PP (999/999)", &impl_->game_settings.infinite_pp);
+                    ImGui::Checkbox("Noclip", &impl_->game_settings.noclip);
+                    ImGui::Checkbox("Enemies ignore you", &impl_->game_settings.enemies_ignore);
+                    ImGui::TextWrapped("Enemies ignore you prevents overworld pursuit and contact battles. Story battles still work.");
+                    ImGui::Separator();
+                    const auto& state=diagnostics.game_debug;
+                    ImGui::BeginDisabled(!state.ready || state.busy);
+                    const auto places=debug_destinations();
+                    ImGui::SetNextItemWidth(-1);
+                    if(ImGui::BeginCombo("##Teleport destination",places[impl_->destination].name,ImGuiComboFlags_HeightLargest)) {
+                        if(ImGui::IsWindowAppearing())ImGui::SetKeyboardFocusHere();
+                        impl_->destination_filter.Draw("Search places",-1);
+                        ImGui::TextDisabled("385 areas, all scripted warps and door entrances");
+                        if(ImGui::BeginChild("Destinations",ImVec2(0,std::min(200.0f,std::max(50.0f,display.y-100))))) {
+                            for(unsigned i=0;i<places.size();++i)if(impl_->destination_filter.PassFilter(places[i].name)) {
+                                if(ImGui::Selectable(places[i].name,i==impl_->destination)) {impl_->destination=i;ImGui::CloseCurrentPopup();}
+                                if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",places[i].name);
+                            }
+                        }
+                        ImGui::EndChild();
+                        ImGui::EndCombo();
+                    }
+                    if(ImGui::Button("Teleport now"))
+                        impl_->game_action=GameDebugRequest{GameDebugRequest::Kind::Teleport,places[impl_->destination].id,{}};
+                    ImGui::SeparatorText("Party members");
+                    if(!impl_->party_editing)impl_->party=state.party;
+                    constexpr const char* names[]{"Ness","Paula","Jeff","Poo"};
+                    for(unsigned i=0;i<4;++i) {
+                        if(i && ImGui::GetContentRegionAvail().x>280)ImGui::SameLine();
+                        if(ImGui::Checkbox(names[i],&impl_->party[i]))impl_->party_editing=true;
+                    }
+                    const bool any=std::any_of(impl_->party.begin(),impl_->party.end(),[](bool member){return member;});
+                    ImGui::BeginDisabled(!any);
+                    if(ImGui::Button("Apply party")) {
+                        impl_->game_action=GameDebugRequest{GameDebugRequest::Kind::Party,0,impl_->party};
+                        impl_->party_editing=false;
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Keep at least one playable member. Guest companions stay with the party.");
+                    if(!state.status.empty())ImGui::TextWrapped("%s",state.status.c_str());
+                    else if(!state.ready)ImGui::TextWrapped("Load a game to use teleport and party controls.");
+                    ImGui::TextWrapped("Debug changes can affect saved progress. Cheat switches reset when you restart or switch games.");
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();

@@ -6,8 +6,6 @@ set "program=%~dp0build\cpp\eb_cpp.exe"
 if exist "%program%" goto run
 set "program=%~dp0build\cpp\Release\eb_cpp.exe"
 if exist "%program%" goto run
-set "program=%~dp0Phase Distorter.exe"
-if exist "%program%" goto run
 set "program=%~dp0launchers\windows\bin\eb_cpp.exe"
 if exist "%program%" goto run
 echo No Windows executable found. See README.md for build instructions. 1>&2
