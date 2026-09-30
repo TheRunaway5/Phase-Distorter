@@ -2,12 +2,15 @@
 
 #include "eb/game_version.hpp"
 
+#include <array>
 #include <cstdint>
 #include <span>
 
 namespace eb {
 struct SourceProfile;
 class GameSceneRenderer;
+class OverworldSpriteBridge;
+class OverworldSpriteRuntime;
 
 // A transparent candidate has negative priority; layer 5 is the backdrop.
 // Direct-color pixels have no palette entry. Palette identity allows a scene
@@ -18,6 +21,21 @@ struct PpuPixel {
     unsigned layer = 5;
     bool math = true;
     unsigned palette_index = 256;
+};
+
+// Scratch storage owned by one synchronous scanline render. Never retained by
+// the bus/view, so VRAM, CGRAM, scroll and HDMA changes on the next row cannot
+// reuse stale pixels. Uncached views remain available for independent checks.
+struct BackgroundTileRows {
+    struct Row {
+        int cell_x{};
+        unsigned y{};
+        const GameSceneRenderer* scene{};
+        bool native_ring{};
+        bool valid{};
+        std::array<PpuPixel, 8> pixels{};
+    };
+    std::array<Row, 4> layers{};
 };
 
 // Borrowed only for one synchronous rendering/upload operation. These spans
@@ -39,6 +57,10 @@ struct SceneReadView {
     GameVersion game_version;
     uint64_t completed_frames;
     uint16_t fixed_color, oam_reload;
+    BackgroundTileRows* tile_rows = nullptr;
+    const GameSceneRenderer* object_scene = nullptr;
+    const OverworldSpriteBridge* host_sprites = nullptr;
+    const OverworldSpriteRuntime* native_sprites = nullptr;
 
     uint16_t vram_word(unsigned address) const {
         return video_ram[address & 0xffff] | video_ram[(address + 1) & 0xffff] << 8;

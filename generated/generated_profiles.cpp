@@ -70,6 +70,8 @@ constexpr SourceProfile profile_us{
         .main_loop = 0xc0b814,
         .add_party_character = 0xc228f8,
         .remove_party_character = 0xc229bb,
+        .fade_out = 0xc08814,
+        .wait_frames = 0xc0878b,
     },
     .dma_queue = {
         .write_index = 0x0,
@@ -228,6 +230,8 @@ constexpr SourceProfile profile_jp{
         .main_loop = 0xc0b7ef,
         .add_party_character = 0xc227c4,
         .remove_party_character = 0xc228b3,
+        .fade_out = 0xc0880a,
+        .wait_frames = 0xc08781,
     },
     .dma_queue = {
         .write_index = 0x0,

@@ -17,10 +17,13 @@ struct DisplaySettings {
     // Optional host-picture processing, independent of aspect ratio. Keeping it
     // off by default preserves the original output until a user opts in.
     bool reduce_flashing = false;
+    bool crt_filter = false;
     bool variable_refresh = false;
     // 60 selects the original cadence; 0 means uncapped presentation.
     int frame_limit = 60;
     bool interpolate_frames = true;
+    // Source-scene rendering takes precedence over legacy frame generation.
+    bool direct_rendering = true;
     bool high_frame_rate() const { return frame_limit == 0 || frame_limit > 60; }
     static bool valid_frame_limit(int value) { return value == 0 || (value >= 60 && value <= 300); }
     AspectRatio aspect = AspectRatio::SixteenNine;

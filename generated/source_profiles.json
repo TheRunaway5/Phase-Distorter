@@ -66,7 +66,9 @@
     "gameplay_routines": {
       "main_loop": 12630036,
       "add_party_character": 12724472,
-      "remove_party_character": 12724667
+      "remove_party_character": 12724667,
+      "fade_out": 12617748,
+      "wait_frames": 12617611
     },
     "dma_queue": {
       "write_index": 0,
@@ -235,7 +237,9 @@
     "gameplay_routines": {
       "main_loop": 12629999,
       "add_party_character": 12724164,
-      "remove_party_character": 12724403
+      "remove_party_character": 12724403,
+      "fade_out": 12617738,
+      "wait_frames": 12617601
     },
     "dma_queue": {
       "write_index": 0,

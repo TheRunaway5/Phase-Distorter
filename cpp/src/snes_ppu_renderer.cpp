@@ -6,6 +6,14 @@
 
 namespace eb {
 namespace {
+// Expand one bitplane byte to eight byte lanes, leftmost pixel first.
+constexpr auto planar_lanes = [] {
+    std::array<std::uint64_t, 256> table{};
+    for (unsigned byte = 0; byte < 256; ++byte)
+        for (unsigned x = 0; x < 8; ++x)
+            table[byte] |= std::uint64_t((byte >> (7 - x)) & 1) << (x * 8);
+    return table;
+}();
 int signed_13_bit(unsigned value) {
     return (value & 0x1000) ? int(value & 0x1fff) - 0x2000 : int(value & 0x1fff);
 }
@@ -56,6 +64,21 @@ PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x
         x -= ((x % int(mosaic)) + int(mosaic)) % int(mosaic);
         y -= y % mosaic;
     }
+    // Ordinary tiled modes share map, palette and priority across eight
+    // neighboring pixels. Raster state is immutable for this borrowed view.
+    // Offset-per-tile, mode 7 and mosaic retain the scalar sampler.
+    auto* row_cache = tile_rows && mode <= 1 &&
+        (!(ppu_registers[6] & (1 << background_layer)) || mosaic == 1)
+        ? &tile_rows->layers[background_layer] : nullptr;
+    const int raw_x = x + int(background_scroll_x[background_layer]);
+    const int cell_x = raw_x >= 0 ? raw_x / 8 : (raw_x - 7) / 8;
+    const unsigned lane = unsigned(raw_x) & 7;
+    // A fine-scrolled tile can cross x=0/256. The native half may be a VRAM
+    // patch while its offscreen continuation comes from the source world map.
+    const bool native_ring = x >= 0 && x < 256;
+    if (row_cache && row_cache->valid && row_cache->cell_x == cell_x &&
+        row_cache->y == y && row_cache->scene == scene && row_cache->native_ring == native_ring)
+        return row_cache->pixels[lane];
     const unsigned tile_size = (ppu_registers[5] & (0x10 << background_layer)) ? 16 : 8;
     unsigned scrolled_x = unsigned(x + background_scroll_x[background_layer]) & 1023,
              scrolled_y = (y + background_scroll_y[background_layer]) & 1023;
@@ -117,14 +140,6 @@ PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x
     // SNES planar tiles store paired bitplanes sixteen bytes apart. A zero
     // color index is transparent before palette selection, even if CGRAM[0]
     // itself is a visible color used by the backdrop.
-    unsigned color = 0;
-    for (unsigned plane = 0; plane < depth; ++plane) {
-        const unsigned plane_address =
-            base + tile * depth * 8 + (plane / 2) * 16 + (tile_pixel_y % 8) * 2 + (plane & 1);
-        color |= ((video_ram[plane_address & 0xffff] >> (7 - (tile_pixel_x % 8))) & 1) << plane;
-    }
-    if (!color)
-        return {};
     const unsigned palette_number = (entry >> 10) & 7;
     const bool high = entry & 0x2000;
     int priority = 0;
@@ -140,17 +155,39 @@ PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x
         constexpr int priorities[2][2] = {{2, 6}, {0, 4}};
         priority = priorities[background_layer][high];
     }
-    uint16_t rgb;
-    unsigned palette_index = 256;
-    if (depth == 8 && background_layer == 0 && (ppu_registers[0x30] & 1))
-        rgb = ((color & 7) << 2) | ((palette_number & 1) << 1) | ((color & 0x38) << 4) |
-              ((palette_number & 2) << 5) | ((color & 0xc0) << 7) | ((palette_number & 4) << 10);
-    else {
-        palette_index = color + (depth == 8 ? 0 : palette_number * (1 << depth)) +
-                        (mode == 0 ? background_layer * 32 : 0);
-        rgb = palette(palette_index);
+    const auto pixel = [&](unsigned color) -> PpuPixel {
+        if (!color) return {};
+        uint16_t rgb;
+        unsigned palette_index = 256;
+        if (depth == 8 && background_layer == 0 && (ppu_registers[0x30] & 1))
+            rgb = ((color & 7) << 2) | ((palette_number & 1) << 1) | ((color & 0x38) << 4) |
+                  ((palette_number & 2) << 5) | ((color & 0xc0) << 7) | ((palette_number & 4) << 10);
+        else {
+            palette_index = color + (depth == 8 ? 0 : palette_number * (1 << depth)) +
+                            (mode == 0 ? background_layer * 32 : 0);
+            rgb = palette(palette_index);
+        }
+        return {rgb, priority, background_layer, true, palette_index};
+    };
+    const unsigned row_address = base + tile * depth * 8 + (tile_pixel_y % 8) * 2;
+    if (row_cache) {
+        std::uint64_t decoded = 0;
+        for (unsigned plane = 0; plane < depth; ++plane)
+            decoded |= planar_lanes[video_ram[(row_address + (plane / 2) * 16 + (plane & 1)) & 0xffff]] << plane;
+        for (unsigned col = 0; col < 8; ++col)
+            row_cache->pixels[col] = pixel(unsigned(decoded >> (((entry & 0x4000) ? 7 - col : col) * 8)) & 255);
+        row_cache->cell_x = cell_x;
+        row_cache->y = y;
+        row_cache->scene = scene;
+        row_cache->native_ring = native_ring;
+        row_cache->valid = true;
+        return row_cache->pixels[lane];
     }
-    return {rgb, priority, background_layer, true, palette_index};
+    unsigned color = 0;
+    for (unsigned plane = 0; plane < depth; ++plane)
+        color |= ((video_ram[(row_address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >>
+                   (7 - (tile_pixel_x % 8))) & 1) << plane;
+    return pixel(color);
 }
 
 // Affine rendering keeps the hardware's fixed-point truncations in the
@@ -208,6 +245,9 @@ PpuPixel SceneReadView::sample_mode7_pixel(unsigned background_layer, int x, uns
 // signed nine-bit x, scanline wrap, and hardware object/tile limits are kept
 // separate from output clipping so the host viewport does not create sprites.
 uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin) const {
+    if (object_scene)
+        if (const auto status = object_scene->try_native_sprite_pixels(*this, y, result, origin))
+            return *status;
     constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
                                          {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
                                          {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
@@ -237,8 +277,14 @@ uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> resu
         // not reveal these slots; it only completes native edge-crossing OBJs.
         if ((origin || result.size() != 256) && (x + int(width) <= 0 || x >= 256))
             continue;
-        const unsigned attributes = object_attributes[object_address + 3],
-                       palette_number = (attributes >> 1) & 7, level = (attributes >> 4) & 3;
+        const unsigned attributes = object_attributes[object_address + 3], level = (attributes >> 4) & 3;
+        const auto host = host_sprites && object_scene && width == 16 && height == 16
+            ? object_scene->host_oam_part(x, object_attributes[object_address + 1],
+                                          object_attributes[object_address + 2], attributes,
+                                          bool(extra_attributes >> 1), object_index)
+            : std::nullopt;
+        const unsigned palette_number = host ? host->palette : (attributes >> 1) & 7;
+        const unsigned host_row = row;
         const unsigned mode = ppu_registers[5] & 7;
         const int priority = (mode == 0   ? mode0_priorities
                               : mode == 1 ? mode1_priorities
@@ -256,17 +302,21 @@ uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> resu
             const int output_x = px - origin;
             if (output_x < 0 || output_x >= int(result.size()))
                 continue;
-            const unsigned sprite_pixel_x = (attributes & 0x40) ? width - 1 - col : col;
-            const unsigned tile = ((object_attributes[object_address + 2] & 0xf0) + ((row / 8) * 16)) & 0xf0;
-            const unsigned tile_index =
-                tile | ((object_attributes[object_address + 2] + sprite_pixel_x / 8) & 15);
-            const unsigned plane_address = base + tile_index * 32 + (row & 7) * 2;
             unsigned color = 0;
-            for (unsigned plane = 0; plane < 4; ++plane)
-                color |= ((video_ram[(plane_address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >>
-                           (7 - (sprite_pixel_x & 7))) &
-                          1)
-                         << plane;
+            if (host) {
+                // Host parts already contain the authored mirror and surface
+                // treatment; apply neither a second time during composition.
+                color = host->indices[host_row * 16 + col];
+            } else {
+                const unsigned sprite_pixel_x = (attributes & 0x40) ? width - 1 - col : col;
+                const unsigned tile = ((object_attributes[object_address + 2] & 0xf0) + ((row / 8) * 16)) & 0xf0;
+                const unsigned tile_index =
+                    tile | ((object_attributes[object_address + 2] + sprite_pixel_x / 8) & 15);
+                const unsigned plane_address = base + tile_index * 32 + (row & 7) * 2;
+                for (unsigned plane = 0; plane < 4; ++plane)
+                    color |= ((video_ram[(plane_address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >>
+                               (7 - (sprite_pixel_x & 7))) & 1) << plane;
+            }
             // OAM order resolves overlap before BG priority comparison.
             if (color && result[output_x].priority < 0)
                 result[output_x] = {palette(128 + palette_number * 16 + color), priority, 4,
@@ -290,9 +340,14 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
         margin && presentation_world_map_ && (x < presentation_clip_left_ || x >= presentation_clip_right_);
     Pixel main_screen{outside_world ? uint16_t(0) : view.palette(0), -1, 5, true, 0},
         sub_screen{view.fixed_color, -1, 5, true};
+    // The intro's static is added to BG1 through subscreen color math. Outside
+    // the authored card, provide black BG1 coverage so that same animated BG2
+    // contribution remains visible without repeating artwork or title text.
+    if (margin && outside_native && presentation_intro_static_)
+        main_screen = {0, -1, 0, true, 0};
     Pixel reference_main = main_screen, reference_sub = sub_screen;
     if (include_reference) {
-        if (!outside_world)
+        if (!outside_world && !(margin && outside_native && presentation_intro_static_))
             reference_main.color = presentation_reference_palette_[0];
         reference_sub.color = presentation_reference_fixed_;
     }
@@ -300,6 +355,12 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
     // membership preserves full-screen fades and clips in the extra picture.
     const unsigned window_x = unsigned(std::clamp(x, 0, 255));
     for (unsigned layer = 0; layer < 5; ++layer) {
+        // Disabled layers cannot contribute to either the picture or its
+        // flash-safe reference. Avoid tile/map decoding for those layers on
+        // every native and widescreen pixel. Test both screens: a sub-screen
+        // layer can still contribute through color math.
+        if (!((view.ppu_registers[0x2c] | view.ppu_registers[0x2d]) & (1u << layer)))
+            continue;
         const bool scenery = presentation_layer_mask_ & (1 << layer);
         if (margin && ((outside_native && !scenery) || (outside_world && scenery)))
             continue;
@@ -416,7 +477,9 @@ uint32_t GameSceneRenderer::compose_presentation_pixel(const SceneReadView &view
 // Always produce the canonical 256-pixel scanline first. Only this native
 // sampling pass commits sprite overflow; scene rendering consumes const views.
 void SnesBus::render_scanline(unsigned y) {
-    const auto view = scene_view();
+    BackgroundTileRows rows;
+    auto view = scene_view();
+    view.tile_rows = &rows;
     scene_renderer_.begin_scanline(view, y);
     if (ppu_registers_[0] & 0x80) {
         std::fill_n(native_framebuffer.begin() + y * 256, 256, 0xff000000);
@@ -429,6 +492,9 @@ void SnesBus::render_scanline(unsigned y) {
                 scene_renderer_.compose_presentation_pixel(view, x, y, objects[x], false);
     }
     scene_renderer_.render_presentation_margins(view, y);
+    // Source capture changes sampling policy temporarily; it has its own tile cache.
+    view.tile_rows = nullptr;
+    scene_renderer_.capture_direct_scanline(view, y);
 }
 
 } // namespace eb

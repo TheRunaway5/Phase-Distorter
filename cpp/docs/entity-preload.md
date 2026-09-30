@@ -1,9 +1,13 @@
 # Offscreen actor loading
 
-The desktop session passes the selected source width to `EntityPreload` as
-well as the renderer. The source NPC placement queries and enemy sector scans
-therefore cover the wide view before actors enter it. The policy works with
-interpolation disabled. Native 256-column loading is unchanged.
+This experimental policy is disabled in the desktop session. Expanding source
+activation can exhaust sprite resources and change scripted actor order; the
+title demo's bicycle freeze was reproduced with it enabled. Host-owned offscreen
+readiness is being developed separately in [the native engine](native-engine.md).
+
+When explicitly enabled in a test, `EntityPreload` expands source NPC placement
+queries and enemy sector scans to cover the wide view before actors enter it.
+The policy works with interpolation disabled. Native 256-column loading is unchanged.
 
 For a wider view, the extra half-width is rounded up to a 64-pixel enemy sector
 and extended by one more sector. Initial map loads and vertical scrolls scan

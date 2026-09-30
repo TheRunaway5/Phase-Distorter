@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # instruction sources. Only that latter path needs Python plus assembler tools.
 option(EB_BUILD_FRONTEND "Build the SDL2/OpenGL desktop executable" ON)
 option(EB_BUILD_TESTS "Build CPU and hardware verification programs" ON)
+option(EB_GAMEPLAY_AUDIT "Instrument ordered hardware accesses for runtime differential checks" OFF)
 set(EB_PREGENERATED_DIR "" CACHE PATH "Compile existing generated C++ without assembly source or assembler tools")
 if(NOT EB_PREGENERATED_DIR OR EB_BUILD_TESTS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -34,7 +35,11 @@ if(NOT EB_PREGENERATED_DIR)
     set(EB_TRANSLATOR_INPUTS
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/translate.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/spc700.py"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_layout.py")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_layout.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/port_game_runtime.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/game_runtime_ownership.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/eb/game/runtime/instruction.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/main_cpu_65816_opcodes.inc")
     # A source rename/addition can change the compilation unit inventory.
     # Refresh it before CMake creates build rules, and reconfigure whenever any
     # code-generation input changes. Never discover new units mid-build.
@@ -52,6 +57,14 @@ if(NOT EXISTS "${EB_PROGRAM_MANIFEST}")
     message(FATAL_ERROR "Incomplete EB_PREGENERATED_DIR: missing file ${EB_PROGRAM_MANIFEST}")
 endif()
 include("${EB_PROGRAM_MANIFEST}")
+set(EB_RUNTIME_MANIFEST "${EB_GENERATED_DIR}/game_runtime_sources.cmake")
+if(NOT EXISTS "${EB_RUNTIME_MANIFEST}")
+    message(FATAL_ERROR "Incomplete EB_PREGENERATED_DIR: missing file ${EB_RUNTIME_MANIFEST}")
+endif()
+include("${EB_RUNTIME_MANIFEST}")
+set(EB_RUNTIME_REPORTS "${EB_RUNTIME_MANIFEST}" "${EB_GENERATED_DIR}/game_runtime_manifest.json"
+    "${EB_GENERATED_DIR}/us/game/runtime_index.json" "${EB_GENERATED_DIR}/jp/game/runtime_index.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${EB_RUNTIME_REPORTS})
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EB_PROGRAM_MANIFEST}")
 set(EB_GENERATED_REPORTS
     "${EB_GENERATED_DIR}/coverage.json"
@@ -82,31 +95,91 @@ endforeach()
 # Reject incomplete source snapshots during configuration instead of allowing a
 # partial instruction dispatcher to fail much later at link time or during play.
 if(EB_PREGENERATED_DIR)
-    foreach(generated_file IN LISTS EB_GENERATED_SOURCES EB_GENERATED_HEADERS)
+    foreach(generated_file IN LISTS EB_GENERATED_SOURCES EB_GENERATED_HEADERS EB_GAME_RUNTIME_SOURCES EB_RUNTIME_REPORTS)
         if(NOT EXISTS "${generated_file}" OR IS_DIRECTORY "${generated_file}")
             message(FATAL_ERROR "Incomplete EB_PREGENERATED_DIR: missing file ${generated_file}")
         endif()
     endforeach()
-    add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_HEADERS})
+    add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_HEADERS} ${EB_GAME_RUNTIME_SOURCES} ${EB_RUNTIME_REPORTS})
     message(STATUS "Using existing generated C++: ${EB_GENERATED_DIR}")
 else()
     # Missing generated products also trigger the configure-time generator.
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS})
-    add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS})
+        ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS} ${EB_GAME_RUNTIME_SOURCES} ${EB_RUNTIME_REPORTS})
+    add_custom_target(eb_generate DEPENDS ${EB_GENERATED_SOURCES} ${EB_GENERATED_REPORTS} ${EB_GENERATED_HEADERS} ${EB_GAME_RUNTIME_SOURCES} ${EB_RUNTIME_REPORTS})
 endif()
 # Separate game hardware, asset I/O, sound synthesis, and host presentation.
 # Asset tests and rendering fixtures can then exercise their contracts without
 # booting the game or requiring a retail asset pack.
+add_library(eb_scene STATIC src/direct_scene.cpp)
+target_include_directories(eb_scene PUBLIC include)
+# Small source-owned routines stay separate for navigation. Unity batches keep
+# their shared continuation header from dominating build time.
+add_library(eb_game_runtime OBJECT ${EB_GAME_RUNTIME_SOURCES})
+target_include_directories(eb_game_runtime PRIVATE include "${EB_GENERATED_DIR}")
+set_target_properties(eb_game_runtime PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 24)
+add_dependencies(eb_game_runtime eb_generate)
 add_library(eb_core STATIC
+    src/game/runtime/instruction.cpp
+    src/game/runtime/native_execution.cpp
+    src/game/entities/npc_collision.cpp
+    src/game/entities/npc_collision_execution.cpp
+    src/game/enemies/battle/targeting.cpp
+    src/game/enemies/battle/targeting_execution.cpp
+    src/game/dialogue/register_bank.cpp
+    src/game/dialogue/control_flow.cpp
+    src/game/dialogue/register_execution.cpp
+    src/game/cutscenes/credits_state.cpp
+    src/game/cutscenes/credits_execution.cpp
+    $<TARGET_OBJECTS:eb_game_runtime>
     src/main_cpu_65816.cpp src/entity_preload.cpp
-    src/snes_bus.cpp src/snes_ppu_registers.cpp src/snes_ppu_renderer.cpp src/game_scene_renderer.cpp
-    src/spc700_audio_cpu.cpp src/game_debug.cpp
+    src/snes_bus.cpp src/snes_ppu_registers.cpp src/snes_ppu_renderer.cpp src/game_scene_renderer.cpp src/direct_scene_capture.cpp
+    src/spc700_audio_cpu.cpp src/game_debug.cpp src/overworld_sprite_bridge.cpp
+    src/overworld_sprite_runtime.cpp src/overworld_sprite_draw.cpp src/overworld_sprite_effects.cpp
+    src/actor_surface_service.cpp src/actor_draw_order_service.cpp src/map_strip_service.cpp
+    src/actor_fade_service.cpp src/enemy_sprite_preparation.cpp
     ${EB_GENERATED_SOURCES})
 add_dependencies(eb_core eb_generate)
+if(EB_GAMEPLAY_AUDIT)
+    target_compile_definitions(eb_core PUBLIC EB_GAMEPLAY_AUDIT)
+endif()
 target_include_directories(eb_core PUBLIC include "${EB_GENERATED_DIR}")
+target_link_libraries(eb_core PUBLIC eb_scene)
 add_library(eb_assets STATIC src/asset_store.cpp)
 target_include_directories(eb_assets PUBLIC include)
+# Native engine code has no dependency on the compatibility runtime. Keep its
+# content-import registry separate so asset probes need not link eb_core either.
+add_library(eb_native_engine STATIC
+    src/overworld_sprite_allocation.cpp
+    src/native/sprite_resources.cpp src/native/sprite_effects.cpp src/native/overlay_sprites.cpp src/native/world_overlay_playback.cpp src/native/custom_sprites.cpp
+    src/native/sprite_actors.cpp src/native/action_scripts.cpp src/native/actor_draw_order.cpp src/native/map_strip.cpp
+    src/native/frame_fade.cpp
+    src/native/npc_catalog.cpp src/native/action_bindings.cpp src/native/action_program.cpp src/native/sprite_appearance.cpp
+    src/native/stationary_npc_sprites.cpp src/native/npc_sprite_readiness.cpp src/native/sprite_image_leases.cpp
+    src/native/enemy_sprite_catalog.cpp src/native/enemy_sprite_readiness.cpp
+    src/native/appearance_service.cpp src/native/world_collision.cpp src/native/world_movement.cpp
+    src/native/actor_creation.cpp src/native/camera_refresh.cpp
+    src/native/content_compression.cpp src/native/world_palette_animation.cpp src/native/world_activation.cpp
+    src/native/world_enemies.cpp src/native/world_actor_services.cpp src/native/world_streaming.cpp
+    src/native/world_actor_movement.cpp src/native/world_party.cpp
+    src/native/world_party_movement.cpp src/native/world_party_creation.cpp
+    src/native/world_party_following.cpp
+    src/native/character_growth.cpp src/native/visible_character_growth.cpp
+    src/native/battle_background.cpp src/native/battle_background_scene.cpp src/native/battle_combatants.cpp
+    src/native/battle_formation.cpp
+    src/native/saves/archive.cpp src/native/saves/session.cpp src/native/palette_transition.cpp
+    src/native/world_palettes.cpp src/native/actor_world.cpp src/native/world_map.cpp src/native/world_scene.cpp)
+target_include_directories(eb_native_engine PUBLIC include)
+target_link_libraries(eb_native_engine PUBLIC eb_scene)
+# The transitional session adapter consumes native images; the native library
+# itself remains independent of CPU/bus/graphics-memory implementations.
+target_link_libraries(eb_core PUBLIC eb_native_engine)
+add_library(eb_native_asset_profiles STATIC
+    "${EB_GENERATED_DIR}/generated_assets.cpp"
+    "${EB_GENERATED_DIR}/us/generated_assets.cpp"
+    "${EB_GENERATED_DIR}/jp/generated_assets.cpp")
+target_include_directories(eb_native_asset_profiles PUBLIC include "${EB_GENERATED_DIR}")
+add_dependencies(eb_native_asset_profiles eb_generate)
 add_library(eb_asset_cache STATIC src/asset_cache.cpp)
 target_include_directories(eb_asset_cache PUBLIC include)
 # A pure pixel transform: no Bus, CPU, SDL, or game assets are accessible here.
@@ -114,7 +187,9 @@ target_include_directories(eb_asset_cache PUBLIC include)
 # testable without opening a window or altering the simulation clock.
 add_library(eb_filter STATIC src/photosensitivity_filter.cpp src/frame_interpolator.cpp src/presentation_pipeline.cpp)
 target_include_directories(eb_filter PUBLIC include)
+target_link_libraries(eb_filter PUBLIC eb_scene)
 if(MINGW)
+    target_link_options(eb_scene INTERFACE -static -static-libgcc -static-libstdc++)
     target_link_options(eb_core INTERFACE -static -static-libgcc -static-libstdc++)
     target_link_options(eb_assets INTERFACE -static -static-libgcc -static-libstdc++)
     target_link_options(eb_asset_cache INTERFACE -static -static-libgcc -static-libstdc++)
@@ -149,7 +224,12 @@ if(EB_BUILD_FRONTEND)
         add_library(SDL2::SDL2 ALIAS PkgConfig::SDL2)
     endif()
     find_package(OpenGL REQUIRED)
-    add_library(eb_video STATIC src/frame_presenter.cpp)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS resources/shaders/crt_oled.frag)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders/crt_oled.frag" EB_CRT_SHADER)
+    configure_file(resources/shaders/crt_shader_source.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/crt_shader_source.hpp" @ONLY)
+    add_library(eb_video STATIC src/frame_presenter.cpp src/crt_filter.cpp src/scene_effects_renderer.cpp)
+    target_include_directories(eb_video PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    install(DIRECTORY external/crt-lottes-fast/ DESTINATION share/eb_cpp/crt-lottes-fast)
     target_include_directories(eb_video PUBLIC include)
     target_compile_definitions(eb_video PUBLIC SDL_MAIN_HANDLED)
     target_link_libraries(eb_video PUBLIC SDL2::SDL2 OpenGL::GL)
@@ -227,11 +307,158 @@ endif()
 # and scene executables are built below but require an explicit local pack.
 if(EB_BUILD_TESTS)
     enable_testing()
+    add_executable(background_row_tests tests/background_row_tests.cpp)
+    target_link_libraries(background_row_tests PRIVATE eb_core)
+    add_test(NAME background_row_tests COMMAND background_row_tests)
+    add_executable(audio_playback_tests tests/audio_playback_tests.cpp)
+    target_include_directories(audio_playback_tests PRIVATE include)
+    add_test(NAME audio_playback_tests COMMAND audio_playback_tests)
+    add_executable(game_runtime_instruction_tests tests/game_runtime_instruction_tests.cpp)
+    target_link_libraries(game_runtime_instruction_tests PRIVATE eb_core)
+    add_test(NAME game_runtime_instruction_tests COMMAND game_runtime_instruction_tests)
+    add_test(NAME game_runtime_codegen_tests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_game_runtime_codegen.py")
+    add_test(NAME game_runtime_ownership_tests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_game_runtime_ownership.py")
+    add_test(NAME game_runtime_codegen_check COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/port_game_runtime.py"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}/.." --generated "${EB_GENERATED_DIR}" --check)
+    add_executable(gameplay_runtime_differential tests/gameplay_runtime_differential.cpp)
+    target_link_libraries(gameplay_runtime_differential PRIVATE eb_core eb_dsp eb_assets)
+    add_test(NAME gameplay_runtime_differential COMMAND gameplay_runtime_differential)
+    add_executable(game_subsystem_tests tests/game_subsystem_tests.cpp)
+    target_link_libraries(game_subsystem_tests PRIVATE eb_core eb_dsp eb_assets)
+    add_test(NAME game_subsystem_tests COMMAND game_subsystem_tests)
+    add_executable(dialogue_cutscene_tests tests/dialogue_cutscene_tests.cpp)
+    target_link_libraries(dialogue_cutscene_tests PRIVATE eb_core)
+    add_test(NAME dialogue_cutscene_tests COMMAND dialogue_cutscene_tests)
+    foreach(game_test npc_collision_tests npc_collision_native_tests native_execution_budget_tests native_gameplay_tests
+                      dialogue_register_tests dialogue_native_execution_tests
+                      dialogue_transfer_tests credits_state_tests cutscene_native_execution_tests
+                      battle_targeting_tests battle_targeting_native_tests)
+        add_executable(${game_test} tests/${game_test}.cpp)
+        target_link_libraries(${game_test} PRIVATE eb_core eb_dsp)
+        add_test(NAME ${game_test} COMMAND ${game_test})
+    endforeach()
+    # Local imported assets are required, so this replay is not a default CTest.
+    add_executable(native_gameplay_differential tests/native_gameplay_differential.cpp)
+    target_link_libraries(native_gameplay_differential PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_sprite_tests tests/native_sprite_tests.cpp)
+    target_link_libraries(native_sprite_tests PRIVATE eb_native_engine)
+    add_test(NAME native_sprite_tests COMMAND native_sprite_tests)
+    add_executable(native_sprite_actor_tests tests/native_sprite_actor_tests.cpp)
+    target_link_libraries(native_sprite_actor_tests PRIVATE eb_native_engine)
+    add_test(NAME native_sprite_actor_tests COMMAND native_sprite_actor_tests)
+    add_executable(native_sprite_surface_tests tests/native_sprite_surface_tests.cpp)
+    target_link_libraries(native_sprite_surface_tests PRIVATE eb_native_engine)
+    add_test(NAME native_sprite_surface_tests COMMAND native_sprite_surface_tests)
+    add_executable(native_action_script_tests tests/native_action_script_tests.cpp)
+    target_link_libraries(native_action_script_tests PRIVATE eb_native_engine)
+    add_test(NAME native_action_script_tests COMMAND native_action_script_tests)
+    add_executable(native_action_script_reference tests/native_action_script_reference.cpp)
+    target_link_libraries(native_action_script_reference PRIVATE eb_native_engine eb_assets eb_core)
+    add_executable(native_npc_catalog_tests tests/native_npc_catalog_tests.cpp)
+    target_link_libraries(native_npc_catalog_tests PRIVATE eb_native_engine)
+    add_test(NAME native_npc_catalog_tests COMMAND native_npc_catalog_tests)
+    add_executable(native_npc_catalog_reference tests/native_npc_catalog_reference.cpp)
+    target_link_libraries(native_npc_catalog_reference PRIVATE eb_native_engine eb_assets eb_core)
+    foreach(native_test native_actor_world_tests native_sprite_appearance_tests native_sprite_artwork_tests native_sprite_effect_tests native_custom_sprite_tests native_palette_tests
+                        native_action_binding_tests native_action_program_tests native_world_map_tests
+                        native_npc_sprite_readiness_tests native_enemy_sprite_tests
+                        native_world_collision_tests native_appearance_service_tests native_world_movement_tests
+                        native_actor_creation_tests native_camera_refresh_tests overworld_sprite_allocation_tests
+                        native_palette_animation_tests native_save_tests native_world_activation_tests
+                        native_palette_transition_tests native_save_session_tests native_world_enemies_tests
+                        native_battle_background_tests native_world_actor_services_tests native_character_growth_tests
+                        native_world_streaming_tests native_actor_replacement_tests native_visible_character_growth_tests
+                        native_actor_creation_service_tests native_battle_background_scene_tests
+                        native_world_actor_movement_tests native_world_party_tests native_battle_combatant_tests
+                        native_world_party_movement_tests native_world_party_creation_tests native_battle_formation_tests
+                        native_world_party_following_tests)
+        add_executable(${native_test} tests/${native_test}.cpp)
+        target_link_libraries(${native_test} PRIVATE eb_native_engine)
+        add_test(NAME ${native_test} COMMAND ${native_test})
+    endforeach()
+    foreach(native_reference native_sprite_appearance_reference native_sprite_effect_reference
+                             native_overlay_sprite_reference native_custom_sprite_reference native_palette_reference
+                             native_stationary_npc_reference native_stationary_npc_render_reference native_npc_sprite_readiness_reference
+                             native_enemy_sprite_reference
+                             native_sprite_state_contract_reference
+                             native_action_binding_reference native_action_input_reference
+                             native_actor_world_reference native_world_map_reference
+                             native_world_collision_reference native_appearance_service_reference
+                             native_world_movement_reference native_actor_creation_reference
+                             native_camera_refresh_reference native_appearance_return_reference
+                             native_actor_roles_reference native_palette_animation_reference native_save_reference
+                             native_world_activation_reference native_palette_transition_reference
+                             native_save_session_reference
+                             native_world_enemies_reference
+                             native_battle_background_reference native_world_actor_services_reference native_character_growth_reference
+                             native_world_streaming_reference native_actor_replacement_reference native_visible_character_growth_reference
+                             native_actor_creation_service_reference native_battle_background_scene_reference
+                             native_world_actor_movement_reference native_world_party_reference native_battle_combatant_reference
+                             native_world_party_movement_reference native_world_party_creation_reference native_battle_formation_reference
+                             native_world_party_following_reference
+                             overworld_sprite_allocation_reference overworld_sprite_runtime_reference
+                             overworld_sprite_effect_reference)
+        add_executable(${native_reference} tests/${native_reference}.cpp)
+        target_link_libraries(${native_reference} PRIVATE eb_native_engine eb_assets eb_core)
+    endforeach()
+    add_executable(native_sprite_assets tests/native_sprite_assets.cpp)
+    target_link_libraries(native_sprite_assets PRIVATE eb_native_engine eb_assets eb_native_asset_profiles)
+    add_executable(native_actor_world_assets tests/native_actor_world_assets.cpp)
+    target_link_libraries(native_actor_world_assets PRIVATE eb_native_engine eb_assets eb_native_asset_profiles)
+    add_executable(native_world_scene_assets tests/native_world_scene_assets.cpp)
+    target_link_libraries(native_world_scene_assets PRIVATE eb_native_engine eb_assets eb_native_asset_profiles)
+    add_executable(native_action_program_assets tests/native_action_program_assets.cpp)
+    target_link_libraries(native_action_program_assets PRIVATE eb_native_engine eb_assets eb_native_asset_profiles)
+    add_executable(native_action_inventory tools/native_action_inventory.cpp)
+    target_link_libraries(native_action_inventory PRIVATE eb_native_engine eb_assets eb_native_asset_profiles)
+    # Reference machinery is linked only by this opt-in verification program.
+    add_executable(native_sprite_reference tests/native_sprite_reference.cpp)
+    target_link_libraries(native_sprite_reference PRIVATE eb_native_engine eb_assets eb_core)
+    add_executable(attract_mode_differential tests/attract_mode_differential.cpp)
+    target_link_libraries(attract_mode_differential PRIVATE eb_session eb_assets)
+    add_executable(host_sprite_differential tests/host_sprite_differential.cpp src/input_replay.cpp)
+    target_link_libraries(host_sprite_differential PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_sprite_runtime_smoke tests/native_sprite_runtime_smoke.cpp src/input_replay.cpp)
+    target_link_libraries(native_sprite_runtime_smoke PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_sprite_gameplay_reference tests/native_sprite_gameplay_reference.cpp)
+    target_link_libraries(native_sprite_gameplay_reference PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_sprite_steady_reference tests/native_sprite_steady_reference.cpp src/input_replay.cpp)
+    target_link_libraries(native_sprite_steady_reference PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_sprite_tick_reference tests/native_sprite_tick_reference.cpp)
+    target_link_libraries(native_sprite_tick_reference PRIVATE eb_core eb_dsp eb_assets)
+    add_executable(native_actor_tick_tests tests/native_actor_tick_tests.cpp)
+    target_link_libraries(native_actor_tick_tests PRIVATE eb_core eb_assets)
+    add_executable(actor_surface_service_reference tests/actor_surface_service_reference.cpp)
+    target_link_libraries(actor_surface_service_reference PRIVATE eb_core eb_assets)
+    add_executable(actor_draw_order_service_reference tests/actor_draw_order_service_reference.cpp)
+    target_link_libraries(actor_draw_order_service_reference PRIVATE eb_core eb_assets)
+    add_executable(map_strip_service_reference tests/map_strip_service_reference.cpp)
+    target_link_libraries(map_strip_service_reference PRIVATE eb_core eb_assets)
+    add_executable(actor_fade_service_reference tests/actor_fade_service_reference.cpp)
+    target_link_libraries(actor_fade_service_reference PRIVATE eb_core eb_assets)
+    add_executable(native_presentation_rate_reference tests/native_presentation_rate_reference.cpp src/input_replay.cpp)
+    target_link_libraries(native_presentation_rate_reference PRIVATE eb_session eb_assets eb_filter)
+    add_executable(overworld_sprite_bridge_tests tests/overworld_sprite_bridge_tests.cpp)
+    target_link_libraries(overworld_sprite_bridge_tests PRIVATE eb_core)
+    add_test(NAME overworld_sprite_bridge_tests COMMAND overworld_sprite_bridge_tests)
+    add_executable(host_sprite_snapshot_tests tests/host_sprite_snapshot_tests.cpp)
+    target_link_libraries(host_sprite_snapshot_tests PRIVATE eb_core)
+    add_test(NAME host_sprite_snapshot_tests COMMAND host_sprite_snapshot_tests)
+    add_executable(native_sprite_draw_tests tests/native_sprite_draw_tests.cpp)
+    target_link_libraries(native_sprite_draw_tests PRIVATE eb_core)
+    add_test(NAME native_sprite_draw_tests COMMAND native_sprite_draw_tests)
+    add_executable(overworld_sprite_bridge_reference tests/overworld_sprite_bridge_reference.cpp)
+    target_link_libraries(overworld_sprite_bridge_reference PRIVATE eb_core eb_assets)
+    add_executable(host_sprite_publication_reference tests/host_sprite_publication_reference.cpp)
+    target_link_libraries(host_sprite_publication_reference PRIVATE eb_core eb_assets)
     add_executable(game_session_tests tests/game_session_tests.cpp)
     target_link_libraries(game_session_tests PRIVATE eb_session)
     add_test(NAME game_session_tests COMMAND game_session_tests)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_session_differential.cpp")
-        add_executable(game_session_differential tests/game_session_differential.cpp)
+        add_executable(game_session_differential tests/game_session_differential.cpp src/input_replay.cpp)
         target_link_libraries(game_session_differential PRIVATE eb_session eb_assets)
     endif()
     add_executable(scene_renderer_ownership_tests tests/scene_renderer_ownership_tests.cpp)
@@ -249,6 +476,15 @@ if(EB_BUILD_TESTS)
     add_executable(asset_cache_tests tests/asset_cache_tests.cpp)
     target_link_libraries(asset_cache_tests PRIVATE eb_asset_cache)
     add_test(NAME asset_cache_tests COMMAND asset_cache_tests)
+    if(EB_BUILD_FRONTEND)
+        add_executable(direct_scene_video_tests tests/direct_scene_video_tests.cpp)
+        target_link_libraries(direct_scene_video_tests PRIVATE eb_scene eb_video eb_debug_panel eb_native_engine)
+        add_executable(native_world_scene_video tests/native_world_scene_video.cpp)
+        target_link_libraries(native_world_scene_video PRIVATE eb_native_engine eb_video eb_assets eb_native_asset_profiles)
+    endif()
+    add_executable(direct_scene_tests tests/direct_scene_tests.cpp)
+    target_link_libraries(direct_scene_tests PRIVATE eb_scene)
+    add_test(NAME direct_scene_tests COMMAND direct_scene_tests)
     add_executable(entity_preload_tests tests/entity_preload_tests.cpp)
     target_link_libraries(entity_preload_tests PRIVATE eb_core)
     add_test(NAME entity_preload_tests COMMAND entity_preload_tests)
@@ -314,12 +550,14 @@ if(EB_BUILD_TESTS)
         if(EB_XVFB_RUN)
             add_test(NAME video_tests COMMAND "${EB_XVFB_RUN}" -a -s "-screen 0 1920x1080x24" "$<TARGET_FILE:video_tests>")
             add_test(NAME debug_panel_tests COMMAND "${EB_XVFB_RUN}" -a -s "-screen 0 1920x1080x24" "$<TARGET_FILE:debug_panel_tests>")
+            add_test(NAME direct_scene_video_tests COMMAND "${EB_XVFB_RUN}" -a -s "-screen 0 1920x1080x24" "$<TARGET_FILE:direct_scene_video_tests>")
             # xvfb-run -a can race when parallel tests choose the same free display.
-            set_tests_properties(video_tests debug_panel_tests PROPERTIES
+            set_tests_properties(video_tests debug_panel_tests direct_scene_video_tests PROPERTIES
                 ENVIRONMENT "SDL_VIDEODRIVER=x11" RESOURCE_LOCK xvfb_display)
         else()
             add_test(NAME video_tests COMMAND video_tests)
             add_test(NAME debug_panel_tests COMMAND debug_panel_tests)
+            add_test(NAME direct_scene_video_tests COMMAND direct_scene_video_tests)
         endif()
     endif()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/main_cpu_65816_tests.cpp")
@@ -356,4 +594,65 @@ if(EB_BUILD_TESTS)
             endif()
         endif()
     endif()
+endif()
+
+include(cmake/native_story.cmake)
+
+# Orchestration consumes the existing story scene and native engine without
+# introducing an engine -> scene -> engine library cycle.
+add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp
+    src/native/world_control.cpp src/native/world_maintenance.cpp
+    src/native/world_walking.cpp src/native/world_doors.cpp
+    src/native/world_hotspots.cpp src/native/world_generated_input.cpp
+    src/native/world_input_playback.cpp src/native/world_scheduler.cpp
+    src/native/world_door_transitions.cpp src/native/world_escalator.cpp
+    src/native/world_npc_collision.cpp src/native/world_bicycle.cpp
+    src/native/world_automatic.cpp src/native/world_control_commands.cpp
+    src/native/world_pathfinding.cpp src/native/world_bootstrap.cpp
+    src/native/world_encounter.cpp src/native/world_battle_entry.cpp
+    src/native/world_enemy_movement.cpp src/native/world_enemy_contact.cpp
+    src/native/world_startup.cpp src/native/world_enemy_behavior.cpp
+    src/native/world_encounter_effects.cpp src/native/world_scene_presentation.cpp
+    src/native/world_map_load.cpp)
+target_include_directories(eb_native_world_runtime PUBLIC include)
+target_link_libraries(eb_native_world_runtime PUBLIC eb_native_engine eb_native_story_scene)
+if(EB_BUILD_TESTS)
+    foreach(name world_generated_input world_input_playback world_scheduler world_door_transitions world_escalator world_automatic world_bicycle world_control_commands world_pathfinding actor_lifetime world_bootstrap world_encounter world_battle_entry world_enemy_movement world_enemy_contact world_startup world_enemy_behavior world_encounter_effects world_scene_presentation world_map_load world_enemy_behavior_runtime world_overlay_playback)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_${name}_tests.cpp")
+            add_executable(native_${name}_tests tests/native_${name}_tests.cpp)
+            target_link_libraries(native_${name}_tests PRIVATE eb_native_world_runtime)
+            add_test(NAME native_${name}_tests COMMAND native_${name}_tests)
+        endif()
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_${name}_reference.cpp")
+            add_executable(native_${name}_reference tests/native_${name}_reference.cpp)
+            target_link_libraries(native_${name}_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+        endif()
+    endforeach()
+    add_executable(direct_scene_effects_reference tests/direct_scene_effects_reference.cpp)
+    target_link_libraries(direct_scene_effects_reference PRIVATE eb_scene eb_native_engine eb_core)
+    add_executable(native_world_hotspots_tests tests/native_world_hotspots_tests.cpp)
+    target_link_libraries(native_world_hotspots_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_world_hotspots_tests COMMAND native_world_hotspots_tests)
+    add_executable(native_world_hotspots_reference tests/native_world_hotspots_reference.cpp)
+    target_link_libraries(native_world_hotspots_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+    add_executable(native_world_door_tests tests/native_world_door_tests.cpp)
+    target_link_libraries(native_world_door_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_world_door_tests COMMAND native_world_door_tests)
+    add_executable(native_world_door_reference tests/native_world_door_reference.cpp)
+    target_link_libraries(native_world_door_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+    add_executable(native_world_walking_tests tests/native_world_walking_tests.cpp)
+    target_link_libraries(native_world_walking_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_world_walking_tests COMMAND native_world_walking_tests)
+    add_executable(native_world_walking_reference tests/native_world_walking_reference.cpp)
+    target_link_libraries(native_world_walking_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+    add_executable(native_world_runtime_tests tests/native_world_runtime_tests.cpp)
+    target_link_libraries(native_world_runtime_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_world_runtime_tests COMMAND native_world_runtime_tests)
+    add_executable(native_world_control_reference tests/native_world_control_reference.cpp)
+    target_link_libraries(native_world_control_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+    add_executable(native_world_maintenance_reference tests/native_world_maintenance_reference.cpp)
+    target_link_libraries(native_world_maintenance_reference PRIVATE eb_native_world_runtime eb_assets eb_core)
+    add_executable(native_world_control_tests tests/native_world_control_tests.cpp)
+    target_link_libraries(native_world_control_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_world_control_tests COMMAND native_world_control_tests)
 endif()

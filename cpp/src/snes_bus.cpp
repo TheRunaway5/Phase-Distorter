@@ -1,4 +1,5 @@
 #include "eb/snes_bus.hpp"
+#include "eb/overworld_sprite_draw.hpp"
 #include "generated_profile.hpp"
 
 #include <algorithm>
@@ -47,7 +48,135 @@ SnesBus::SnesBus(std::span<const uint8_t> rom, GameVersion version)
 SceneReadView SnesBus::scene_view() const {
     return {work_ram, video_ram, palette_ram, object_attributes, cartridge_rom_, ppu_registers_,
             background_scroll_x_, background_scroll_y_, mode7_transform_, mode7_scroll_offsets_,
-            native_framebuffer, *source_profile_, game_version_, completed_frames, fixed_color_, oam_reload_};
+            native_framebuffer, *source_profile_, game_version_, completed_frames, fixed_color_, oam_reload_,
+            nullptr, &scene_renderer_, host_sprites(), native_sprite_runtime()};
+}
+
+void SnesBus::enable_host_sprite_resources(bool enabled) {
+    if (enabled) {
+        if (!host_sprites_)
+            host_sprites_.emplace(cartridge_rom_, game_version_);
+        enable_sprite_snapshots();
+    } else
+        host_sprites_.reset();
+}
+
+void SnesBus::enable_native_sprite_runtime(bool enabled, bool prepare_stationary) {
+    if (enabled == bool(native_sprite_runtime_) &&
+        (!enabled || prepare_stationary == native_stationary_sprites_enabled_))
+        return;
+    // Source allocation storage is deliberately absent after cutover. Switching
+    // ownership after execution starts cannot reconstruct that discarded state.
+    if (master_clocks_)
+        throw std::logic_error("Native sprite resource ownership must be selected before execution");
+    if (enabled) {
+        OverworldSpriteRuntime runtime(cartridge_rom_, game_version_);
+        OverworldSpriteEffects effects(cartridge_rom_, game_version_, runtime.resources());
+        std::shared_ptr<const native::StationaryNpcSprites> stationary;
+        std::optional<EnemySpritePreparation> enemy;
+        if (prepare_stationary) {
+            stationary = std::make_shared<native::StationaryNpcSprites>(cartridge_rom_, game_version_,
+                                                                       runtime.resources());
+            enemy.emplace(cartridge_rom_, game_version_, runtime.resources());
+        }
+        // All content validation finishes before any live owner is replaced.
+        native_sprite_runtime_.emplace(std::move(runtime));
+        native_sprite_effects_.emplace(std::move(effects));
+        scene_renderer_.set_native_stationary_sprites(std::move(stationary));
+        scene_renderer_.set_native_enemy_sprites(std::move(enemy));
+        native_stationary_sprites_enabled_ = prepare_stationary;
+        enable_sprite_snapshots();
+    } else {
+        scene_renderer_.set_native_stationary_sprites({});
+        scene_renderer_.set_native_enemy_sprites(std::nullopt);
+        native_stationary_sprites_enabled_ = false;
+        native_sprite_effects_.reset();
+        native_sprite_runtime_.reset();
+    }
+}
+
+void SnesBus::set_logical_clock_policy(LogicalClockPolicy policy) {
+    if (policy != LogicalClockPolicy::SourceTiming && policy != LogicalClockPolicy::ActorFrames)
+        throw std::invalid_argument("Invalid logical clock policy");
+    if (policy == logical_clock_policy_)
+        return;
+    if (master_clocks_)
+        throw std::logic_error("Logical clock policy must be selected before execution");
+    logical_clock_policy_ = policy;
+    native_actor_frame_.reset();
+    native_actor_tick_count_ = native_actor_wait_clocks_ = 0;
+    native_actor_fades_ = {};
+}
+
+bool SnesBus::try_execute_clock_operation(MainCpu65816 &cpu) {
+    return logical_clock_policy_ == LogicalClockPolicy::ActorFrames &&
+           native_actor_fades_.try_execute(cpu, *this);
+}
+
+bool SnesBus::try_execute_native_sprite_operation(MainCpu65816 &cpu) {
+    if (!native_sprite_runtime_)
+        return false;
+    if (native_sprite_effects_->try_execute(cpu, *this, *native_sprite_runtime_))
+        return true;
+    if (native_sprite_runtime_->try_execute(cpu, *this))
+        return true;
+    return try_native_sprite_draw(cpu, *this, *native_sprite_runtime_, scene_renderer_);
+}
+
+bool SnesBus::wait_for_native_actor_tick(std::uint32_t pc) {
+    if (logical_clock_policy_ != LogicalClockPolicy::ActorFrames)
+        return false;
+    const unsigned bank = pc >> 16;
+    if (bank != 0x7e && bank != 0x7f && ((bank & 0x40) || (pc & 0x8000)))
+        pc |= 0xc00000;
+    // The disabled-script guard has already returned before this body entry.
+    // All normal and attract-scene callers share this source boundary.
+    if (pc != (game_version_ == GameVersion::JP ? 0xc0944fu : 0xc09470u))
+        return false;
+    if (!native_actor_frame_ || *native_actor_frame_ != completed_frames) {
+        native_actor_frame_ = completed_frames;
+        ++native_actor_tick_count_;
+        return false;
+    }
+    const auto before = master_clocks_;
+    // This is scheduler idle time, not an estimate of the removed graphics
+    // instructions. Stop at each hardware event so prepare_instruction can
+    // arbitrate interrupts before returning to the still-pending actor pass.
+    advance_master_clocks_with_refresh(std::max(1u, next_hardware_event_clocks()));
+    while (const auto dma = take_dma_clocks())
+        advance_master_clocks_with_refresh(dma);
+    native_actor_wait_clocks_ += master_clocks_ - before;
+    return true;
+}
+
+void SnesBus::capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::uint16_t x,
+                                       std::uint16_t y, std::uint16_t stack, std::uint16_t direct) {
+    if (host_sprites_)
+        host_sprites_->before_instruction(pc, a, x, y, stack, direct, work_ram);
+    const bool jp = game_version_ == GameVersion::JP;
+    if (pc == (jp ? 0xc088a3u : 0xc088b1u)) {
+        scene_renderer_.begin_sprite_frame(work_ram[0x2e]);
+    } else if (native_sprite_runtime_ && pc == (jp ? 0xc08c49u : 0xc08c58u)) {
+        const unsigned priority_at = jp ? 0x2800 : 0x2400;
+        const unsigned priority = work_ram[priority_at] | unsigned(work_ram[priority_at + 1]) << 8;
+        scene_renderer_.capture_sprite_enqueue(scene_view(), (unsigned(work_ram[0x0b]) << 16) | a,
+                                               std::int16_t(x), std::int16_t(y), priority);
+    } else if (pc == (jp ? 0xc08b74u : 0xc08b83u)) {
+        scene_renderer_.seal_sprite_frame(scene_view());
+    } else if (pc == (jp ? 0xc0a383u : 0xc0a3a4u) || pc == (jp ? 0xc0a0d9u : 0xc0a0fau)) {
+        scene_renderer_.capture_entity_draw(scene_view(), x);
+    } else if (pc == (jp ? 0xc08cc6u : 0xc08cd5u)) {
+        const unsigned next = work_ram[0x03] | unsigned(work_ram[0x04]) << 8;
+        const unsigned end = work_ram[0x05] | unsigned(work_ram[0x06]) << 8;
+        // The source has two work buffers. Associate an emission with its
+        // actual buffer and object ordinal, never a coincidentally equal tile
+        // or screen position from a different actor or a later simulation tick.
+        const unsigned base = end == 0x0700 ? 0x0500 : end == 0x0a00 ? 0x0800 : 0;
+        if (base && next >= base && next <= end && ((next - base) & 3) == 0)
+            scene_renderer_.capture_sprite_emit(scene_view(), (unsigned(work_ram[0x0b]) << 16) | a,
+                                                 std::int16_t(x), std::int16_t(y), (next - base) / 4,
+                                                 (end - base) / 4);
+    }
 }
 
 // HiROM decode order matters: WRAM and low-bank I/O overlays take precedence
@@ -89,6 +218,10 @@ uint8_t SnesBus::read_byte(uint32_t address) {
             value = debug_read_rom(offset, value);
     }
     open_bus_ = value;
+#ifdef EB_GAMEPLAY_AUDIT
+    if (observe_bus_access)
+        observe_bus_access(false, address, value);
+#endif
     return value;
 }
 
@@ -96,6 +229,10 @@ uint8_t SnesBus::read_byte(uint32_t address) {
 // SRAM mirrors its small physical size throughout the mapped save windows.
 void SnesBus::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
+#ifdef EB_GAMEPLAY_AUDIT
+    if (observe_bus_access)
+        observe_bus_access(true, address, value);
+#endif
     open_bus_ = value;
     const unsigned bank = address >> 16, bank_offset = address & 0xffff;
     if (bank == 0x7e || bank == 0x7f) {
@@ -275,6 +412,8 @@ void SnesBus::dma_transfer(unsigned channels) {
             const unsigned count =
                 read_dma_word(channel_registers, 5) ? read_dma_word(channel_registers, 5) : 65536;
             uint16_t address = read_dma_word(channel_registers, 2);
+            const unsigned source_address = (unsigned(channel_registers[4]) << 16) | address;
+            const unsigned destination_word = vram_address_, vmain = ppu_registers_[0x15];
             const int step = (channel_registers[0] & 8) ? 0 : ((channel_registers[0] & 16) ? -1 : 1);
             for (unsigned i = 0; i < count; ++i) {
                 const uint32_t cpu_address = (channel_registers[4] << 16) | address;
@@ -287,11 +426,20 @@ void SnesBus::dma_transfer(unsigned channels) {
                     write_byte(ppu_address, read_byte(cpu_address));
                 address += step;
             }
-            if (!(channel_registers[0] & 0x87) && channel_registers[1] == 4 && count == 544) {
-                // The source publishes a complete OAM buffer during NMI. Capture
-                // its uncut entity descriptors at that same boundary, before the
-                // CPU can prepare the following frame's positions/animation.
-                scene_renderer_.capture_oam_upload(scene_view());
+            if (host_sprites_)
+                host_sprites_->complete_graphics_dma(source_address, destination_word, count,
+                                                     channel_registers[0], channel_registers[1], vmain);
+            if (!(channel_registers[0] & 0x9f) && channel_registers[1] == 4 && count == 544) {
+                // Publish the retained scene belonging to this exact source
+                // buffer. NMI can upload an older list while gameplay already
+                // prepares different positions, visibility and artwork.
+                const unsigned source_bank = source_address >> 16, source_offset = source_address & 0xffff;
+                const bool low_wram = source_bank == 0x7e || !(source_bank & 0x40);
+                const unsigned buffer = low_wram && source_offset == 0x0500 ? 1
+                                      : low_wram && source_offset == 0x0800 ? 2 : 0;
+                scene_renderer_.capture_oam_upload(scene_view(), sprite_snapshots_enabled_ ? buffer : 0);
+                if (host_sprites_)
+                    host_sprites_->collect_artwork(scene_renderer_.host_sprite_generations());
             }
             write_dma_word(channel_registers, 2, address);
             write_dma_word(channel_registers, 5, 0);
@@ -380,6 +528,46 @@ unsigned SnesBus::take_dma_clocks() {
     const auto result = dma_stall_master_clocks_;
     dma_stall_master_clocks_ = 0;
     return result;
+}
+
+unsigned SnesBus::native_execution_budget() const {
+    if (debug_read_wram || debug_write_wram || debug_read_rom || nmi_pending_ || irq_flag_ ||
+        dma_stall_master_clocks_ || math_remaining_cpu_cycles_)
+        return 0;
+#ifdef EB_GAMEPLAY_AUDIT
+    if (observe_bus_access)
+        return 0;
+#endif
+    return next_hardware_event_clocks();
+}
+
+unsigned SnesBus::next_hardware_event_clocks() const {
+    // Match the scheduler's short odd-frame line. Stopping before every line
+    // end also protects vertical IRQ/NMI, frame callbacks and joypad start.
+    const unsigned line_clocks =
+        (scanline_index_ == 240 && (completed_frames & 1) && !(ppu_registers_[0x33] & 1)) ? 1360 : 1364;
+    if (scanline_master_clock_ >= line_clocks || (!refresh_done_ && scanline_master_clock_ >= refresh_clock_))
+        return 0;
+    unsigned budget = line_clocks - scanline_master_clock_;
+    if (!refresh_done_)
+        budget = std::min(budget, refresh_clock_ - scanline_master_clock_);
+    if (scanline_index_ == 0 && scanline_master_clock_ < 24)
+        budget = std::min(budget, 24 - scanline_master_clock_);
+    if (scanline_index_ <= 224 && scanline_master_clock_ < 1112)
+        budget = std::min(budget, 1112 - scanline_master_clock_);
+
+    const unsigned irq_mode = cpu_io_registers_[0] & 0x30;
+    const unsigned irq_line = cpu_io_registers_[9] | ((cpu_io_registers_[10] & 1) << 8);
+    if (irq_mode == 0x10 || (irq_mode == 0x30 && scanline_index_ == irq_line)) {
+        const unsigned irq_clock = (cpu_io_registers_[7] | ((cpu_io_registers_[8] & 1) << 8)) * 4;
+        // Equality alone does not assert H-IRQ: advance_clocks requires old
+        // <= irq_clock and new > irq_clock, including when already at it.
+        if (scanline_master_clock_ <= irq_clock)
+            budget = std::min(budget, irq_clock + 1 - scanline_master_clock_);
+    }
+    if (autojoy_remaining_clocks_)
+        budget = std::min(budget, autojoy_remaining_clocks_);
+    return budget;
 }
 
 // CPU accesses have 6-, 8-, or 12-master-clock costs depending on the region.

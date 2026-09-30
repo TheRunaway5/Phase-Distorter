@@ -227,11 +227,19 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Higher rates affect presentation, not gameplay or audio speed.\nVRR limits output to the display range. Without VRR, higher rates disable vsync and may tear.");
                     ImGui::BeginDisabled(!settings.high_frame_rate());
-                    ImGui::Checkbox("Interpolate frames", &settings.interpolate_frames);
+                    ImGui::Checkbox("Direct scene rendering", &settings.direct_rendering);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Generate intermediate overworld and battle pictures from completed frames.\nAdds one game frame of visual latency. Fast motion and overlapping effects may show blending artifacts.\nDisable for the original pixel frames at the selected presentation rate.");
+                        ImGui::SetTooltip("Draw source tiles and sprites at the selected frame rate.\nSmooths camera and actor positions without blending game frames.\nAdds one game frame of visual latency. Unsupported effects keep their original frames.");
+                    if (!settings.direct_rendering) {
+                        ImGui::Checkbox("Interpolate frames", &settings.interpolate_frames);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Legacy image-based frame generation.\nMay produce ghosting around moving objects. Leave off to repeat original frames.");
+                    }
                     ImGui::EndDisabled();
                     ImGui::Spacing();
+                    ImGui::Checkbox("CRT Filter", &settings.crt_filter);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Flat CRT-Lottes Fast filter: scanlines and aperture-grille detail.\nBrightness compensated for OLED. No curvature or temporal ghosting.");
                     ImGui::TextDisabled("F1 or Escape closes this panel.");
                     ImGui::TextWrapped("The game continues while this panel is open. Close it to resume controls.");
                     ImGui::EndTabItem();

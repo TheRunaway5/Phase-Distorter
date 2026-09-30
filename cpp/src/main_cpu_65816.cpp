@@ -1,9 +1,16 @@
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_bus.hpp"
+#include "eb/game/runtime/native_execution.hpp"
 #include "generated_profile.hpp"
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+
+namespace eb::game::runtime {
+// False means this source site is explicitly outside the ported ownership set.
+// An owned site that cannot execute must throw instead of silently falling back.
+bool execute_ported_instruction(MainCpu65816&);
+}
 
 namespace eb {
 namespace {
@@ -24,7 +31,8 @@ constexpr unsigned minimum_instruction_cycles[256] = {
 MainCpu65816::MainCpu65816(SnesBus &hardware)
     : game_version(hardware.game_version()), hardware_(&hardware),
       source_profile_(&source_profile(game_version)) {}
-MainCpu65816::MainCpu65816(std::span<std::uint8_t> memory) : flat_test_memory_(memory) {
+MainCpu65816::MainCpu65816(std::span<std::uint8_t> memory, GameVersion version)
+    : game_version(version), flat_test_memory_(memory) {
     if (memory.size() != 0x1000000)
         throw std::invalid_argument("CPU vector memory must have 24-bit address space");
 }
@@ -111,7 +119,13 @@ void MainCpu65816::set_gameplay_timing(bool enabled) {
     entity_update_active_ = instruction_uses_extra_budget_ = false;
     extra_budget_clock_remainder_ = entity_update_master_clocks_ = 0;
 }
+MainCpuTimingSnapshot MainCpu65816::timing_snapshot() const {
+    return {extra_gameplay_budget_enabled_, entity_update_active_, instruction_uses_extra_budget_,
+            instruction_touches_io_, entity_update_entry_stack_, interrupt_nesting_depth_,
+            extra_budget_clock_remainder_, entity_update_master_clocks_, memory_wait_master_clocks_};
+}
 void MainCpu65816::reset_from_vector() {
+    native_gameplay_batches_ = 0;
     entity_update_active_ = instruction_uses_extra_budget_ = instruction_touches_io_ = false;
     interrupt_nesting_depth_ = extra_budget_clock_remainder_ = entity_update_master_clocks_ = 0;
     accumulator = x_index = y_index = direct_page = data_bank = 0;
@@ -201,26 +215,28 @@ void MainCpu65816::service_interrupt(bool nmi) {
 }
 // Interrupt arbitration happens before source-site dispatch. An asserted IRQ
 // wakes WAI even when P.I prevents entering its handler; NMI takes precedence.
-void MainCpu65816::step_instruction() {
+bool MainCpu65816::prepare_instruction() {
     if (is_stopped)
-        return;
+        return false;
     if (hardware_ && hardware_->take_nmi()) {
         service_interrupt(true);
-        return;
+        return false;
     }
     if (hardware_ && hardware_->irq_pending()) {
         is_waiting = false;
         if (!(status_register & InterruptDisable)) {
             service_interrupt(false);
-            return;
+            return false;
         }
     }
     instruction_uses_extra_budget_ = false;
     instruction_touches_io_ = false;
     if (is_waiting) {
         advance_instruction_cycles(6);
-        return;
+        return false;
     }
+    if (hardware_ && hardware_->wait_for_native_actor_tick(program_counter))
+        return false;
     if (extra_gameplay_budget_enabled_ && source_profile_) {
         // The stack boundary also ends acceleration after a nonlocal return.
         // A callback that waits for another frame relinquishes its extra budget.
@@ -236,8 +252,38 @@ void MainCpu65816::step_instruction() {
         }
         instruction_uses_extra_budget_ = entity_update_active_ && !interrupt_nesting_depth_;
     }
+    if (hardware_ && hardware_->try_execute_clock_operation(*this))
+        return false;
+    if (hardware_ && hardware_->native_sprite_runtime() &&
+        hardware_->try_execute_native_sprite_operation(*this))
+        return false;
+    if (hardware_)
+        hardware_->capture_game_sprite_instruction(program_counter, accumulator, x_index, y_index,
+                                                   stack_pointer, direct_page);
+    return true;
+}
+void MainCpu65816::execute_prepared_instruction() {
+    if (runtime_ == MainCpuRuntime::Ported && game::runtime::execute_ported_instruction(*this))
+        return;
     if (!execute_translated_main_instruction(*this))
         throw std::runtime_error("No translated assembly instruction at " + describe_registers());
+}
+void MainCpu65816::step_instruction() {
+    if (prepare_instruction())
+        execute_prepared_instruction();
+}
+unsigned MainCpu65816::advance_gameplay(unsigned maximum_steps) {
+    if (!maximum_steps)
+        return 0;
+    if (!prepare_instruction())
+        return 1;
+    if (runtime_ == MainCpuRuntime::Ported)
+        if (const unsigned retired = game::runtime::NativeGameplay::try_advance(*this, maximum_steps)) {
+            ++native_gameplay_batches_;
+            return retired;
+        }
+    execute_prepared_instruction();
+    return 1;
 }
 std::string MainCpu65816::describe_registers() const {
     std::ostringstream out;

@@ -82,9 +82,12 @@ generated directory, normally `build/cpp/generated`.
 
 | File | What it tells you |
 | --- | --- |
-| `program_sources.cmake` | Exact generated compilation inventory used by CMake |
+| `program_sources.cmake`, `game_runtime_sources.cmake` | Generated compilation inventories for the frozen program and source-owned game runtime |
+| `us/game/runtime_index.json`, `jp/game/runtime_index.json` | Ported source ownership, continuation function/file, legacy function, source addresses and runtime-site fingerprint |
+| `us/game/<subsystem>/<area>/<routine>.cpp`, `jp/game/<subsystem>/<area>/<routine>.cpp` | Resumable C++ instruction continuations for dialogue, cutscenes, entities, NPCs and enemies |
+| `game_runtime_dispatch.cpp`, `{us,jp}/game/runtime_dispatch.cpp` | Regional selection and owned-site dispatch for the default ported runtime |
 | `us/program_index.json`, `jp/program_index.json` | Source file, source-line range, generated function/file, original address range, instruction count and naming classification for each owning source file |
-| `us/program/<subsystem>_<part>.cpp`, `jp/program/<subsystem>_<part>.cpp` | Actual compiled instruction functions grouped by source subsystem, such as battle, overworld, inventory, system, text and miscellaneous |
+| `us/program/<subsystem>_<part>.cpp`, `jp/program/<subsystem>_<part>.cpp` | Frozen instruction functions retained as the comparison oracle and executor for shared/unported sites |
 | `us/game_program_dispatch.cpp`, `jp/game_program_dispatch.cpp` | Address-to-routine dispatch for the selected regional program |
 | `translated_dispatch.cpp` | Common entry selecting the US or JP compiled program |
 | `audio_program_index.json` | SPC700 source labels, generated functions, original addresses and naming classification |
@@ -123,20 +126,35 @@ reported function in `audio_driver_instructions.cpp`: for example,
 The boot-ROM instruction
 path is separate in `Spc700AudioCpu::execute_boot_rom_instruction`.
 
-Each generated main-CPU case still executes exactly one instruction through
-`MainCpu65816::execute_instruction<opcode>`. The source-derived function name
-identifies which assembly routine owns that site; calling it is not a C++
-translation of the routine's entire high-level algorithm. Nested macros retain
-the definition location and caller location in instruction comments. Full
-source-generation reports additionally provide `source_map.json`,
-`spc_source_map.json`, coverage and alternate-width audits, described in
-[translation architecture](../TRANSLATION.md).
+The default game runtime owns 808 US routines (69,391 sites) and 783 JP routines
+(66,269 sites). Each generated `game/` case invokes one named semantic method on
+`game::runtime::Instruction` with an explicit addressing mode, then returns after
+retirement. The independent operation implementation is in
+[`game/runtime/instruction.cpp`](../src/game/runtime/instruction.cpp). It borrows
+the existing machine state; these are low-level source continuations, not fully
+hand-decompiled high-level dialogue or cutscene systems.
+
+The retained `program/` cases execute through
+`MainCpu65816::execute_instruction<opcode>` for the legacy comparison path and
+shared/unported helpers. These include named gameplay services such as
+`party_add_char`, `hp_pp_roller`, inventory/equipment/experience routines and
+`teleport_mainloop`, not only unresolved or hardware helpers. Nested macros retain
+definition and caller locations in
+instruction comments. See [game runtime](game-runtime.md) for ownership,
+regeneration and the verified coverage boundary. Full source-generation reports
+additionally provide `source_map.json`, `spc_source_map.json`, coverage and
+alternate-width audits, described in [translation architecture](../TRANSLATION.md).
 
 Do not hand-edit generated C++ to rename a routine. Update the source evidence or
 its generator in [translate.py](../tools/translate.py) or
-[spc700.py](../tools/spc700.py), regenerate both regions, and compare the executable
-instruction streams. The indices' instruction-stream fingerprints are independent
-of the C++ spelling and file grouping. The indices also list `snapshot_overrides`:
+[spc700.py](../tools/spc700.py). For source-owned `game/` files, update
+[game_runtime_ownership.py](../tools/game_runtime_ownership.py) or
+[port_game_runtime.py](../tools/port_game_runtime.py), then regenerate both regions
+and compare the executable instruction streams. The frozen indices' source
+instruction fingerprints are independent of C++ spelling and grouping; the game
+indices additionally hash normalized sites including the M/X immediate-width
+selector. These distinct fingerprints record provenance and emitted choices,
+not proof of behavior. The frozen indices also list `snapshot_overrides`:
 nine instruction cases per region preserve the existing snapshot's wider entity
 culling bounds and alternate-width entries. The checked-out original assembly
 has older bounds. These explicit, guarded overrides preserve the program that

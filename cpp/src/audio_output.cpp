@@ -81,6 +81,8 @@ DeviceAudioQueue::DeviceAudioQueue(double frame_rate) {
     desired.format = AUDIO_S16SYS;
     desired.channels = 2;
     desired.samples = 1024;
+    desired.callback = consume;
+    desired.userdata = this;
     // Keep the DSP's sample format; SDL resamples to the hardware device.
     // Playback remains a consumer and never controls the simulation.
     device_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
@@ -89,6 +91,7 @@ DeviceAudioQueue::DeviceAudioQueue(double frame_rate) {
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         throw std::runtime_error("SDL audio device: " + error + " (use --no-audio to disable playback)");
     }
+    SDL_PauseAudioDevice(device_, 0);
 }
 
 DeviceAudioQueue::~DeviceAudioQueue() {
@@ -99,13 +102,19 @@ DeviceAudioQueue::~DeviceAudioQueue() {
 void DeviceAudioQueue::append(std::span<const std::int16_t> samples) {
     if (samples.empty())
         return;
-    if (SDL_QueueAudio(device_, samples.data(), static_cast<Uint32>(samples.size_bytes())) != 0)
-        throw std::runtime_error(std::string("SDL audio queue: ") + SDL_GetError());
-    if (!started_ && SDL_GetQueuedAudioSize(device_) >= 4096) {
-        // Prime a small buffer before unpausing to avoid a startup underrun.
-        SDL_PauseAudioDevice(device_, 0);
-        started_ = true;
+    SDL_LockAudioDevice(device_);
+    try {
+        buffer_.append(samples);
+    } catch (...) {
+        SDL_UnlockAudioDevice(device_);
+        throw;
     }
+    SDL_UnlockAudioDevice(device_);
+}
+
+void DeviceAudioQueue::consume(void* context, std::uint8_t* stream, int bytes) {
+    auto& self = *static_cast<DeviceAudioQueue*>(context);
+    self.buffer_.consume({reinterpret_cast<std::int16_t*>(stream), std::size_t(bytes) / sizeof(std::int16_t)});
 }
 
 } // namespace eb

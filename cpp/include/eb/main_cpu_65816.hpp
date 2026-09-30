@@ -9,12 +9,27 @@
 namespace eb {
 class SnesBus;
 struct SourceProfile;
+namespace game::runtime {
+class Instruction;
+class NativeGameplay;
+}
+// The generated translation remains available as a verification oracle. The
+// ported runtime owns declared source sites and delegates only unported sites.
+enum class MainCpuRuntime { Ported, Legacy };
+struct MainCpuTimingSnapshot {
+    bool extra_gameplay_budget_enabled, entity_update_active, instruction_uses_extra_budget, instruction_touches_io;
+    std::uint16_t entity_update_entry_stack;
+    unsigned interrupt_nesting_depth, extra_budget_clock_remainder, entity_update_master_clocks;
+    unsigned memory_wait_master_clocks;
+    bool operator==(const MainCpuTimingSnapshot&) const = default;
+};
 // Architectural state retained by the assembly-to-C++ translation. Program
 // instructions are compiled call sites, never fetched/decoded from ROM here.
 class MainCpu65816 {
   public:
     explicit MainCpu65816(SnesBus &hardware);
-    explicit MainCpu65816(std::span<std::uint8_t> flat_memory); // independent vector tests
+    explicit MainCpu65816(std::span<std::uint8_t> flat_memory,
+                         GameVersion version = GameVersion::US); // independent vector tests
     // The generated dispatch chooses a compiled US or JP instruction site
     // using this immutable profile. Flat-memory semantic tests default to US.
     const GameVersion game_version = GameVersion::US;
@@ -46,8 +61,17 @@ class MainCpu65816 {
     void set_gameplay_timing(bool enabled);
     // Opt-in desktop loading policy; 256 keeps the original source bounds.
     void set_entity_preload_width(unsigned width) { entity_preload_.set_width(width); }
+    void set_runtime(MainCpuRuntime runtime) { runtime_ = runtime; }
+    MainCpuRuntime runtime() const { return runtime_; }
+    // Read-only verification of timing state that affects future source steps.
+    MainCpuTimingSnapshot timing_snapshot() const;
     void reset_from_vector();
     void step_instruction();
+    // Normal gameplay may retire a bounded native chunk between hardware
+    // events. Debuggers and per-instruction observers keep step_instruction().
+    // Returns source step calls consumed, including a serviced interrupt.
+    unsigned advance_gameplay(unsigned maximum_steps);
+    std::uint64_t native_gameplay_batches() const { return native_gameplay_batches_; }
     void service_interrupt(bool nmi);
     std::string describe_registers() const;
     // Generated sites supply fixed opcode/operand/length values. Sharing the
@@ -62,6 +86,12 @@ class MainCpu65816 {
     void write_byte(std::uint32_t address, std::uint8_t value);
 
   private:
+    friend class game::runtime::Instruction;
+    friend class game::runtime::NativeGameplay;
+    bool prepare_instruction();
+    void execute_prepared_instruction();
+    std::uint64_t native_gameplay_batches_ = 0;
+    MainCpuRuntime runtime_ = MainCpuRuntime::Ported;
     SnesBus *hardware_{};
     EntityPreload entity_preload_;
     const SourceProfile *source_profile_{};

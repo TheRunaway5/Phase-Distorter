@@ -15,8 +15,21 @@ The transfer guard keeps the faster producer from outpacing the upload queue.
 This is intentionally a gameplay timing improvement, not cycle-identical SNES
 execution. It is bounded capacity, not a guarantee against arbitrary host stalls
 or all possible game workloads. `--original-timing` restores the original CPU
-budget for source/reference comparisons. Core hardware tools default to original
-timing; the desktop/headless application explicitly selects the improved policy.
+budget, scene timing and sprite storage for source/reference comparisons. Core
+hardware tools default to original timing; the desktop/headless application
+explicitly selects the improved policy.
+
+The normal frontend uses host-owned overworld sprite images and allocation.
+Actor admission and actor-driven fades use the explicit `ActorFrames` policy:
+at most one enabled actor pass starts per hardware frame, and a fade advances
+after a completed pass. Original sprite routines can use this same clock for
+resource-ownership comparisons. The original renderer can span several hardware
+frames during one actor pass, so removing that slowdown changes the number of
+actor updates completed within some old NMI-driven fades. The unmodified
+original-timing comparison is retained separately; it is not claimed equivalent
+to the new policy. Hardware frame counters, publication readiness, audio and
+standalone fades retain their existing clocks. See [native resource and clock
+verification](native-engine.md).
 
 At the default Native frame-rate setting with vsync, fixed-refresh displays use a nearby integral refresh divisor when
 it lies within 1% of the native 60.098813897 Hz rate. Common 60/120/240 Hz modes
@@ -71,23 +84,37 @@ omit presentation slots while simulation catches up. Long suspensions reset the
 host clock instead of producing an unbounded backlog. A slow computer or a driver
 swap limit can still prevent reaching the requested rate.
 
-**Interpolate frames** generates intermediate pictures between two completed
-frames. It applies to the entire presented canvas, including overworld camera
-movement, actors and battle backgrounds, after the photosensitivity filter.
-It estimates local image motion within eight pixels using every source pixel,
-searching integer offsets nearest first, and uses fractional pixel sampling.
-Displacements are rounded after applying the sampling phase, so exact positions
-at fifth-frame intervals stay exact. Pixel correspondence is checked again when
-sampling across block boundaries; uncertain correspondence holds the nearer
-source picture instead of dissolving unrelated sprite edges. This is frame
-generation, not a rewrite of the game's discrete sprite poses or battle logic
-at 300 Hz. It adds one game frame of visual latency; occlusion, overlapping
-layers and motion outside the search range can still cause local stepping or
-incorrect matches. Disable it to display the
-original completed pictures at the chosen host rate. `--interpolation` and
-`--no-interpolation` override the saved setting. Native mode bypasses generation.
-Scene cuts, skipped source frames, dimension/aspect changes and filter switches
-reset picture history; no in-progress PPU buffer is retained for extra redraws.
+**Direct scene rendering** is enabled by default for higher rates. It draws
+background planes and native actor parts directly at the window's
+resolution. Camera and actor positions are interpolated between native ticks;
+completed images are never blended, warped or motion-matched. A moving source
+pixel can consequently occupy distinct display-pixel positions between ticks.
+Sprite animation poses, input, collisions, scripts, enemies and audio still
+advance on the original game clock. This adds one game frame of visual latency.
+
+The current direct path supports verified overworld scenes, including wide and
+ultrawide canvases. It samples 16 extra source pixels around the viewport, keeps
+HUD planes stationary, and resolves sprite overlap before background priority.
+Every candidate must reconstruct the entire canonical frame exactly. Raster
+palette/scroll/VRAM changes, unsupported windows or color math, battles, and
+other unverified scenes use their original completed frames. The flash filter
+also takes precedence whenever it changes the picture. This conservative
+fallback avoids inventing artwork, but those scenes retain native motion.
+
+`--direct-rendering` selects this mode. `--native-frames` disables both direct
+motion smoothing and legacy image interpolation. `--no-interpolation` disables
+only image-based generation. **Interpolate frames**, exposed when direct
+rendering is off, remains an optional legacy mode (`--interpolation`). It
+estimates local image motion and can match overlapping sprites incorrectly.
+Native frame-rate mode bypasses both paths. Scene changes, missing source
+frames, geometry changes and large position jumps reset motion history.
+
+Source capture receives a read-only view of game memory. GPU draws consume an
+immutable atlas and draw commands; they cannot run game instructions. The desktop
+no longer enables the experimental widened source entity loader, whose fixed
+sprite pool can overflow. Native-width and wide sessions use identical activation.
+See [the native engine migration](native-engine.md) for the replacement and its
+current limits.
 
 Without VRR, higher frame rates request immediate swaps (vsync off), so tearing
 is possible. With VRR, the application retains vsync and limits presentation
@@ -153,3 +180,99 @@ its last 401 ticks; moving overworld endpoints and the intermediate picture were
 visually inspected. A battle-artwork fixture with a synthetic scanline wave also
 produces distinct intermediate pictures. This does not establish interpolation
 quality for every layered battle effect or full-game visual parity.
+
+Direct-rendering checks additionally cover US/JP source-map capture at 256,
+398, 522 and 1024 pixels, raster-change fallback, immutable publication,
+photosensitivity precedence and recovery. GPU readback checks five fractional
+poses against an independent software rasterizer, including first-opaque sprite
+selection, background priority and returning to canonical frames. The asset-backed
+`presentation_differential --world-replay --save FILE --direct-rendering` route
+loads a save in memory, teleports to Twoson and walks in both directions. It
+compares CPU/SPC registers, every ordered write, entity/PPU/save memory, clocks,
+audio samples and native pixels with direct rendering off. Both instances use
+the same timing/preload policy; the user's save file is never written.
+
+
+### Frame-time and audio follow-up (2026-09-29)
+
+Pixel composition skips background decoding when a layer is disabled on **both**
+PPU screens. Sub-screen color math, window masks, hardware flags and enabled-layer
+raster changes keep their existing behavior. A 360-frame 398-column walking replay
+retains the same picture hash before/after (`27faa8263eaeb4ee`); sampled direct poses
+also match the independent software rasterizer. On one paired run, thread CPU time
+fell from 8.20 to 6.64 ms in native mode and 10.25 to 7.96 ms with direct capture.
+These are shared-host measurements, not guarantees for every scene or resolution.
+
+Device playback now starts with a 2,048-stereo-frame reserve (64 ms at 32 kHz).
+After a true underrun it rebuilds that reserve before resuming, instead of playing
+isolated small arrivals. The callback copies from a circular buffer without
+allocation, file I/O or sample processing. The game clock and recorded DSP PCM do
+not change. Deterministic delivery tests cover recurring 25 ms stalls, exact sample
+order, circular-buffer wrap and recovery after a longer pause. An SDL disk-output
+stress capture reduced interspersed silence from 613 stereo frames to zero for the
+same delivery pattern; unlike deterministic tests, device captures depend on host
+scheduling. Sustained CPU overload or a stall longer than the reserve can still
+interrupt playback.
+
+The OLED CRT toggle runs only on the GPU, after the game draw and before UI.
+Its native-picture path uses CRT-Lottes Fast's eight-tap reconstruction. Direct
+scenes retain their fractional positions via a GPU viewport copy and continuous
+sampling with a 7-by-3 Gaussian kernel in source-pixel units; beams stay at the
+original raster height. The kernel matches horizontal and vertical softness to
+the native-picture path at tested 3x, 4x and 5x scales. Both use linear-light color,
+phosphor masking and brightness compensation. Geometry is flat and there is no
+frame history or temporal blending. GL readbacks check disabled identity, black,
+corner coverage, orientation, resizing, native/direct transitions, fractional
+motion and UI state. The actual UI checkbox and saved/CLI overrides are tested.
+The 7-by-3 kernel's 398- and 522-column Twoson replays measured about 0.28 and
+0.33 ms per filtered GPU draw at 3x scale on this NVIDIA host (including draw,
+filter and GPU wait), over 1,790 draws in each route. These are warm route
+averages, not worst-case latency bounds or a controlled comparison against the
+earlier 0.37/0.53 ms runs under different host load.
+These timings do not establish OLED panel calibration, HDR output or physical
+scanout cadence. Upstream provenance and full public-domain license are in
+`cpp/external/crt-lottes-fast/` (relative to the repository root).
+
+
+### Sustained-stutter follow-up (2026-09-29)
+
+The previous audio-jitter test did not cover prolonged presentation starvation.
+With successive 22 ms ticks, catch-up could skip every visible update for 968 ms
+while continuing to run the game. `presentation_pipeline_tests` now reproduces
+that pattern in native and high-rate modes and requires fresh pictures within two
+completed ticks (44 ms in that fixture). Catch-up still executes every input,
+CPU and audio tick; the change does not speed up, discard or duplicate gameplay.
+
+On Linux the interactive frontend requests nice -10 for its own thread, only
+when its inherited priority is lower. It restores the prior value on teardown.
+This is a best-effort ordinary scheduler adjustment, never a realtime policy or
+an elevation request; if the account disallows it, normal scheduling continues.
+The measured host had 80–100 runnable tasks on 16 logical CPUs. At lower priority,
+a tick using about 8 ms of CPU often took 40–50 ms of wall time. With the adjustment,
+the actual-device native replay delivered all 360 frames in six seconds without
+an audio callback underrun. The direct-mode replay also had no audio underruns,
+but only 268 draws at a requested 240 FPS under that load. Neither this change nor
+the CRT filter can guarantee high presentation rates on a saturated machine.
+These probes used a hidden NVIDIA GL window; the real device diagnostic stream
+was muted. They measure submitted frames and callback starvation, not physical
+scanout or a listening test.
+
+Mode 0/1 backgrounds now decode an eight-pixel tile row once per synchronous
+scanline instead of repeating map/bitplane/palette work for each pixel. Scratch
+storage expires at the end of that scanline, so HDMA and VRAM/CGRAM updates cannot
+leave stale rows. Native-ring/world-map transitions remain separate even when a
+fine-scrolled tile crosses x=0 or x=256. Offset-per-tile, mosaic and affine modes
+retain scalar sampling; direct capture keeps its existing separate tile cache.
+The new cached/scalar check compares 983,040 candidate pixels across all eight
+modes, including flips, tile sizes, scroll wrapping and palette identities. The
+matched walking executables have identical picture hash `ff5473c9df3df230`; thread
+CPU time in that paired run fell from 7.97 to 7.04 ms. Nine focused test suites pass.
+A 2,600-frame 21:9 route also preserves CPU/SPC state, every observed ordered write,
+all game/entity/PPU/save memory, clocks, PCM and native pixels with direct rendering
+on/off (7,548 extra source renders). As always, those checks are scoped evidence,
+not a full-game parity claim.
+
+When CRT Filter is enabled at startup, both shader paths are compiled and drawn
+once before the audio and simulation clocks start. This removes the observed
+first-use shader hitch from timed gameplay. GPU/UI regression tests exercise
+native, widescreen and direct pictures after that warm-up.

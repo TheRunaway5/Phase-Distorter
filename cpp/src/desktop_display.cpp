@@ -19,6 +19,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <utility>
+#ifdef __linux__
+#include <cerrno>
+#include <sys/resource.h>
+#endif
 
 namespace eb {
 namespace {
@@ -65,10 +69,22 @@ struct DesktopDisplay::Impl {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
             throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
         initialized_ = true;
+#ifdef __linux__
+        // Foreground simulation produces audio on this thread. Competing
+        // background builds/searches can otherwise delay an 8 ms tick by tens
+        // of milliseconds. This is a best-effort, non-realtime adjustment to
+        // our thread only; it needs no elevation and never changes game clocks.
+        errno = 0;
+        const int old_nice = getpriority(PRIO_PROCESS, 0);
+        if (errno == 0 && old_nice > -10 && setpriority(PRIO_PROCESS, 0, -10) == 0)
+            previous_nice_ = old_nice;
+#endif
         try {
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
             SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+            SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+            SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
             const auto initial_width = settings.render_width(width * options.scale, height * options.scale);
             int window_width = initial_width * options.scale, window_height = height * options.scale;
             SDL_Rect available{};
@@ -94,6 +110,8 @@ struct DesktopDisplay::Impl {
                 std::cerr << "Fullscreen unavailable: " << SDL_GetError() << '\n';
             update_swap_interval();
             presenter_ = std::make_unique<eb::FramePresenter>();
+            presenter_->prepare_scene_effects();
+            if (settings_.crt_filter) presenter_->prepare_crt();
             input_ = std::make_unique<DesktopInput>();
             std::cout << "OpenGL: " << glGetString(GL_VERSION) << " / " << glGetString(GL_RENDERER) << '\n';
         } catch (...) {
@@ -218,12 +236,14 @@ struct DesktopDisplay::Impl {
         int drawable_width = 0, drawable_height = 0;
         SDL_GL_GetDrawableSize(window_, &drawable_width, &drawable_height);
         const int top_inset = menu_height_pixels(drawable_height);
-        presenter_->draw(
-            picture.pixels, int(picture.width), height, drawable_width, drawable_height,
-            picture.fixed_aspect > 0
-                ? picture.fixed_aspect
-                : settings_.target_aspect(drawable_width, std::max(1, drawable_height - top_inset)),
-            top_inset);
+        const double aspect = picture.fixed_aspect > 0
+            ? picture.fixed_aspect
+            : settings_.target_aspect(drawable_width, std::max(1, drawable_height - top_inset));
+        if (!picture.scene ||
+            !presenter_->draw_scene(*picture.scene, drawable_width, drawable_height, aspect, top_inset))
+            presenter_->draw(picture.pixels, int(picture.width), height, drawable_width, drawable_height,
+                             aspect, top_inset);
+        presenter_->apply_crt(settings_.crt_filter);
         if (panel_) {
             // Copy observations rather than exposing mutable hardware to the UI.
             // Formatting full register strings is only needed for a visible panel.
@@ -261,6 +281,9 @@ struct DesktopDisplay::Impl {
     }
 
   private:
+#ifdef __linux__
+    std::optional<int> previous_nice_;
+#endif
     bool vsync_requested_ = true;
     int requested_swap_interval_ = -2;
     int menu_height_pixels(int drawable_height) const {
@@ -333,6 +356,12 @@ struct DesktopDisplay::Impl {
     }
 
     void cleanup() {
+#ifdef __linux__
+        if (previous_nice_) {
+            setpriority(PRIO_PROCESS, 0, *previous_nice_);
+            previous_nice_.reset();
+        }
+#endif
         // Destroy GL clients before deleting their context, then SDL last. The
         // same path handles both normal destruction and partial construction.
         input_.reset();

@@ -3,7 +3,139 @@
 Prepared 2026-09-27. Upload this directory's contents as the root of the fresh
 repository. No remote repository was created or changed.
 
-## Source modernization — current working tree
+## Sprite exhaustion and CRT softness — current local Linux checkpoint
+
+Updated 2026-09-29. The local Linux launcher no longer widens the original engine's
+actor activation region: that consumed its fixed sprite pool and broke the
+pyramid/bicycle title demo and could freeze exploration. Wide scenery remains
+enabled. This interim fix leaves late actor appearance at the far wide edges;
+the host resource/entity replacement remains in progress.
+
+The CRT Filter now reconstructs direct scenes in both axes, matching the native
+picture's measured softness at 3x, 4x and 5x while retaining fractional movement.
+Mesa and NVIDIA GPU readbacks pass. Both regional 9,000-frame demo comparisons
+preserve native-width execution, pixels and PCM. A 5,200-frame Twoson route
+preserves CPU/SPC state, memory, ordered writes, pixels and PCM. Eight focused
+tests pass, and the exact Linux executable finishes a 9,000-frame US replay.
+
+`launchers/linux/bin/eb_cpp` and `build/cpp/eb_cpp` are updated together. Windows
+and release ZIPs remain the earlier checkpoints below. Native actor scripts,
+scheduling, resources, appearance, NPC content, maps, collision content and palettes are verified
+independently but are not yet used by GameSession; this is not a completed
+emulation-free engine. See
+`cpp/docs/native-engine.md` for the accepted migration scope and remaining work.
+
+## Debug teleport fades and widescreen intro static — current packages
+
+Debug teleportation fades to black before loading its destination, holds the
+blank screen through native frame synchronization, then uses the game's fade-in.
+The intro's animated Giygas static now covers the requested widescreen/ultrawide
+canvas. Only the interference extends; the original center pixels remain exact
+and the still card retains its 4:3 composition when the static ends.
+
+All 30 native CTests pass. The 194-check widescreen fixture and 3,061-check debug
+fixture also pass under Wine. The scene regression covers both profiles at 400 and 1,024 columns,
+including effect-reference pixels. Imported frame-1,200 captures cover 398-column
+EarthBound and 522-column Mother 2; each retains every native center pixel and
+renders static in both margins. The Windows captures under Wine match Linux
+exactly. The debug fixture also checks that destinations stay unpublished during
+the fade and blackout wait. Native asset-backed routes in both games verify seven
+exact-coordinate arrivals each, 15–16 brightness levels during fade-out, a full
+black widescreen frame before loading, and full brightness after fade-in.
+See `cpp/docs/debug-tools.md` for the route's scope.
+
+Both extracted release ZIPs pass manifests, permissions and checksums. Their
+exact executables run both games through frame 1,200 with identical native/wide
+pictures, audio bytes and CPU/SPC summaries across Linux and Wine.
+
+The platform launchers and release ZIPs include these changes and the existing
+audio/flat-CRT work described below. Earlier checkpoint sections retain their
+original verification scope.
+
+## Sustained-stutter repair — current local Linux checkpoint
+
+Updated 2026-09-29. The Linux launcher bounds catch-up presentation starvation,
+uses scanline-local tile-row decoding, warms an enabled CRT shader before timed
+playback, and requests higher ordinary scheduling priority for its own foreground
+thread where the account permits it. Game clocks, input, generated PCM and source
+state remain unchanged. Nine focused suites and a 2,600-frame gameplay-state
+comparison pass. Native playback delivered 360 frames in six seconds without
+audio underruns in the contended-host probe; high-rate rendering remains limited
+by available CPU time. See `cpp/docs/timing.md` for the measurements and boundaries.
+The local Linux launcher includes this follow-up; packaged ZIPs and Windows are
+separate checkpoints below.
+
+## Audio and flat CRT — earlier local Linux checkpoint
+
+Updated 2026-09-29. The local Linux executable includes shared-renderer pruning
+of disabled background layers, a 64 ms playback jitter reserve with underrun
+recovery, and the saved **CRT Filter** toggle. The public-domain CRT-Lottes
+Fast adaptation is flat, preserves black and fractional direct-rendering motion,
+and uses no temporal blending. It is embedded in the binary.
+
+Seven focused audio/pacing/preferences/GPU/UI/PPU tests pass. A 2,600-frame 21:9
+walking comparison preserves game state, ordered hardware writes, native pixels
+and generated PCM. The controlled audio-output capture contains no interspersed
+silence under recurring 25 ms delivery delays. Renderer before/after picture
+hashes match; timing and limitations are recorded in `cpp/docs/timing.md`.
+This checkpoint updates `launchers/linux/bin/eb_cpp`; Windows and release ZIPs
+remain the gameplay-runtime package checkpoint described below.
+
+## Gameplay runtime checkpoint — current packages
+
+Updated 2026-09-29. Both platform launchers and ZIPs now include the source-derived
+dialogue, cutscene, NPC, entity and enemy runtime: 808 US routines and 783 Japanese
+routines in separate subsystem/source files. They preserve original instruction
+retirement and imported story content. This is a low-level compatibility
+foundation; a hand-decompiled high-level gameplay rewrite remains separate work.
+The packages also include the direct scene renderer and widescreen startup fix
+from the earlier local checkpoint below.
+
+Verification covers all 29 final native tests, the initial 22 Windows executable
+fixtures and 14 affected integrated fixtures, and four 900-frame Windows regional/
+timing comparisons. Separate native audited replays match 26,097 US and 15,000 JP
+frames under each timing policy with exact hardware-access ordering, machine
+state, frame callbacks, pixels and PCM. Synthetic dialogue/credits tests cover
+branching, nested calls, window restoration, waits/input and scrolling/DMA.
+This does not certify every story branch or cutscene in a full playthrough.
+
+Extracted ZIPs pass manifests and tested-binary hashes. US/JP 900-frame headless
+runs match Linux/Wine state, native images and WAV bytes; 21:9 desktop startup
+also displays source pixels and matches across platforms. OpenGL package probes
+use Xvfb/Mesa, not physical scanout. No ROM, imported pack, save, or authored story
+content was added. Details: [game runtime](cpp/docs/game-runtime.md).
+
+## Direct scene rendering — earlier local Linux checkpoint
+
+Updated 2026-09-29. The Linux launcher binary now includes direct overworld
+rendering at higher presentation rates, without image-based frame generation.
+Camera/actor positions are smoothed from source state; game logic and audio keep
+their original cadence. Battles and unsupported raster effects retain native
+frames. The existing release ZIPs below remain the earlier package snapshot.
+
+All 22 Linux CTests pass. US walking comparisons at 398, 522 and 1024 columns
+preserve CPU/SPC state, ordered writes, entity/PPU/save memory, clocks, native
+pixels and PCM samples. The final 21:9 replay covers 2,600 game frames and 7,380
+extra source renders. GPU walking readbacks at all three widths have zero
+mismatches against the source rasterizer. US/JP synthetic checks cover stable
+capture, raster fallback and publication; the live walking proof is US only.
+The Windows build and four focused Wine tests pass, but its launcher and release
+ZIP have not been replaced by this rendering update.
+
+The 398-column walking probe measures about 11.0 ms of simulation/capture CPU
+work and 0.25 ms per GPU draw on this host. Maximum 1024-column capture is more
+expensive and may miss the requested rate; these are shared-host measurements,
+not physical scanout guarantees. See [timing details](cpp/docs/timing.md).
+
+Startup follow-up: fixed repeated native widescreen draws turning black on the
+NVIDIA OpenGL path. The regular texture now explicitly unbinds/rebinds before
+uploading, as the direct scene texture already does. A regression first failed
+on the second 398-column draw; it now checks repeated 398/522/1024/256-column
+frames with the real menu and direct-rendering transitions. All three GPU/UI
+test programs pass, and a 600-frame windowed widescreen startup displays the
+expected source artwork. The Linux launcher includes this correction.
+
+## Source modernization — earlier working-tree checkpoint
 
 The desktop now composes explicit owners: SDL-free `GameSession` for hardware,
 processors, debug commands and frame/audio delivery; `GameSceneRenderer` for
@@ -13,11 +145,13 @@ for window/UI/input. CLI/preferences, replay, storage and audio output have
 focused modules. `--replay-only` excludes physical game buttons while retaining
 window and Settings events. See [source navigation](cpp/docs/source-navigation.md).
 
-Current source validation passes all **19 native Linux CTests** and all **18
-Windows C++ tests under Wine/Xvfb**. Wine does not run the Python translation
-test, and its asset-cache symlink fixtures explicitly skip because symlink
-creation is unavailable there. A separate SDL-free, frontend-disabled build
-also builds and passes the `GameSession` test.
+The combined checkout, including the separately completed interpolation and
+entity-preload changes, passes all **20 native Linux CTests** and all **19
+Windows C++ tests under Wine/Xvfb**. The isolated module-refactoring checkpoint
+passed 19 native tests and 18 Windows tests. Wine does not run the Python
+translation test, and its asset-cache symlink fixtures explicitly skip because
+symlink creation is unavailable there. A separate SDL-free, frontend-disabled
+build also builds and passes the `GameSession` test.
 
 On Linux and Wine, both regional games match direct-core execution through 900
 frames under both original and enhanced timing policies, including completed
@@ -26,6 +160,22 @@ pass 73 scene checks per region and all 34 PSI sequences, with 2,126 rendered
 frames per region across both battle layer layouts. These are bounded execution
 and rendering fixtures; they do not establish whole-game equivalence or native
 Windows behavior.
+
+Refactor-only before/after replays complete 16,000 EarthBound frames and 15,000
+Mother 2 frames with identical final CPU/SPC registers and instruction counters,
+final native/presentation captures, and complete WAV bytes. Elapsed times were
+48.484 versus 49.970 seconds (US) and 46.171 versus 47.366 seconds (JP), about
+3% higher after refactoring in shared-machine runs. These are approximate
+throughput observations, not controlled performance benchmarks.
+
+The final combined Linux and Windows ZIPs pass internal manifests, executable
+parity and extraction/permission checks in paths containing spaces. Both games
+pass 180-frame headless, Native, 300 FPS, Uncapped and VRR-selected runtime checks
+on Linux and Windows/Wine: all 20 runs preserve final CPU/SPC state, counters,
+native captures and complete WAV bytes. The 300 FPS trials average 294.6–295.9
+submissions per second including startup; uncapped submissions exceed the cap.
+These short intro trials do not measure unique animation frames, sustained
+scene throughput or physical VRR scanout.
 
 ## Earlier feature and package validation
 
@@ -189,8 +339,8 @@ native executables and archives. The current archives also include the bounded o
 
 | Archive | SHA-256 |
 | --- | --- |
-| `releases/Phase-Distorter-0.1-linux-x86_64.zip` | `e42720c1e40800520e23008b0371633685c9878fcfde004d40077572b2ca6058` |
-| `releases/Phase-Distorter-0.1-windows-x86_64.zip` | `51c74479d51bcc637ec727ac98aa14ece85417856032f2a1642c4ba3e7c61e3f` |
+| `releases/Phase-Distorter-0.1-linux-x86_64.zip` | `06ab137a1490d5899dfc144285512b1abc9e52b35398a21d8166cb58390d4bd3` |
+| `releases/Phase-Distorter-0.1-windows-x86_64.zip` | `5a4f2e357b68669ed867314d9b1c21f476c0bfd220e3f0ea352b652a9e2d35e1` |
 
 The timing builds completed the same 16,000-frame gameplay replay on Linux and
 Windows/Wine with identical pixels, execution counts, CPU/SPC registers and audio
@@ -218,8 +368,7 @@ SDL2 and generic x86-64 C++ runtimes are bundled in `launchers/linux/lib/`
 in the repository and `lib/` in the Linux ZIP. Generic CRT startup
 objects avoid inheriting the build host's x86-64-v4 CPU requirement. Use the
 source build on older distributions. Windows includes its SDL2.dll.
-`SHA256SUMS` records every tracked or unignored source/release file except
-itself. Git's `.git/` metadata and ignored build/verification outputs are not
+`SHA256SUMS` records the tracked source/release snapshot except itself. Git's `.git/` metadata and ignored build/verification outputs are not
 part of that checksum inventory.
 
 The loaded game has a Settings/Fullscreen top bar, with the picture fitted below

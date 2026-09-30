@@ -1,0 +1,2 @@
+#pragma once
+namespace eb { inline constexpr char crt_oled_fragment[] = R"EB_SHADER(@EB_CRT_SHADER@)EB_SHADER"; }

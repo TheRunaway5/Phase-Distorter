@@ -1,5 +1,6 @@
 #pragma once
 
+#include "eb/audio_playback_buffer.hpp"
 #include <cstdint>
 #include <fstream>
 #include <span>
@@ -43,6 +44,7 @@ class DeviceAudioQueue {
 
   private:
     std::uint32_t device_{};
-    bool started_{};
+    AudioPlaybackBuffer buffer_;
+    static void consume(void* context, std::uint8_t* stream, int bytes);
 };
 } // namespace eb

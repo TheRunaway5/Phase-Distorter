@@ -224,7 +224,9 @@ graphics settings first; the checkbox controls application pacing. It defaults
 to off and is saved between sessions. `--vrr` / `--no-vrr` override it.
 Fixed-refresh 60/120/240 Hz displays use a stable 60 Hz cadence with matching
 playback audio. Expensive overworld entity updates also receive extra CPU
-capacity; `--original-timing` restores the console CPU budget for comparisons.
+capacity. Overworld sprite images use host-managed storage, with nearby NPC
+and enemy artwork prepared for wide views. `--original-timing` restores the
+original CPU budget, scene timing and sprite storage for comparisons.
 See [timing behavior and verification](cpp/docs/timing.md).
 
 **F1 → Debug** provides infinite health and PSI/PP at **999/999**, noclip, and
@@ -232,7 +234,8 @@ an **Enemies ignore you** switch that prevents overworld pursuit and contact
 battles. Story battles still work. The searchable teleport picker includes all
 **385 named map areas**, including interiors, dungeons and endgame locations,
 plus every scripted warp and door landing: **1,472 choices** in total.
-Select a destination and press **Teleport now**. Check Ness, Paula, Jeff and Poo
+Select a destination and press **Teleport now**; the screen fades fully to black
+before loading the area, then fades back in. Check Ness, Paula, Jeff and Poo
 as desired and press **Apply party**; keep at least one playable member.
 Guest companions stay with the party. Teleports and party changes wait until
 free movement is available, so close dialogue or finish the current battle.
@@ -253,7 +256,8 @@ remain centered.
 
 Fixed intro artwork, including **The War Against Giygas!**, uses a centered 4:3
 view instead of repeating into the margins. The selected wider view returns
-after that scene. The Mother 2 logo screen extends its background into the
+after that scene. The animated Giygas static fills the selected wide view while
+the intro card stays centered. The Mother 2 logo screen extends its background into the
 widescreen margins while keeping the original logo and copyright centered;
 the artwork itself is not stretched or repeated.
 
@@ -321,7 +325,16 @@ verified. **It cannot guarantee seizure safety or eliminate every trigger.**
 See [filter behavior and sources](cpp/docs/photosensitivity.md) for its scope,
 parameters, and limitations.
 
-Higher frame rates are available under **F1 → Display → Frame rate**: Native, 90–300 FPS, or Uncapped (`--fps 0`). Optional **Interpolate frames** generates intermediate overworld and battle pictures while gameplay and audio keep their original speed. Frame generation adds one game frame of visual latency and can show blending artifacts; disable it for original pixel frames. VRR limits presentation below the display ceiling. See [timing details](cpp/docs/timing.md).
+Higher frame rates are available under **F1 → Display → Frame rate**: Native, 90–300 FPS, or Uncapped (`--fps 0`). **Direct scene rendering** draws verified overworld backgrounds and sprites at fractional positions without blending completed frames; gameplay and audio retain their original speed. It adds one game frame of visual latency. Battles and unsupported effects retain native frames. Use `--native-frames` to disable smoothing, or `--interpolation` for legacy image-based generation. See [timing and verification](cpp/docs/timing.md).
+
+**CRT Filter** in **F1 → Display** adds a flat CRT-Lottes Fast treatment:
+scanlines, aperture-grille phosphor detail and compensated brightness, without
+curvature, rounded corners or temporal trails. It works with native and direct
+scene rendering, leaves the settings overlay sharp, and is saved separately from
+frame rate. It defaults off; use `--crt` or `--no-crt` to override the saved choice.
+The public-domain [upstream shader](https://github.com/libretro/glsl-shaders/blob/a8136d8b8b5c6375296f833e7e81efa15ed76f11/crt/shaders/crt-lottes-fast.glsl)
+is credited and bundled with the source; the executable embeds its flat adaptation.
+
 
 ## Building from source
 

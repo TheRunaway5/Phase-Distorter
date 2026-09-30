@@ -1,4 +1,8 @@
 #include "eb/game_scene_renderer.hpp"
+#include "eb/overworld_sprite_bridge.hpp"
+#include "eb/overworld_sprite_runtime.hpp"
+#include "eb/native/overlay_sprites.hpp"
+#include "eb/native/custom_sprites.hpp"
 #include "generated_profile.hpp"
 
 #include <algorithm>
@@ -8,6 +12,14 @@
 
 namespace eb {
 namespace {
+bool intro_interference(const SceneReadView &view) {
+    // GAS_STATION_LOAD mixes its procedural BG2 static into the BG1 card.
+    // UNKNOWN_C0F21E later disables that subscreen/color math for the still card.
+    return (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 &&
+           view.ppu_registers[8] == 0x7c && (view.ppu_registers[0x2c] & 1) &&
+           (view.ppu_registers[0x2d] & 2) && (view.ppu_registers[0x30] & 2) &&
+           (view.ppu_registers[0x31] & 1);
+}
 // Bounded presentation-only counterpart of the source's DECOMP routine. The
 // two gas-station palettes are imported data, never embedded retail colors.
 // Decode exactly one 512-byte palette; malformed input simply disables this
@@ -144,18 +156,6 @@ void GameSceneRenderer::prepare_presentation_objects(const SceneReadView &view) 
     const auto ram = [&view](unsigned a) {
         return unsigned(view.work_ram[a]) | (unsigned(view.work_ram[a + 1]) << 8);
     };
-    // Inspection must not acknowledge hardware ports or touch the open bus.
-    const auto peek = [&view](uint32_t address, int &value) {
-        if (address >= 0x7e0000 && address < 0x800000) {
-            value = view.work_ram[address - 0x7e0000];
-            return true;
-        }
-        if (address >= 0xc00000 && address < 0xf00000 && address - 0xc00000 < view.cartridge_rom.size()) {
-            value = view.cartridge_rom[address - 0xc00000];
-            return true;
-        }
-        return false;
-    };
     struct Entity {
         unsigned slot, priority;
         int depth;
@@ -166,7 +166,8 @@ void GameSceneRenderer::prepare_presentation_objects(const SceneReadView &view) 
          slot = ram(source.wram_entity_next + slot)) {
         visited[slot / 2] = true;
         const unsigned bank = ram(source.wram_entity_spritemap_pointers.high + slot);
-        if ((bank & 0xc000) || (ram(source.wram_entity_animation_frame + slot) & 0x8000))
+        if ((bank & (view.native_sprites ? 0x8000 : 0xc000)) ||
+            (ram(source.wram_entity_animation_frame + slot) & 0x8000))
             continue;
         const unsigned callback = ram(source.wram_entity_draw_callback + slot);
         if (callback != source.entity_draw_callbacks.screen_space &&
@@ -188,89 +189,229 @@ void GameSceneRenderer::prepare_presentation_objects(const SceneReadView &view) 
     std::stable_sort(entities.begin(), entities.end(), [](const Entity &a, const Entity &b) {
         return a.priority != b.priority ? a.priority < b.priority : a.priority == 1 && a.depth > b.depth;
     });
-    for (const auto &entity : entities) {
-        const unsigned slot = entity.slot,
-                       bank = ram(source.wram_entity_spritemap_pointers.high + slot) & 255;
-        unsigned pointer = ram(source.wram_entity_spritemap_pointers.low + slot);
-        const bool ordinary =
-            ram(source.wram_entity_draw_callback + slot) == source.entity_draw_callbacks.screen_space;
-        if (ordinary && (ram(source.wram_entity_displayed_sprites + slot) & 1))
-            pointer = (pointer + ram(source.wram_entity_spritemap_sizes + slot)) & 0xffff;
-        const int x = int16_t(ram(
-            (ordinary ? source.wram_entity_screen_coordinates.x : source.wram_entity_world_coordinates.x) +
-            slot));
-        const int y = int16_t(ram(
-            (ordinary ? source.wram_entity_screen_coordinates.y : source.wram_entity_world_coordinates.y) +
-            slot));
-        if (!ordinary) {
-            const unsigned frame = ram(source.wram_entity_animation_frame + slot);
-            int lo{}, hi{};
-            if (!peek((bank << 16) | ((pointer + frame * 2) & 0xffff), lo) ||
-                !peek((bank << 16) | ((pointer + frame * 2 + 1) & 0xffff), hi))
-                continue;
-            pointer = unsigned(lo) | (unsigned(hi) << 8);
+    for (const auto &entity : entities)
+        append_presentation_entity(view, entity.slot, presentation_objects_);
+}
+
+std::optional<std::uint32_t> GameSceneRenderer::append_presentation_entity(
+    const SceneReadView &view, unsigned slot, std::vector<PresentationObject> &objects) {
+    const auto &source = view.source_profile;
+    const auto ram = [&view](unsigned a) {
+        return unsigned(view.work_ram[a]) | (unsigned(view.work_ram[a + 1]) << 8);
+    };
+    // Inspection must not acknowledge hardware ports or touch the open bus.
+    const auto peek = [&view](uint32_t address, int &value) {
+        if (address >= 0x7e0000 && address < 0x800000) {
+            value = view.work_ram[address - 0x7e0000];
+            return true;
         }
-        const unsigned surface = ram(source.wram_entity_surface_flags + slot),
-                       upper = ram(source.wram_entity_body_divides + slot) >> 8;
-        unsigned part = 0;
-        // Spritemaps may chain through a $80 Y sentinel. Bound both chain walks
-        // and output so corrupt/stale descriptors can never stall a frame.
-        for (unsigned step = 0; step < 128 && presentation_objects_.size() < 3840; ++step) {
-            std::array<int, 5> entry{};
-            bool valid = true;
-            for (unsigned i = 0; i < 5; ++i)
-                valid &= peek((bank << 16) | ((pointer + i) & 0xffff), entry[i]);
-            if (!valid)
-                break;
-            if (entry[0] == 0x80) {
-                pointer = unsigned(entry[1]) | (unsigned(entry[2]) << 8);
-                continue;
+        if (address >= 0xc00000 && address < 0xf00000 && address - 0xc00000 < view.cartridge_rom.size()) {
+            value = view.cartridge_rom[address - 0xc00000];
+            return true;
+        }
+        return false;
+    };
+    if (view.native_sprites &&
+        ram(source.wram_entity_draw_callback + slot) == source.entity_draw_callbacks.world_space &&
+        !view.native_sprites->custom_descriptor(slot))
+        throw std::runtime_error("Unmarked native actor entered source custom presentation");
+    if (view.native_sprites &&
+        ram(source.wram_entity_draw_callback + slot) == source.entity_draw_callbacks.screen_space) {
+        const auto actor = view.native_sprites->snapshot(slot);
+        if (!actor || !actor->image)
+            return {};
+        const int x = std::int16_t(ram(source.wram_entity_screen_coordinates.x + slot));
+        const int y = std::int16_t(ram(source.wram_entity_screen_coordinates.y + slot));
+        const unsigned surface = ram(source.wram_entity_surface_flags + slot);
+        for (unsigned part = 0; part < actor->image->parts.size(); ++part) {
+            const auto &piece = actor->image->parts[part];
+            const unsigned level = surface & (piece.upper ? 2 : 1) ? 0x20 : 0x30;
+            PresentationObject object{std::int16_t(x + piece.left), std::int16_t(y + piece.top - 1), 0,
+                std::uint8_t(level | (actor->creation.sprite.palette << 1)), false,
+                (std::uint64_t{1} << 63) | actor->id, x, y - 1};
+            object.host_image = actor->image; object.host_part = part;
+            object.host_palette = actor->creation.sprite.palette; object.native_owned = true;
+            objects.push_back(std::move(object));
+        }
+        // No source address represents a native command, including the
+        // read-only far-edge preparation path before a source frame upload.
+        return {};
+    }
+    const unsigned bank = ram(source.wram_entity_spritemap_pointers.high + slot) & 255;
+    unsigned pointer = ram(source.wram_entity_spritemap_pointers.low + slot);
+    const bool ordinary =
+        ram(source.wram_entity_draw_callback + slot) == source.entity_draw_callbacks.screen_space;
+    if (ordinary && (ram(source.wram_entity_displayed_sprites + slot) & 1))
+        pointer = (pointer + ram(source.wram_entity_spritemap_sizes + slot)) & 0xffff;
+    const int x = int16_t(ram(
+        (ordinary ? source.wram_entity_screen_coordinates.x : source.wram_entity_world_coordinates.x) +
+        slot));
+    const int y = int16_t(ram(
+        (ordinary ? source.wram_entity_screen_coordinates.y : source.wram_entity_world_coordinates.y) +
+        slot));
+    if (!ordinary) {
+        const unsigned frame = ram(source.wram_entity_animation_frame + slot);
+        int lo{}, hi{};
+        if (!peek((bank << 16) | ((pointer + frame * 2) & 0xffff), lo) ||
+            !peek((bank << 16) | ((pointer + frame * 2 + 1) & 0xffff), hi))
+            return {};
+        pointer = unsigned(lo) | (unsigned(hi) << 8);
+    }
+    const auto map_address = (bank << 16) | pointer;
+    const unsigned surface = ram(source.wram_entity_surface_flags + slot),
+                   upper = ram(source.wram_entity_body_divides + slot) >> 8;
+    const auto first_part = objects.size();
+    bool complete = false;
+    unsigned part = 0;
+    // Spritemaps may chain through a $80 Y sentinel. Bound both chain walks
+    // and output so corrupt/stale descriptors can never stall a frame.
+    for (unsigned step = 0; step < 128 && objects.size() < 3840; ++step) {
+        std::array<int, 5> entry{};
+        bool valid = true;
+        for (unsigned i = 0; i < 5; ++i)
+            valid &= peek((bank << 16) | ((pointer + i) & 0xffff), entry[i]);
+        if (!valid)
+            break;
+        if (entry[0] == 0x80) {
+            pointer = unsigned(entry[1]) | (unsigned(entry[2]) << 8);
+            continue;
+        }
+        unsigned attributes = entry[2];
+        if (ordinary)
+            attributes = (attributes & 0xcf) | ((surface & (part < upper ? 2 : 1)) ? 0x20 : 0x30);
+        objects.push_back({x + int8_t(entry[3]), y + int8_t(entry[0]) - 1,
+                                         uint8_t(entry[1]), uint8_t(attributes), bool(entry[4] & 1),
+                                         (std::uint64_t(1) << 32) | (ram(source.wram_entity_script_ids + slot) << 8) | slot,
+                                         x, y - 1});
+        ++part;
+        if (entry[4] & 0x80) {
+            complete = true;
+            break;
+        }
+        pointer = (pointer + 5) & 0xffff;
+    }
+    if (ordinary && view.host_sprites) {
+        const auto &pose = view.host_sprites->pose(slot);
+        if (pose && pose->image) {
+            const bool display_mirror = ram(source.wram_entity_displayed_sprites + slot) & 1;
+            // Replacements may retain their creation geometry. Never crop
+            // or stretch a differently shaped image into that descriptor.
+            constexpr unsigned sizes[8][2][2] = {
+                {{8, 8}, {16, 16}}, {{8, 8}, {32, 32}}, {{8, 8}, {64, 64}},
+                {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
+                {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
+            const auto *shape = pose->image->layout ? &pose->image->layout->parts[display_mirror] : nullptr;
+            bool matches = complete && (shape ? shape->size() : pose->image->parts.size()) == part;
+            for (unsigned i = 0; matches && i < part; ++i) {
+                const auto &object = objects[first_part + i];
+                const int left = shape ? (*shape)[i].left : pose->image->parts[i].left;
+                const int top = shape ? (*shape)[i].top : pose->image->parts[i].top;
+                const auto &size = sizes[view.ppu_registers[1] >> 5][object.large];
+                matches = size[0] == 16 && size[1] == 16 && object.x == x + left &&
+                          object.y == y + top - 1;
             }
-            unsigned attributes = entry[2];
-            if (ordinary)
-                attributes = (attributes & 0xcf) | ((surface & (part < upper ? 2 : 1)) ? 0x20 : 0x30);
-            presentation_objects_.push_back({x + int8_t(entry[3]), y + int8_t(entry[0]) - 1,
-                                             uint8_t(entry[1]), uint8_t(attributes), bool(entry[4] & 1)});
-            ++part;
-            if (entry[4] & 0x80)
-                break;
-            pointer = (pointer + 5) & 0xffff;
+            if (matches) {
+                for (unsigned i = 0; i < part; ++i) {
+                    auto &object = objects[first_part + i];
+                    object.host_image = pose->image;
+                    object.host_part = i;
+                    // Palette belongs to the displayed descriptor; an
+                    // authored palette edit need not reload the artwork.
+                    object.host_palette = (object.attributes >> 1) & 7;
+                    object.host_generation = pose->generation;
+                    object.host_orientation = display_mirror
+                        ? native::SpriteOrientation::Mirrored : native::SpriteOrientation::Normal;
+                    object.identity = (std::uint64_t(1) << 63) | pose->generation;
+                }
+            } else
+                ++host_sprite_geometry_mismatches_;
         }
     }
+    return map_address;
+}
+
+std::optional<GameSceneRenderer::HostObjectPart>
+GameSceneRenderer::host_oam_part(int x, int y, std::uint8_t tile, std::uint8_t attributes, bool large,
+                                unsigned oam_index) const {
+    const auto matches = [&](const PresentationObject &object) {
+        // C08CD5 can publish signed X -256..255 and Y -32..223. Exclude
+        // offscreen host continuations which merely alias an OAM coordinate.
+        return object.host_image && object.x >= -256 && object.x < 256 && object.y >= -32 && object.y < 224 &&
+            ((unsigned(object.x) - unsigned(x)) & 511) == 0 &&
+            ((unsigned(object.y) - unsigned(y)) & 255) == 0 && object.tile == tile &&
+            object.attributes == attributes && object.large == large;
+    };
+    if (presentation_oam_indexed_) {
+        if (oam_index >= presentation_oam_.size())
+            return {};
+        const auto &object = presentation_oam_[oam_index];
+        if (object && matches(*object))
+            return HostObjectPart{object->host_image->parts[object->host_part].indices, object->host_palette,
+                                  object->host_generation};
+        return {};
+    }
+    for (const auto &object : presentation_objects_) {
+        if (matches(object))
+            return HostObjectPart{object.host_image->parts[object.host_part].indices, object.host_palette,
+                                  object.host_generation};
+    }
+    return {};
 }
 
 void GameSceneRenderer::presentation_object_pixels(const SceneReadView &view, unsigned y,
                                                    std::span<Pixel> result, int origin) const {
+    object_pixels(view, view.native_sprites && native_sprite_frame_ ? native_sprite_objects_ : presentation_objects_,
+                  y, result, origin);
+}
+
+void GameSceneRenderer::object_pixels(const SceneReadView &view,
+                                      std::span<const PresentationObject> objects, unsigned y,
+                                      std::span<Pixel> result, int origin) const {
     constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
                                          {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
                                          {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
     constexpr int priorities[3][4] = {{2, 5, 8, 11}, {1, 3, 7, 10}, {1, 3, 5, 7}};
-    for (const auto &object : presentation_objects_) {
-        const unsigned width = sizes[view.ppu_registers[1] >> 5][object.large][0],
-                       height = sizes[view.ppu_registers[1] >> 5][object.large][1];
+    for (const auto &object : objects) {
+        const unsigned width = object.fragment_pixels ? object.fragment_pixels->width :
+                                   object.native_owned ? 16 : sizes[view.ppu_registers[1] >> 5][object.large][0],
+                       height = object.fragment_pixels ? object.fragment_pixels->height :
+                                    object.native_owned ? 16 : sizes[view.ppu_registers[1] >> 5][object.large][1];
+        const bool fragment = view.native_sprites && object.fragment_pixels;
+        const bool host = (object.native_owned ? bool(view.native_sprites) : bool(view.host_sprites)) &&
+                          object.host_image && width == 16 && height == 16;
         int row = int(y) - object.y;
         if (row < 0 || row >= int(height))
             continue;
-        const unsigned attr = object.attributes, pal = (attr >> 1) & 7, mode = view.ppu_registers[5] & 7;
+        const unsigned attr = object.attributes,
+                       pal = host ? object.host_palette : (attr >> 1) & 7,
+                       mode = view.ppu_registers[5] & 7;
         const int priority = priorities[std::min(mode, 2u)][(attr >> 4) & 3];
-        if (attr & 0x80)
+        if (!host && !fragment && (attr & 0x80))
             row = int(height) - 1 - row;
         const unsigned base = (view.ppu_registers[1] & 7) * 16384 +
                               ((attr & 1) ? (((view.ppu_registers[1] >> 3) & 3) + 1) * 8192 : 0);
         for (unsigned col = 0; col < width; ++col) {
+            if (object.stationary_prepared && object.x + int(col) >= 0 && object.x + int(col) < 256)
+                continue;
             const int out = object.x + int(col) - origin;
             if (out < 0 || out >= int(result.size()) || result[out].priority >= 0)
                 continue;
-            const unsigned ix = (attr & 0x40) ? width - 1 - col : col;
-            const unsigned tile =
-                (((object.tile & 0xf0) + unsigned(row / 8) * 16) & 0xf0) | ((object.tile + ix / 8) & 15);
-            const unsigned address = base + tile * 32 + unsigned(row & 7) * 2;
             unsigned color = 0;
-            for (unsigned plane = 0; plane < 4; ++plane)
-                color |=
-                    ((view.video_ram[(address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >> (7 - (ix & 7))) &
-                     1)
-                    << plane;
+            if (fragment)
+                color = object.fragment_pixels->indices[unsigned(row) * width + col];
+            else if (host)
+                color = object.host_image->parts[object.host_part].indices[unsigned(row) * 16 + col];
+            else {
+                const unsigned ix = (attr & 0x40) ? width - 1 - col : col;
+                const unsigned tile =
+                    (((object.tile & 0xf0) + unsigned(row / 8) * 16) & 0xf0) | ((object.tile + ix / 8) & 15);
+                const unsigned address = base + tile * 32 + unsigned(row & 7) * 2;
+                for (unsigned plane = 0; plane < 4; ++plane)
+                    color |=
+                        ((view.video_ram[(address + (plane / 2) * 16 + (plane & 1)) & 0xffff] >> (7 - (ix & 7))) &
+                         1)
+                        << plane;
+            }
             if (color)
                 result[out] = {view.palette(128 + pal * 16 + color), priority, 4, pal >= 4,
                                128 + pal * 16 + color};
@@ -306,6 +447,9 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
     // In particular SHOW_TITLE_SCREEN's BG1 map ($58) must not repeat the
     // copyright line. Only identified scenery/animation layers extend.
     presentation_layer_mask_ = 0x10;
+    presentation_intro_static_ = intro_interference(view);
+    if (presentation_intro_static_)
+        presentation_layer_mask_ |= 2; // Extend procedural BG2 only, keeping the BG1 card centered.
     if ((view.ppu_registers[5] & 7) == 7)
         presentation_layer_mask_ = 0x13; // affine scenery
     presentation_jp_title_ = false;
@@ -383,12 +527,17 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
     if (presentation_world_map_ && presentation_objects_frame_ != view.completed_frames) {
         if (presentation_objects_uploaded_) {
             presentation_objects_ = presentation_uploaded_objects_;
+            presentation_oam_ = presentation_uploaded_oam_;
+            presentation_oam_indexed_ = presentation_uploaded_oam_indexed_;
+            host_artwork_revision_ = UINT64_MAX;
             presentation_objects_frame_ = view.completed_frames;
         } else
             prepare_presentation_objects(view); // Direct-register hardware fixtures.
     }
     if (!presentation_world_map_) {
         presentation_objects_.clear();
+        presentation_oam_ = {};
+        presentation_oam_indexed_ = false;
         presentation_objects_frame_ = UINT64_MAX;
     }
 
@@ -448,6 +597,19 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
     presentation_shift_x_ = 0;
     presentation_clip_left_ = -384;
     presentation_clip_right_ = 640;
+    // Window effects use authored screen coordinates, including scanline-varying
+    // apertures in the title demo. Moving the world independently would move
+    // its subject out of the opening. Keep the source framing for both layer
+    // masks and color windows; map sampling still handles out-of-area tiles.
+    const auto &regs = view.ppu_registers;
+    if (regs[0x30] & 0xf0)
+        return;
+    const unsigned masked_layers = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
+    for (unsigned layer = 0; layer < 5; ++layer) {
+        const unsigned selection = (regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
+        if ((masked_layers & (1u << layer)) && (selection & 0x0a))
+            return;
+    }
     // The original camera itself is not clamped. This optional display policy
     // derives a horizontal region from the very same sector IDs that LOAD_MAP
     // uses to hide unrelated maps. Anchor at the native viewport center and
@@ -517,7 +679,7 @@ uint16_t GameSceneRenderer::presentation_map_tile(const SceneReadView &view, int
 // mistaken for authored scenery without asking the game to load more cells.
 uint16_t GameSceneRenderer::presentation_tile(const SceneReadView &view, unsigned bg, int x, unsigned y,
                                               uint16_t original) const {
-    if (presentation_world_map_ && bg < 2 && (x < 0 || x >= 256)) {
+    if (presentation_world_map_ && bg < 2 && (direct_world_tiles_ || x < 0 || x >= 256)) {
         const int wx = presentation_world_x_[bg] + x, wy = presentation_world_y_[bg] + int(y);
         const int tx = wx >= 0 ? wx / 8 : (wx - 7) / 8, ty = wy >= 0 ? wy / 8 : (wy - 7) / 8;
         original = presentation_map_tile(view, tx, ty, bg);
@@ -736,18 +898,23 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
 
 void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
     if (!y) {
+        native_sprite_frame_ = view.native_sprites && native_uploaded_frame_;
+        native_sprite_objects_ = native_sprite_frame_ ? native_uploaded_objects_ : std::vector<PresentationObject>{};
+        native_sprite_frame_number_ = view.completed_frames;
         // Latch the scene alongside its first visible row, before any pixel or
         // metadata is written. A transition can happen inside one CPU step, so
         // waiting for the frontend's next iteration would repeat one gas frame
         // or stretch one logo frame. Keep the user's requested width separately.
         presentation_frame_aspect_ =
-            (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c
+            (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c &&
+                    !intro_interference(view)
                 ? 4.0 / 3
                 : 0.0;
         resize_presentation_width(view, presentation_frame_aspect_ ? 256 : requested_presentation_width_);
     }
     if (!y || presentation_width_ > 256)
         prepare_presentation_scene(view);
+    refresh_host_artwork(view);
     if (presentation_effects_enabled_)
         prepare_presentation_effects(view);
     if ((view.ppu_registers[0] & 0x80) && presentation_effects_enabled_) {
@@ -757,7 +924,594 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
     }
 }
 
-void GameSceneRenderer::capture_oam_upload(const SceneReadView &view) {
+void GameSceneRenderer::begin_sprite_frame(unsigned buffer_id) {
+    if (buffer_id < 1 || buffer_id > sprite_builds_.size())
+        return;
+    sprite_build_id_ = buffer_id;
+    ++sprite_snapshot_counts_.builds;
+    sprite_builds_[buffer_id - 1] = {};
+    sprite_builds_[buffer_id - 1].begun = true;
+}
+
+void GameSceneRenderer::refresh_host_artwork(const SceneReadView &view) {
+    if (!view.host_sprites || !presentation_oam_indexed_)
+        return;
+    const auto revision = view.host_sprites->artwork_revision();
+    if (revision == host_artwork_revision_)
+        return;
+    const auto refresh = [&](PresentationObject &object) {
+        if (!object.host_generation)
+            return;
+        auto image = view.host_sprites->committed_image(object.host_generation, object.host_orientation);
+        // The bridge owns generation lifetime independently of actor slots.
+        // A missing/unsupported owner cannot borrow the current slot's art.
+        if (image && object.host_part < image->parts.size() &&
+            image->parts[object.host_part].left == object.x - object.anchor_x &&
+            image->parts[object.host_part].top == object.y - object.anchor_y)
+            object.host_image = std::move(image);
+        else
+            object.host_image.reset();
+    };
+    for (auto &object : presentation_objects_)
+        refresh(object);
+    for (auto &object : presentation_oam_)
+        if (object)
+            refresh(*object);
+    host_artwork_revision_ = revision;
+}
+
+std::vector<std::uint64_t> GameSceneRenderer::host_sprite_generations() const {
+    std::vector<std::uint64_t> result;
+    const auto add = [&](const PresentationObject &object) {
+        if (object.host_generation)
+            result.push_back(object.host_generation);
+    };
+    const auto list = [&](const auto &objects) {
+        for (const auto &object : objects)
+            add(object);
+    };
+    const auto oam = [&](const auto &objects) {
+        for (const auto &object : objects)
+            if (object)
+                add(*object);
+    };
+    list(presentation_objects_);
+    list(presentation_uploaded_objects_);
+    oam(presentation_oam_);
+    oam(presentation_uploaded_oam_);
+    for (const auto &build : sprite_builds_) {
+        list(build.objects);
+        oam(build.oam);
+        for (const auto &draw : build.queued)
+            list(draw.objects);
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+std::vector<GameSceneRenderer::PresentationObject> GameSceneRenderer::source_sprite_parts(
+    const SceneReadView &view, std::uint32_t map_address, int x, int y) const {
+    const auto byte = [&](unsigned at) -> std::optional<unsigned> {
+        if (at >= 0x7e0000 && at < 0x800000) return view.work_ram[at - 0x7e0000];
+        if (at >= 0xc00000 && at - 0xc00000 < view.cartridge_rom.size()) return view.cartridge_rom[at - 0xc00000];
+        return {};
+    };
+    std::vector<PresentationObject> result;
+    const unsigned bank = map_address & 0xff0000;
+    unsigned pointer = map_address & 0xffff;
+    for (unsigned step = 0; step < 128; ++step) {
+        std::array<unsigned, 5> entry{};
+        for (unsigned i = 0; i < 5; ++i) {
+            const auto value = byte(bank | ((pointer + i) & 0xffff));
+            if (!value) throw std::runtime_error("Native draw received an invalid source overlay map");
+            entry[i] = *value;
+        }
+        if (entry[0] == 0x80) { pointer = entry[1] | entry[2] << 8; continue; }
+        result.push_back({std::int16_t(x + std::int8_t(entry[3])),
+                          std::int16_t(y + std::int8_t(entry[0]) - 1), std::uint8_t(entry[1]),
+                          std::uint8_t(entry[2]), bool(entry[4] & 1)});
+        if (entry[4] & 0x80) return result;
+        pointer = (pointer + 5) & 0xffff;
+    }
+    throw std::runtime_error("Native draw received an unterminated source overlay map");
+}
+
+void GameSceneRenderer::queue_native_sprite(const SceneReadView &view,
+    std::shared_ptr<const native::SpriteImage> image, std::uint64_t generation, unsigned palette,
+    int x, int y, unsigned surface, unsigned priority) {
+    if (!view.native_sprites || !sprite_build_id_ || !image || !generation || palette >= 8 || priority >= 4)
+        throw std::invalid_argument("Invalid native sprite draw command");
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    build.native_frame = true;
+    QueuedSpriteDraw draw;
+    draw.x = x; draw.y = y; draw.priority = priority; draw.native_queued = true;
+    for (unsigned i = 0; i < image->parts.size(); ++i) {
+        const auto &part = image->parts[i];
+        const unsigned level = surface & (part.upper ? 2 : 1) ? 0x20 : 0x30;
+        PresentationObject object{std::int16_t(x + part.left), std::int16_t(y + part.top - 1),
+                                  0, std::uint8_t(level | (palette << 1)), false,
+                                  (std::uint64_t{1} << 63) | generation, x, y - 1};
+        object.host_image = image; object.host_part = i; object.host_palette = palette;
+        object.native_owned = true;
+        draw.objects.push_back(std::move(object));
+    }
+    build.queued.push_back(std::move(draw));
+}
+void GameSceneRenderer::queue_native_overlay(const SceneReadView &view, std::uint32_t map_address,
+                                            int x, int y, unsigned priority) {
+    if (!view.native_sprites || !sprite_build_id_ || priority >= 4)
+        throw std::invalid_argument("Invalid native overlay draw command");
+    const auto resources = view.native_sprites->resources();
+    if (!native_overlays_ || native_overlay_resources_.lock() != resources) {
+        native_overlays_ = std::make_shared<native::OverlaySprites>(view.cartridge_rom, view.game_version,
+                                                                  *resources);
+        native_overlay_resources_ = resources;
+    }
+    queue_native_fragments(view, native_overlays_->frame(map_address), 0, x, y, priority);
+}
+void GameSceneRenderer::queue_native_fragments(const SceneReadView &view,
+    std::span<const native::SpriteFragment> fragments, std::uint64_t identity,
+    int x, int y, unsigned priority) {
+    if (!view.native_sprites || !sprite_build_id_ || priority >= 4)
+        throw std::invalid_argument("Invalid native fragment draw command");
+    QueuedSpriteDraw draw;
+    draw.x = x; draw.y = y; draw.priority = priority; draw.native_queued = true;
+    for (const auto &fragment : fragments) {
+        const auto &pixels = fragment.pixels;
+        if (!pixels || !pixels->width || !pixels->height || pixels->width > 4096 || pixels->height > 4096 ||
+            pixels->indices.size() != std::size_t(pixels->width) * pixels->height ||
+            fragment.palette >= 8 || fragment.priority >= 4 ||
+            std::any_of(pixels->indices.begin(), pixels->indices.end(), [](auto color) { return color > 15; }))
+            throw std::invalid_argument("Invalid native sprite fragment");
+        PresentationObject object{std::int16_t(x + fragment.left), std::int16_t(y + fragment.top - 1),
+                                  0, std::uint8_t((fragment.priority << 4) | (fragment.palette << 1)),
+                                  false, identity, x, y - 1};
+        object.native_owned = true;
+        object.fragment_pixels = pixels;
+        draw.objects.push_back(std::move(object));
+    }
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    build.native_frame = true;
+    build.queued.push_back(std::move(draw));
+}
+void GameSceneRenderer::queue_native_custom(const SceneReadView &view, std::uint32_t authored_table,
+                                           unsigned frame, int x, int y, unsigned priority) {
+    if (!view.native_sprites || !sprite_build_id_ || priority >= 4)
+        throw std::invalid_argument("Invalid native custom sprite command");
+    const auto resources = view.native_sprites->resources();
+    if (!native_custom_sprites_ || native_custom_resources_.lock() != resources) {
+        native_custom_sprites_ = std::make_shared<native::CustomSprites>(view.cartridge_rom, view.game_version);
+        native_custom_resources_ = resources;
+    }
+    queue_native_fragments(view, native_custom_sprites_->frame(authored_table, frame), 0, x, y, priority);
+}
+std::size_t GameSceneRenderer::native_actor_draw_mark() const {
+    if (!sprite_build_id_)
+        throw std::logic_error("Native actor draw has no open frame");
+    return sprite_builds_[sprite_build_id_ - 1].queued.size();
+}
+void GameSceneRenderer::set_native_stationary_sprites(
+    std::shared_ptr<const native::StationaryNpcSprites> sprites) noexcept {
+    native_stationary_sprites_ = std::move(sprites);
+    native_stationary_preparation_ = {};
+}
+std::size_t GameSceneRenderer::stationary_sprite_part_count() const {
+    return std::count_if(native_sprite_objects_.begin(), native_sprite_objects_.end(),
+                         [](const auto &object) { return object.stationary_prepared; });
+}
+void GameSceneRenderer::prune_native_actor_overlays(const SceneReadView &view) {
+    const auto resources = view.native_sprites->resources();
+    if (native_actor_overlay_resources_.lock() != resources) {
+        native_actor_overlays_ = {};
+        native_actor_overlay_resources_ = resources;
+    }
+    for (unsigned slot = 0; slot < 60; slot += 2) {
+        auto &retained = native_actor_overlays_[slot / 2];
+        if (!retained.generation) continue;
+        const auto actor = view.native_sprites->snapshot(slot);
+        if (!actor || actor->id != retained.generation || view.native_sprites->custom_descriptor(slot))
+            retained = {};
+    }
+}
+void GameSceneRenderer::finish_native_actor_draw(const SceneReadView &view, std::size_t mark,
+                                                 unsigned byte_slot, unsigned raw_priority) {
+    tag_native_actor_draw(view, mark, byte_slot, raw_priority);
+    const auto resources = view.native_sprites->resources();
+    if (native_actor_overlay_resources_.lock() != resources) {
+        native_actor_overlays_ = {};
+        native_actor_overlay_resources_ = resources;
+    }
+    auto &retained = native_actor_overlays_[byte_slot / 2];
+    retained = {};
+    const auto actor = view.native_sprites->snapshot(byte_slot);
+    if (!actor || view.native_sprites->custom_descriptor(byte_slot)) return;
+    const auto &source = view.source_profile;
+    const auto word = [&](unsigned at) {
+        return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8;
+    };
+    retained.generation = actor->id;
+    retained.anchor_x = std::int16_t(word(source.wram_entity_screen_coordinates.x + byte_slot));
+    retained.anchor_y = std::int16_t(word(source.wram_entity_screen_coordinates.y + byte_slot));
+    const auto &queued = sprite_builds_[sprite_build_id_ - 1].queued;
+    for (auto it = queued.begin() + mark; it != queued.end(); ++it)
+        if (it->native_queued && !it->objects.empty() &&
+            std::all_of(it->objects.begin(), it->objects.end(), [](const auto &object) {
+                return bool(object.fragment_pixels);
+            }))
+            retained.draws.push_back(*it);
+}
+void GameSceneRenderer::tag_native_actor_draw(const SceneReadView &view, std::size_t mark,
+                                              unsigned byte_slot, unsigned raw_priority) {
+    if (!view.native_sprites || !sprite_build_id_ || byte_slot >= 60 || (byte_slot & 1))
+        throw std::invalid_argument("Invalid native actor draw bundle");
+    auto &queued = sprite_builds_[sprite_build_id_ - 1].queued;
+    if (mark > queued.size())
+        throw std::invalid_argument("Invalid native actor draw marker");
+    const auto &source = view.source_profile;
+    const auto word = [&](unsigned at) {
+        return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8;
+    };
+    unsigned rank = 30;
+    std::array<bool, 30> seen{};
+    unsigned position = 0;
+    for (unsigned slot = word(source.wram_first_entity); slot < 60 && !(slot & 1) && !seen[slot / 2];
+         slot = word(source.wram_entity_next + slot), ++position) {
+        seen[slot / 2] = true;
+        if (slot == byte_slot) { rank = position; break; }
+    }
+    const NativeActorDrawOrder order{byte_slot, rank,
+        std::uint16_t(word(source.wram_entity_world_coordinates.y + byte_slot)), raw_priority == 1};
+    std::optional<native::NpcPlacement> stationary;
+    if (native_stationary_sprites_ && !view.native_sprites->custom_descriptor(byte_slot)) {
+        const unsigned npc_ids = view.game_version == GameVersion::JP ? 0x3098 : 0x2c9a;
+        stationary = native_stationary_sprites_->placement(std::uint16_t(word(npc_ids + byte_slot)));
+    }
+    const auto actor = view.native_sprites->snapshot(byte_slot);
+    const bool ordinary = actor && !view.native_sprites->custom_descriptor(byte_slot);
+    const auto identity = stationary ? (std::uint64_t{1} << 61) | stationary->identity :
+                          ordinary ? (std::uint64_t{1} << 63) | actor->id : 0;
+    const int anchor_x = std::int16_t(word(source.wram_entity_screen_coordinates.x + byte_slot)),
+              anchor_y = std::int16_t(word(source.wram_entity_screen_coordinates.y + byte_slot)) - 1;
+    for (auto it = queued.begin() + mark; it != queued.end(); ++it) {
+        it->actor_order = order;
+        // An overlay and body share one motion anchor, independent of which
+        // effect was submitted first or whether it has a vertical offset.
+        // Authored stationary NPC identity also spans preparation/activation.
+        for (auto &object : it->objects)
+            if (ordinary && object.native_owned && (object.host_image || object.fragment_pixels)) {
+                object.identity = identity;
+                if (object.fragment_pixels) {
+                    object.anchor_x = anchor_x;
+                    object.anchor_y = anchor_y;
+                }
+            }
+    }
+}
+void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) {
+    if (!native_stationary_sprites_ || !view.native_sprites || presentation_width_ <= 256) {
+        native_stationary_preparation_.clear_resources();
+        return;
+    }
+    const auto &source = view.source_profile;
+    const auto word = [&](unsigned at) { return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8; };
+    const bool jp = view.game_version == GameVersion::JP;
+    const unsigned npc_ids = jp ? 0x3098 : 0x2c9a,
+                   enabled = jp ? 0x4dde : 0x4a58,
+                   objects_only = jp ? 0x4dec : 0x4a66,
+                   photograph = jp ? 0xb6b8 : 0xb4ef,
+                   flags = jp ? 0x9eb3 : 0x9c08;
+    // Only the ordinary world scene owns authored placements. In particular,
+    // photograph/title/battle scenes must never acquire dormant world actors.
+    if ((view.ppu_registers[5] & 0x37) != 1 || view.ppu_registers[7] != 0x39 ||
+        view.ppu_registers[8] != 0x59 || word(source.wram_battle_mode_flag) ||
+        !word(enabled) || word(photograph)) {
+        native_stationary_preparation_.clear_resources();
+        return;
+    }
+    const unsigned combination = word(source.wram_loaded_map_tile_combination);
+    if (combination >= 32) { native_stationary_preparation_.clear_resources(); return; }
+    std::vector<native::NpcId> active;
+    std::array<bool, 30> seen{};
+    for (unsigned slot = word(source.wram_first_entity); slot < 60 && !(slot & 1) && !seen[slot / 2];
+         slot = word(source.wram_entity_next + slot)) {
+        seen[slot / 2] = true;
+        active.push_back(std::uint16_t(word(npc_ids + slot)));
+    }
+    // These are the same logical-frame camera coordinates used by C0A023.
+    // The resulting commands travel with that frame's ordinary draw snapshot.
+    const int camera_x = std::int16_t(word(source.wram_background_scroll.layer1_x)),
+              camera_y = std::int16_t(word(source.wram_background_scroll.layer1_y));
+    const int margin = int(presentation_width_ - 256) / 2;
+    // A valid native center can be up to128px from an authored sector edge.
+    // Boundary recentering may therefore expose another margin+128px beyond
+    // the centered view. Prepare that bounded band without using last frame's
+    // camera shift; final rasterization still decides displayed visibility.
+    const int overscan = margin + 128;
+    const native::NpcVisibility visibility{combination, view.work_ram.subspan(flags, 128), active,
+                                           word(objects_only) != 0, false};
+    const native::NpcRectangle footprint{camera_x - margin - overscan - 64, camera_y - 64,
+        camera_x + 256 + margin + overscan + 64, camera_y + 288};
+    // Acquire shared artwork before stationary commands select their poses.
+    // Moving NPC definitions participate only here: no pose/actor is invented.
+    native_stationary_sprites_->prepare_resources(footprint, visibility, native_stationary_preparation_);
+    const auto candidates = native_stationary_sprites_->prepare(footprint, visibility, native_stationary_preparation_);
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    for (const auto &candidate : candidates) {
+        // Water ripples need an authored overlay task and current phase. Only
+        // source-active actors can own that state; a dormant body is insufficient.
+        if (candidate.surface & 8) continue;
+        const int x = int(candidate.placement.x) - camera_x,
+                  y = int(candidate.placement.y) - camera_y;
+        // Actual active identity, not a geometric threshold, ends readiness:
+        // source strip loading can lag the activation boundary by one strip.
+        QueuedSpriteDraw draw;
+        draw.x = x; draw.y = y; draw.priority = 1; draw.native_queued = true;
+        draw.actor_order = NativeActorDrawOrder{60, 30 + candidate.placement.identity,
+            std::uint16_t(candidate.placement.y), true};
+        for (unsigned index = 0; index < candidate.image->parts.size(); ++index) {
+            const auto &part = candidate.image->parts[index];
+            const int left = x + part.left, top = y + part.top - 1;
+            // Canonical pixels are clipped by both rasterizers; partial edge
+            // parts remain intact until actual source activation takes over.
+            if (left >= 0 && left + 16 <= 256) continue;
+            if (left >= 256 + margin + overscan || left + 16 <= -margin - overscan || top >= 224 || top + 16 <= 0)
+                continue;
+            const unsigned level = candidate.surface & (part.upper ? 2 : 1) ? 0x20 : 0x30;
+            PresentationObject object{left, top, 0, std::uint8_t(level | (candidate.palette << 1)),
+                false, (std::uint64_t{1} << 61) | candidate.placement.identity, x, y - 1};
+            object.host_image = candidate.image; object.host_part = index;
+            object.host_palette = candidate.palette; object.native_owned = true;
+            object.stationary_prepared = true;
+            draw.objects.push_back(std::move(object));
+        }
+        if (!draw.objects.empty()) build.queued.push_back(std::move(draw));
+    }
+}
+void GameSceneRenderer::capture_sprite_enqueue(const SceneReadView &view, std::uint32_t map_address,
+                                              int x, int y, unsigned priority) {
+    if (!view.native_sprites || !sprite_build_id_) return;
+    if (priority >= 4) throw std::runtime_error("Source custom draw priority is invalid");
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    build.native_frame = true;
+    QueuedSpriteDraw draw;
+    draw.map_address = map_address; draw.x = x; draw.y = y; draw.priority = priority; draw.source_queued = true;
+    build.queued.push_back(std::move(draw));
+}
+std::optional<std::uint8_t> GameSceneRenderer::try_native_sprite_pixels(
+    const SceneReadView &view, unsigned y, std::span<PpuPixel> result, int origin) const {
+    if (!view.native_sprites || !native_sprite_frame_) return {};
+    object_pixels(view, native_sprite_objects_, y, result, origin);
+    return 0;
+}
+
+void GameSceneRenderer::capture_entity_draw(const SceneReadView &view, unsigned slot) {
+    if (view.native_sprites)
+        return; // Native commands and generic source queue entries own this frame.
+    if (!sprite_build_id_ || slot >= 60 || (slot & 1))
+        return;
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    if (build.queued.size() >= 3840)
+        return;
+    QueuedSpriteDraw draw;
+    const auto address = append_presentation_entity(view, slot, draw.objects);
+    if (!address || draw.objects.empty())
+        return;
+    draw.map_address = *address;
+    draw.x = draw.objects.front().anchor_x;
+    draw.y = draw.objects.front().anchor_y + 1;
+    build.queued.push_back(std::move(draw));
+    ++sprite_snapshot_counts_.queued_draws;
+}
+
+void GameSceneRenderer::capture_sprite_emit(const SceneReadView &view, std::uint32_t map_address, int x,
+                                            int y, unsigned first_oam, unsigned oam_limit) {
+    if (!sprite_build_id_ || first_oam > 128 || oam_limit > 128 || first_oam >= oam_limit)
+        return;
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    ++sprite_snapshot_counts_.emit_calls;
+    if (view.native_sprites) {
+        build.native_frame = true;
+        const auto found = std::find_if(build.queued.begin(), build.queued.end(), [&](const auto &draw) {
+            return draw.source_queued && !draw.emitted && draw.map_address == map_address &&
+                   draw.x == x && draw.y == y;
+        });
+        std::vector<PresentationObject> emitted;
+        unsigned index = first_oam;
+        for (const auto &object : source_sprite_parts(view, map_address, x, y)) {
+            if (object.x < -256 || object.x >= 256 || object.y < -32 || object.y >= 224)
+                continue;
+            if (index >= oam_limit)
+                break;
+            emitted.push_back(object);
+            build.oam[index++] = object;
+        }
+        if (found != build.queued.end()) {
+            found->objects = std::move(emitted);
+            found->emitted = true;
+        } else
+            build.objects.insert(build.objects.end(), emitted.begin(), emitted.end());
+        return;
+    }
+    const auto found = std::find_if(build.queued.begin(), build.queued.end(), [&](const auto &draw) {
+        return !draw.emitted && draw.map_address == map_address && draw.x == x && draw.y == y;
+    });
+    std::vector<PresentationObject> objects;
+    if (found != build.queued.end()) {
+        found->emitted = true;
+        ++sprite_snapshot_counts_.matched_draws;
+        objects = found->objects;
+    } else {
+        // Non-entity emitters (ripples, cursors, scripted overlays) retain
+        // source pixels and exact emitter order without acquiring actor art.
+        const auto byte = [&](unsigned address) -> std::optional<unsigned> {
+            if (address >= 0x7e0000 && address < 0x800000)
+                return view.work_ram[address - 0x7e0000];
+            if (address >= 0xc00000 && address - 0xc00000 < view.cartridge_rom.size())
+                return view.cartridge_rom[address - 0xc00000];
+            return {};
+        };
+        unsigned pointer = map_address & 0xffff, bank = map_address & 0xff0000;
+        for (unsigned step = 0; step < 128; ++step) {
+            std::array<unsigned, 5> entry{};
+            for (unsigned i = 0; i < entry.size(); ++i) {
+                const auto value = byte(bank | ((pointer + i) & 0xffff));
+                if (!value)
+                    return;
+                entry[i] = *value;
+            }
+            if (entry[0] == 0x80) {
+                pointer = entry[1] | (entry[2] << 8);
+                continue;
+            }
+            objects.push_back({std::int16_t(x + std::int8_t(entry[3])),
+                               std::int16_t(y + std::int8_t(entry[0]) - 1),
+                               std::uint8_t(entry[1]), std::uint8_t(entry[2]), bool(entry[4] & 1)});
+            if (entry[4] & 0x80)
+                break;
+            pointer = (pointer + 5) & 0xffff;
+        }
+    }
+    unsigned index = first_oam;
+    for (const auto &object : objects) {
+        if (build.objects.size() >= 3840)
+            break;
+        build.objects.push_back(object);
+        if (object.x >= -256 && object.x < 256 && object.y >= -32 && object.y < 224) {
+            if (index >= oam_limit)
+                break;
+            build.oam[index++] = object;
+            sprite_snapshot_counts_.host_parts += bool(object.host_image);
+            if (index == oam_limit)
+                break;
+        }
+    }
+}
+
+void GameSceneRenderer::seal_sprite_frame(const SceneReadView &view) {
+    if (!sprite_build_id_)
+        return;
+    if (native_enemy_preparation_)
+        native_enemy_preparation_->prepare(view, presentation_width_);
+    auto &build = sprite_builds_[sprite_build_id_ - 1];
+    if (view.native_sprites) {
+        build.native_frame = true;
+        const auto &source = view.source_profile;
+        const auto word = [&](unsigned at) { return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at+1]) << 8; };
+        prune_native_actor_overlays(view);
+        const auto original_draws = build.queued.size();
+        auto continuation_position = original_draws;
+        for (auto i = original_draws; i > 0; --i)
+            if (build.queued[i - 1].actor_order) { continuation_position = i; break; }
+        std::array<bool, 30> seen{};
+        for (unsigned slot = word(source.wram_first_entity); slot < 60 && !(slot & 1) && !seen[slot / 2];
+             slot = word(source.wram_entity_next + slot)) {
+            seen[slot / 2] = true;
+            // Far-edge graphical continuation uses persistent actor hiding.
+            // Processor V belongs to C0A0E3's call gate, not bank-word bit14.
+            if ((word(source.wram_entity_spritemap_pointers.high + slot) & 0x8000) ||
+                (word(source.wram_entity_animation_frame + slot) & 0x8000) ||
+                word(source.wram_entity_draw_callback + slot) != source.entity_draw_callbacks.screen_space)
+                continue;
+            const int x = std::int16_t(word(source.wram_entity_screen_coordinates.x + slot));
+            const int y = std::int16_t(word(source.wram_entity_screen_coordinates.y + slot));
+            if (x >= -64 && x < 320 && y >= -64 && y < 256)
+                continue;
+            if (std::any_of(build.queued.begin(), build.queued.begin() + original_draws,
+                            [slot](const auto &draw) {
+                                return draw.actor_order && draw.actor_order->byte_slot == slot;
+                            }))
+                continue; // An explicit/debug source draw already owns this actor.
+            const auto raw_priority = word(source.wram_entity_draw_priority + slot);
+            auto priority = raw_priority;
+            if (priority & 0x8000) {
+                const unsigned owner = (priority & 0x3f) * 2;
+                if (owner >= 60) continue;
+                priority = word(source.wram_entity_draw_priority + owner);
+            }
+            const auto actor = view.native_sprites->snapshot(slot);
+            if (actor && actor->image && priority < 4) {
+                const auto mark = native_actor_draw_mark();
+                // Continue the last authored overlay pose without running a
+                // culled callback or advancing its script/timer. The body uses
+                // the current selected image, independent of retained effects.
+                const auto &retained = native_actor_overlays_[slot / 2];
+                if (retained.generation == actor->id) {
+                    const int dx = x - retained.anchor_x, dy = y - retained.anchor_y;
+                    for (auto draw : retained.draws) {
+                        draw.x = std::int16_t(draw.x + dx);
+                        draw.y = std::int16_t(draw.y + dy);
+                        draw.priority = priority;
+                        for (auto &object : draw.objects) {
+                            object.x = std::int16_t(object.x + dx);
+                            object.y = std::int16_t(object.y + dy);
+                            object.anchor_x = std::int16_t(object.anchor_x + dx);
+                            object.anchor_y = std::int16_t(object.anchor_y + dy);
+                        }
+                        build.queued.push_back(std::move(draw));
+                    }
+                }
+                queue_native_sprite(view, actor->image, actor->id, actor->creation.sprite.palette, x, y,
+                                    word(source.wram_entity_surface_flags + slot), priority);
+                tag_native_actor_draw(view, mark, slot, raw_priority);
+            }
+        }
+        queue_stationary_npc_sprites(view);
+        // Keep any later non-actor screen commands after the actor block.
+        // Preparation/continuation never runs scripts or callbacks.
+        if (build.queued.size() > original_draws) {
+            std::rotate(build.queued.begin() + continuation_position,
+                        build.queued.begin() + original_draws, build.queued.end());
+            const auto before = [](const QueuedSpriteDraw &a, const QueuedSpriteDraw &b) {
+                const auto &left = *a.actor_order, &right = *b.actor_order;
+                if (left.sorted != right.sorted) return !left.sorted;
+                if (left.sorted && left.world_y != right.world_y) return left.world_y > right.world_y;
+                return left.list_rank < right.list_rank;
+            };
+            for (auto first = build.queued.begin(); first != build.queued.end();) {
+                if (!first->actor_order) { ++first; continue; }
+                auto last = first;
+                while (last != build.queued.end() && last->actor_order) ++last;
+                // Equal keys preserve each callback's overlay-before-body order.
+                std::stable_sort(first, last, before);
+                first = last;
+            }
+        }
+        // Source priority queues are flushed only after actor order resolves.
+        for (unsigned priority = 0; priority < 4; ++priority)
+            for (const auto &draw : build.queued)
+                if (draw.priority == priority && (draw.native_queued || (draw.source_queued && draw.emitted)))
+                    build.objects.insert(build.objects.end(), draw.objects.begin(), draw.objects.end());
+        return;
+    }
+    auto displayed = std::move(presentation_objects_);
+    const auto displayed_frame = presentation_objects_frame_;
+    prepare_presentation_objects(view);
+    // Continue actors outside C0DB0F's native queue bounds. Inside those bounds,
+    // only actual draw calls establish displayed existence and ownership.
+    for (auto &object : presentation_objects_)
+        if ((object.anchor_x < -64 || object.anchor_x >= 320 || object.anchor_y + 1 < -64 ||
+             object.anchor_y + 1 >= 256) && build.objects.size() < 3840)
+            build.objects.push_back(std::move(object));
+    presentation_objects_ = std::move(displayed);
+    presentation_objects_frame_ = displayed_frame;
+}
+
+void GameSceneRenderer::capture_oam_upload(const SceneReadView &view, unsigned buffer_id) {
+    if (buffer_id >= 1 && buffer_id <= sprite_builds_.size()) {
+        const auto &build = sprite_builds_[buffer_id - 1];
+        ++sprite_snapshot_counts_.uploads;
+        sprite_snapshot_counts_.unknown_uploads += !build.begun;
+        // A source buffer whose build was not observed has unknown ownership.
+        // Inferring it from current actors would reintroduce the age/alias bug.
+        native_uploaded_frame_ = view.native_sprites && build.begun && build.native_frame;
+        native_uploaded_objects_ = native_uploaded_frame_ ? build.objects : std::vector<PresentationObject>{};
+        presentation_uploaded_objects_ = build.objects;
+        presentation_uploaded_oam_ = build.oam;
+        presentation_uploaded_oam_indexed_ = true;
+        presentation_objects_uploaded_ = true;
+        return;
+    }
     auto displayed = std::move(presentation_objects_);
     const auto displayed_frame = presentation_objects_frame_;
     prepare_presentation_objects(view);
@@ -765,6 +1519,8 @@ void GameSceneRenderer::capture_oam_upload(const SceneReadView &view) {
     presentation_objects_ = std::move(displayed);
     presentation_objects_frame_ = displayed_frame;
     presentation_objects_uploaded_ = true;
+    presentation_uploaded_oam_ = {};
+    presentation_uploaded_oam_indexed_ = false;
 }
 
 } // namespace eb

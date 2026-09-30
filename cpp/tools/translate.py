@@ -679,6 +679,8 @@ bool execute_translated_main_instruction(MainCpu65816& cpu) {
 
 
 def emit_program_manifest(output: Path) -> None:
+    import port_game_runtime
+    port_game_runtime.write_outputs(output, port_game_runtime.generate(Path(__file__).resolve().parents[2], output))
     sources = ["audio_driver_instructions.cpp"]
     for version in ("us", "jp"):
         index = json.loads((output / version / "program_index.json").read_text())
@@ -863,6 +865,8 @@ def debug_profile(debug: Path, version: str, value) -> dict:
             'main_loop': main_loop.pop(),
             'add_party_character': 0xc00000 + value('ADD_CHAR_TO_PARTY', 'rom'),
             'remove_party_character': 0xc00000 + value('REMOVE_CHAR_FROM_PARTY', 'rom'),
+            'fade_out': 0xc00000 + value('FADE_OUT_WITH_MOSAIC', 'rom'),
+            'wait_frames': 0xc00000 + value('UNKNOWN_C0878B', 'rom'),
         },
     }
 

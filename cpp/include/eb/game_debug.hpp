@@ -53,10 +53,12 @@ private:
     std::string status_;
     std::array<std::array<unsigned,2>,4> original_max_{};
     std::array<std::array<bool,2>,4> captured_max_{};
+    enum class CallContinuation { PartyChange, FadeOut, BlackFrame };
     struct SavedMainCpuRegisters {
         std::uint16_t accumulator, x_index, y_index, stack_pointer, direct_page;
         std::uint8_t status_register, data_bank;
         std::uint32_t program_counter;
+        CallContinuation continuation;
     };
     std::optional<SavedMainCpuRegisters> suspended_call_;
     unsigned party_attempts_{};
@@ -67,5 +69,7 @@ private:
     std::uint8_t filter_stat_write(unsigned address,std::uint8_t value) const;
     bool can_apply_world_action() const;
     void advance_party_change();
+    void call_game_routine(unsigned address, unsigned accumulator, unsigned x, unsigned y, CallContinuation continuation);
+    void start_teleport();
 };
 }

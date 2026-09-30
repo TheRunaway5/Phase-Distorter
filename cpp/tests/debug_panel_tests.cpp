@@ -171,13 +171,16 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         };
         select_rate(6);
         require(settings.frame_limit == 300, "Frame-rate picker did not select 300 FPS");
-        require(settings.interpolate_frames, "Intermediate frames did not default to enabled");
+        require(settings.direct_rendering, "Direct scene rendering did not default to enabled");
+        if (!prefix.empty()) save(prefix + "-crt-toggle.ppm", capture());
+        click(window, panel, draw, 43, 402 + menu_offset);
+        require(settings.crt_filter, "CRT filter checkbox did not enable");
         click(window, panel, draw, 43, 362 + menu_offset);
-        require(!settings.interpolate_frames, "Frame interpolation could not be disabled");
+        require(!settings.direct_rendering, "Direct scene rendering could not be disabled");
         select_rate(7);
         require(settings.frame_limit == 0, "Frame-rate picker did not select uncapped FPS");
         click(window, panel, draw, 100, 256 + menu_offset);
-        require(settings.frame_limit == 60 && settings.interpolate_frames && !settings.variable_refresh,
+        require(settings.frame_limit == 60 && settings.direct_rendering && settings.interpolate_frames && !settings.variable_refresh && !settings.crt_filter,
             "Restore game display did not restore native presentation defaults");
         panel.process_event(key(window, SDLK_F1));
         require(!panel.visible(), "F1 did not close visible panel");

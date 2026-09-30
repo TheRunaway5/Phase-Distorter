@@ -34,7 +34,8 @@ Settings opens a floating window with Display, Assets, Diagnostics and Debug tab
 and the default-off Photosensitivity filter. Escape closes Settings or exits.
 The game continues while Settings captures physical game input. The initial
 ROM import view has no gameplay bar.
-Fixed intro artwork uses a centered 4:3 view, then the selected aspect returns.
+Fixed intro artwork uses a centered 4:3 view. Animated Giygas static fills the
+selected wide view while the original intro card stays centered.
 The Mother 2 logo screen extends its background into widescreen margins while
 keeping the original logo and copyright centered.
 The filter moderates identified flashing effects, including battle animations
@@ -47,7 +48,8 @@ Settings -> Debug offers infinite health and PSI/PP at 999/999, noclip, and
 Enemies ignore you (overworld pursuit/contact only; story battles still work).
 Search the teleport picker for any of 385 named areas, including interiors,
 dungeons and endgame maps; all scripted warps and door landings are also listed
-(1,472 choices). Select a place and press Teleport now. Check Ness, Paula, Jeff
+(1,472 choices). Select a place and press Teleport now. It fades fully to black
+before loading the destination, then fades back in. Check Ness, Paula, Jeff
 and Poo, then Apply party; keep one playable member. Guest companions stay.
 Actions wait for free movement; close dialogue or finish the battle first.
 Debug changes can affect saved progress and do not complete story events.

@@ -1,10 +1,32 @@
 # Compiled game programs and source indices
 
 This directory contains versioned C++ instruction sites generated from the US
-and Japanese source configurations. `translated_dispatch.cpp` selects the
-matching program from the validated local asset pack. `program_sources.cmake`
-is the authoritative compilation inventory; the standalone build does not
-require the corresponding assembly checkout or regenerate these files.
+and Japanese source configurations. The default source-owned game runtime uses
+`game_runtime_dispatch.cpp`; the retained `translated_dispatch.cpp` selects the
+regional frozen program for the legacy path and shared/unported helpers. The
+asset pack determines the region. `program_sources.cmake` and
+`game_runtime_sources.cmake` are the compilation inventories; the standalone
+build does not require the corresponding assembly checkout or regenerate these
+files.
+
+The regional `us/game/` and `jp/game/` trees contain dialogue, cutscene, entity,
+NPC and enemy routines grouped by reviewed source ownership. They currently
+cover 808 US routines (69,391 sites) and 783 JP routines (66,269 sites). Each
+continuation executes one named semantic operation with an explicit addressing
+mode and returns after retirement, borrowing the existing machine state. The
+implementation has 92 named operations and 25 addressing modes in
+`cpp/src/game/runtime/instruction.cpp`. These are source-derived low-level C++
+continuations, not a fully hand-decompiled high-level game engine.
+Named gameplay services such as `party_add_char`, `hp_pp_roller`,
+inventory/equipment/experience routines and `teleport_mainloop` still use the
+retained executor alongside hardware, math, audio and unresolved helpers; the
+owned folders are not a closed dependency graph.
+
+Each `game/runtime_index.json` records the source path, continuation and legacy
+functions, generated file, source addresses and fingerprints. Its per-routine
+`runtime_site_sha256` normalizes immediate widths and includes the actual M/X
+selector. It is distinct from the retained assembly-derived source fingerprint.
+Neither fingerprint nor a source-ownership count proves whole-game parity.
 
 The regional `us/program/` and `jp/program/` directories group instructions by
 assembly subsystem and owning source file. Their `program_index.json` files map
@@ -42,7 +64,16 @@ structure offsets and enum values. For example, character HP uses
 graphics, fonts, dialogue, sound samples, ROMs or imported asset packs.
 
 See [source navigation](../cpp/docs/source-navigation.md) for module ownership,
-lookup examples and register names, [translation architecture](../cpp/TRANSLATION.md)
-for the development pipeline, and [NOTICE.md](../NOTICE.md) for provenance.
+lookup examples and register names, [game runtime](../cpp/docs/game-runtime.md)
+for verified coverage and reproduction commands,
+[translation architecture](../cpp/TRANSLATION.md) for the development pipeline,
+and [NOTICE.md](../NOTICE.md) for provenance.
 Changes belong in the generators and their source evidence, followed by
 regeneration and instruction-stream comparison; do not edit generated C++ by hand.
+
+To regenerate source-owned continuations from the checked-in frozen program,
+run `python3 cpp/tools/port_game_runtime.py` from the repository root. Use its
+`--check` option to report stale outputs without changing them. The generator's
+`game_runtime_manifest.json` lists its output files. Original dialogue, event
+scripts, NPC placement and enemy data remain imported assets; this lowering step
+does not bundle or alter authored story content.

@@ -1,0 +1,280 @@
+// Source-derived resumable game runtime. Regenerate with cpp/tools/port_game_runtime.py.
+#include "eb/game/runtime/instruction.hpp"
+#include "eb/main_cpu_65816.hpp"
+
+namespace eb::game::runtime::us {
+// Source: src/overworld/find_nearby_talkable_tpt_entry.asm
+bool resume_overworld_find_nearby_talkable_tpt_entry(MainCpu65816& cpu, std::uint32_t address) {
+    switch (address) {
+    // include/macros.asm:4 REP #PROC_FLAGS::ACCUM8 | PROC_FLAGS::INDEX8 | PROC_FLAGS::CARRY
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:3 BEGIN_C_FUNCTION_FAR
+    case 0xC04452: {
+        Instruction step(cpu, 0xC2, 0x000031u, 2u, AddressMode::SignatureByte);
+        step.clear_status_bits();
+        return step.finish();
+    }
+    // include/macros.asm:4 REP #PROC_FLAGS::ACCUM8 | PROC_FLAGS::INDEX8 | PROC_FLAGS::CARRY
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:3 BEGIN_C_FUNCTION_FAR
+    // Overlapping static entry reached from 0xC0444F.
+    case 0xC04453: {
+        Instruction step(cpu, 0x31, 0x00000Bu, 2u, AddressMode::DirectPageIndirectIndexedY);
+        step.and_accumulator();
+        return step.finish();
+    }
+    // include/macros.asm:147 PHD
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:8 END_STACK_VARS
+    case 0xC04454: {
+        Instruction step(cpu, 0x0B, 0x000000u, 1u, AddressMode::Implied);
+        step.push_direct_page();
+        return step.finish();
+    }
+    // include/macros.asm:151 TDC
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:8 END_STACK_VARS
+    case 0xC04455: {
+        Instruction step(cpu, 0x7B, 0x000000u, 1u, AddressMode::Implied);
+        step.transfer_direct_page_to_accumulator();
+        return step.finish();
+    }
+    // include/macros.asm:152 ADC #$FFFF - @STACKSIZE + 1
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:8 END_STACK_VARS
+    case 0xC04456: {
+        const bool narrow = cpu.status_register & 0x20;
+        Instruction step(cpu, 0x69, narrow ? 0x0000EEu : 0x00FFEEu, narrow ? 2u : 3u, AddressMode::Immediate);
+        step.add_with_carry();
+        return step.finish();
+    }
+    // include/macros.asm:152 ADC #$FFFF - @STACKSIZE + 1
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:8 END_STACK_VARS
+    // Overlapping static entry reached from 0xC04456.
+    case 0xC04458: {
+        Instruction step(cpu, 0xFF, 0xFFA95Bu, 4u, AddressMode::LongIndexedX);
+        step.subtract_with_borrow();
+        return step.finish();
+    }
+    // include/macros.asm:153 TCD
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:8 END_STACK_VARS
+    case 0xC04459: {
+        Instruction step(cpu, 0x5B, 0x000000u, 1u, AddressMode::Implied);
+        step.transfer_accumulator_to_direct_page();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:9 LDA #.LOWORD(-1)
+    case 0xC0445A: {
+        const bool narrow = cpu.status_register & 0x20;
+        Instruction step(cpu, 0xA9, narrow ? 0x0000FFu : 0x00FFFFu, narrow ? 2u : 3u, AddressMode::Immediate);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:9 LDA #.LOWORD(-1)
+    // Overlapping static entry reached from 0xC0445A.
+    case 0xC0445C: {
+        Instruction step(cpu, 0xFF, 0x5D628Du, 4u, AddressMode::LongIndexedX);
+        step.subtract_with_borrow();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:10 STA INTERACTING_NPC_ID
+    case 0xC0445D: {
+        Instruction step(cpu, 0x8D, 0x005D62u, 3u, AddressMode::Absolute);
+        step.store_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:11 STA INTERACTING_NPC_ENTITY
+    case 0xC04460: {
+        Instruction step(cpu, 0x8D, 0x005D64u, 3u, AddressMode::Absolute);
+        step.store_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:12 JSR UNKNOWN_C043BC
+    case 0xC04463: {
+        Instruction step(cpu, 0x20, 0x0043BCu, 3u, AddressMode::Absolute);
+        step.call();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:13 STA @LOCAL01
+    case 0xC04466: {
+        Instruction step(cpu, 0x85, 0x000010u, 2u, AddressMode::DirectPage);
+        step.store_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:14 CMP #.LOWORD(-1)
+    case 0xC04468: {
+        const bool narrow = cpu.status_register & 0x20;
+        Instruction step(cpu, 0xC9, narrow ? 0x0000FFu : 0x00FFFFu, narrow ? 2u : 3u, AddressMode::Immediate);
+        step.compare_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:14 CMP #.LOWORD(-1)
+    // Overlapping static entry reached from 0xC04468.
+    case 0xC0446A: {
+        Instruction step(cpu, 0xFF, 0xA229F0u, 4u, AddressMode::LongIndexedX);
+        step.subtract_with_borrow();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:15 BEQ @UNKNOWN0
+    case 0xC0446B: {
+        Instruction step(cpu, 0xF0, 0x000029u, 2u, AddressMode::Relative8);
+        step.branch_if_zero();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:16 LDX #.LOWORD(GAME_STATE) + game_state::current_party_members
+    case 0xC0446D: {
+        const bool narrow = cpu.status_register & 0x10;
+        Instruction step(cpu, 0xA2, narrow ? 0x000089u : 0x009889u, narrow ? 2u : 3u, AddressMode::Immediate);
+        step.load_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:16 LDX #.LOWORD(GAME_STATE) + game_state::current_party_members
+    // Overlapping static entry reached from 0xC0446A.
+    case 0xC0446E: {
+        const bool narrow = cpu.status_register & 0x20;
+        Instruction step(cpu, 0x89, narrow ? 0x000098u : 0x008698u, narrow ? 2u : 3u, AddressMode::Immediate);
+        step.test_bits();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:16 LDX #.LOWORD(GAME_STATE) + game_state::current_party_members
+    // Overlapping static entry reached from 0xC0446D.
+    case 0xC0446F: {
+        Instruction step(cpu, 0x98, 0x000000u, 1u, AddressMode::Implied);
+        step.transfer_y_to_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:17 STX @LOCAL00
+    case 0xC04470: {
+        Instruction step(cpu, 0x86, 0x00000Eu, 2u, AddressMode::DirectPage);
+        step.store_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:17 STX @LOCAL00
+    // Overlapping static entry reached from 0xC0446E.
+    case 0xC04471: {
+        Instruction step(cpu, 0x0E, 0x0000BDu, 3u, AddressMode::Absolute);
+        step.shift_left();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:18 LDA __BSS_START__,X
+    case 0xC04472: {
+        Instruction step(cpu, 0xBD, 0x000000u, 3u, AddressMode::AbsoluteIndexedX);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:18 LDA __BSS_START__,X
+    // Overlapping static entry reached from 0xC04471.
+    case 0xC04474: {
+        Instruction step(cpu, 0x00, 0x00000Au, 2u, AddressMode::SignatureByte);
+        step.software_break();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:19 ASL
+    case 0xC04475: {
+        Instruction step(cpu, 0x0A, 0x000000u, 1u, AddressMode::Accumulator);
+        step.shift_left();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:20 TAX
+    case 0xC04476: {
+        Instruction step(cpu, 0xAA, 0x000000u, 1u, AddressMode::Implied);
+        step.transfer_accumulator_to_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:21 LDA @LOCAL01
+    case 0xC04477: {
+        Instruction step(cpu, 0xA5, 0x000010u, 2u, AddressMode::DirectPage);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:22 CMP ENTITY_DIRECTIONS,X
+    case 0xC04479: {
+        Instruction step(cpu, 0xDD, 0x002AF6u, 3u, AddressMode::AbsoluteIndexedX);
+        step.compare_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:23 BEQ @UNKNOWN0
+    case 0xC0447C: {
+        Instruction step(cpu, 0xF0, 0x000018u, 2u, AddressMode::Relative8);
+        step.branch_if_zero();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:24 STA GAME_STATE + game_state::leader_direction
+    case 0xC0447E: {
+        Instruction step(cpu, 0x8D, 0x00987Fu, 3u, AddressMode::Absolute);
+        step.store_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:25 LDX @LOCAL00
+    case 0xC04481: {
+        Instruction step(cpu, 0xA6, 0x00000Eu, 2u, AddressMode::DirectPage);
+        step.load_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:26 LDA __BSS_START__,X
+    case 0xC04483: {
+        Instruction step(cpu, 0xBD, 0x000000u, 3u, AddressMode::AbsoluteIndexedX);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:27 ASL
+    case 0xC04486: {
+        Instruction step(cpu, 0x0A, 0x000000u, 1u, AddressMode::Accumulator);
+        step.shift_left();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:28 TAX
+    case 0xC04487: {
+        Instruction step(cpu, 0xAA, 0x000000u, 1u, AddressMode::Implied);
+        step.transfer_accumulator_to_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:29 LDA @LOCAL01
+    case 0xC04488: {
+        Instruction step(cpu, 0xA5, 0x000010u, 2u, AddressMode::DirectPage);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:30 STA ENTITY_DIRECTIONS,X
+    case 0xC0448A: {
+        Instruction step(cpu, 0x9D, 0x002AF6u, 3u, AddressMode::AbsoluteIndexedX);
+        step.store_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:31 LDX @LOCAL00
+    case 0xC0448D: {
+        Instruction step(cpu, 0xA6, 0x00000Eu, 2u, AddressMode::DirectPage);
+        step.load_x();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:32 LDA __BSS_START__,X
+    case 0xC0448F: {
+        Instruction step(cpu, 0xBD, 0x000000u, 3u, AddressMode::AbsoluteIndexedX);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:33 JSL UNKNOWN_C0A780
+    case 0xC04492: {
+        Instruction step(cpu, 0x22, 0xC0A780u, 4u, AddressMode::Long);
+        step.call_long();
+        return step.finish();
+    }
+    // src/overworld/find_nearby_talkable_tpt_entry.asm:35 LDA INTERACTING_NPC_ID
+    case 0xC04496: {
+        Instruction step(cpu, 0xAD, 0x005D62u, 3u, AddressMode::Absolute);
+        step.load_accumulator();
+        return step.finish();
+    }
+    // include/macros.asm:25 PLD
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:36 END_C_FUNCTION
+    case 0xC04499: {
+        Instruction step(cpu, 0x2B, 0x000000u, 1u, AddressMode::Implied);
+        step.pull_direct_page();
+        return step.finish();
+    }
+    // include/macros.asm:30 RTL
+    // Macro caller: src/overworld/find_nearby_talkable_tpt_entry.asm:36 END_C_FUNCTION
+    case 0xC0449A: {
+        Instruction step(cpu, 0x6B, 0x000000u, 1u, AddressMode::Implied);
+        step.return_long();
+        return step.finish();
+    }
+    default: return false;
+    }
+}
+}

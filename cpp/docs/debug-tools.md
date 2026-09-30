@@ -8,7 +8,8 @@ overworld pursuit/contact; story-triggered battles remain available.
 The party editor chooses Ness, Paula, Jeff and Poo, retains guest companions,
 and requires one playable member. It runs the game's own add/remove routines so
 the leader, followers and party UI update together. Teleports use the game's
-instant transition to load the new map and position followers. Both actions wait
+blocking fade to black before the instant transition loads the new map and
+positions followers, then fade back in. Both actions wait
 for free movement rather than interrupting dialogue, battle or another transition.
 The controls do not advance story flags. Debug changes can affect saved progress.
 
@@ -55,7 +56,11 @@ escape between host frames. Turning a stat switch off restores its captured
 pre-cheat maximum and caps the current/target value to that maximum.
 
 Party changes use real JSL/RTL calls at the main-loop boundary and preserve the
-suspended CPU registers. Teleports temporarily redirect the unused PSI table
+suspended CPU registers. A teleport first calls `FADE_OUT_WITH_MOSAIC` with
+mosaic disabled, then waits two native frames so the mirrored blank register
+reaches a complete presented frame before setting the destination.
+The native instant transition then loads and fades in the new area.
+Teleports temporarily redirect the unused PSI table
 slot's coordinate reads using each region's actual record layout; no ROM bytes
 are modified, and the override is removed when the transition finishes.
 
@@ -66,7 +71,9 @@ asset-backed routes in both games change the party to all four characters,
 Jeff alone, and all four again; teleport to Fourside, Threed, Fourside's hotel
 lobby, Stonehenge Base, Magicant, the Cave of the Past and Ness's room; then
 walk through a wall with noclip. All seven arrivals match their exact map
-coordinates. These are representative runtime checks, not a playthrough of
+coordinates. Frame observers verify a gradual fade, a full-width black frame
+before loading, and restored brightness after every arrival. These are
+representative runtime checks, not a playthrough of
 every destination or every story state.
 
 ```sh

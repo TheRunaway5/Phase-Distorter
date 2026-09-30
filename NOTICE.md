@@ -28,3 +28,8 @@ notices remain in their source files.
 
 EarthBound and Mother 2 names identify the supported original games. This is an
 independent project, with no claim of affiliation with their rights holders.
+
+CRT-Lottes Fast / CRTS, by Timothy Lottes with the GLSL/RetroArch adaptation by
+hunterk, is public-domain software under the Unlicense. Its full source and license
+are in `cpp/external/crt-lottes-fast/`; Phase Distorter's flat OLED adaptation is
+`cpp/resources/shaders/crt_oled.frag`.

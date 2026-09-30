@@ -70,10 +70,12 @@ LaunchOptions parse_options(int argc, char **argv) {
                          "  --no-audio         Disable the playback device (DSP still runs)\n"
                          "  --scale N          Initial window pixel scale, 1 through 8\n"
                          "  --fps N            Presentation limit: 60 (native), 61..300, or 0 (uncapped)\n"
-                         "  --no-interpolation Show original frames at the chosen presentation rate\n"
+                         "  --direct-rendering Draw source artwork at higher rates (default)\n"
+                         "  --native-frames    Repeat original completed frames without smoothing\n"
+                         "  --no-interpolation Disable image-based frame generation\n"
                          "  --interpolation    Generate intermediate pictures at higher frame rates\n"
                          "  --no-vsync         Disable vertical synchronization\n"
-                         "  --original-timing  Retain the original overworld CPU budget\n"
+                         "  --original-timing  Use original timing and sprite resource storage\n"
                          "  --vrr / --no-vrr   Enable/disable pacing for a VRR display\n"
                          "  --debug            Open the optional control panel (F1 toggles)\n"
                          "  --widescreen       Enable presentation-only expanded picture\n"
@@ -86,6 +88,7 @@ LaunchOptions parse_options(int argc, char **argv) {
                          "  --assets FILE      Use an imported .ebpak asset pack\n"
                          "  --import-rom FILE  Extract assets from your own supported US/JP ROM\n"
                          "  --import-only      Exit after importing, without starting the game\n"
+                         "  --crt / --no-crt   Flat OLED CRT filter (scanlines and aperture grille)\n"
                          "  --game VERSION     earthbound (US) or mother2 (Japanese)\n"
                          "Keys: arrows=direction, Z=B, X=A, A=Y, S=X, Q=L, W=R,\n"
                          "      Enter=Start, Right Shift=Select, F1=panel, F11=fullscreen,\n"
@@ -100,15 +103,26 @@ LaunchOptions parse_options(int argc, char **argv) {
         else if (arg == "--vrr" || arg == "--no-vrr") {
             options.display.variable_refresh = arg == "--vrr";
             options.vrr_override = true;
+        } else if (arg == "--crt" || arg == "--no-crt") {
+            options.display.crt_filter = arg == "--crt";
+            options.crt_override = true;
         } else if (arg == "--fps") {
             const auto limit = parse_unsigned_integer(next(), arg);
             if (limit > 300 || (limit != 0 && limit < 60))
                 throw std::runtime_error("--fps requires 0 (uncapped) or 60..300");
             options.display.frame_limit = int(limit);
             options.fps_override = true;
+        } else if (arg == "--direct-rendering" || arg == "--native-frames") {
+            options.display.direct_rendering = arg == "--direct-rendering";
+            options.display.interpolate_frames = false;
+            options.direct_rendering_override = options.interpolation_override = true;
         } else if (arg == "--interpolation" || arg == "--no-interpolation") {
             options.display.interpolate_frames = arg == "--interpolation";
             options.interpolation_override = true;
+            if (arg == "--interpolation") {
+                options.display.direct_rendering = false;
+                options.direct_rendering_override = true;
+            }
         } else if (arg == "--no-vsync")
             options.vsync = false;
         else if (arg == "--no-audio")

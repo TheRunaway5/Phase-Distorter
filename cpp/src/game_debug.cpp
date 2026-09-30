@@ -209,13 +209,19 @@ void GameDebug::advance_party_change() {
         }
     }
     if (!character_id) { pending_request_.reset(); status_ = "Party change unavailable."; return; }
-    suspended_call_ = SavedMainCpuRegisters{cpu_.accumulator, cpu_.x_index, cpu_.y_index, cpu_.stack_pointer, cpu_.direct_page, cpu_.status_register, cpu_.data_bank, cpu_.program_counter};
-    cpu_.accumulator = character_id;
+    call_game_routine(routine_address, character_id, cpu_.x_index, cpu_.y_index, CallContinuation::PartyChange);
+    status_ = "Updating party...";
+}
+
+void GameDebug::call_game_routine(unsigned address, unsigned accumulator, unsigned x, unsigned y, CallContinuation continuation) {
+    suspended_call_ = SavedMainCpuRegisters{cpu_.accumulator, cpu_.x_index, cpu_.y_index, cpu_.stack_pointer, cpu_.direct_page, cpu_.status_register, cpu_.data_bank, cpu_.program_counter, continuation};
+    cpu_.accumulator = accumulator;
+    cpu_.x_index = x;
+    cpu_.y_index = y;
     cpu_.status_register &= ~(MainCpu65816::Accumulator8Bit | MainCpu65816::Index8Bit);
     // A real JSL/RTL stack frame executes the existing translated routine.
     // Zero instruction length returns to the suspended main-loop boundary.
-    cpu_.execute_instruction<0x22>(routine_address, 0);
-    status_ = "Updating party...";
+    cpu_.execute_instruction<0x22>(address, 0);
 }
 
 void GameDebug::before_step() {
@@ -229,7 +235,20 @@ void GameDebug::before_step() {
         cpu_.direct_page = saved_registers.direct_page;
         cpu_.status_register = saved_registers.status_register;
         cpu_.data_bank = saved_registers.data_bank;
-        advance_party_change();
+        switch (saved_registers.continuation) {
+        case CallContinuation::PartyChange:
+            advance_party_change();
+            break;
+        case CallContinuation::FadeOut:
+            // Fade completion synchronizes with NMI, before its mirrored blank
+            // register necessarily reaches a complete presented frame. Keep the
+            // world suspended for two native frames before loading anything.
+            call_game_routine(source_.gameplay_routines.wait_frames, 2, 0, 0, CallContinuation::BlackFrame);
+            break;
+        case CallContinuation::BlackFrame:
+            start_teleport();
+            break;
+        }
         return;
     }
     if (cpu_.program_counter != source_.gameplay_routines.main_loop || cpu_.emulation_mode) return;
@@ -243,27 +262,35 @@ void GameDebug::before_step() {
     if (pending_request_->kind == GameDebugRequest::Kind::Party) {
         advance_party_change();
     } else {
-        const auto places = debug_destinations();
-        active_teleport_ = *std::find_if(places.begin(), places.end(), [this](auto place) { return place.id == pending_request_->destination; });
-        // Slot 16 is the unused final PSI destination. Redirect its four
-        // coordinate bytes for this one transition; the original instant-warp
-        // routine still loads the map, places followers, and fades normally.
-        bus_.debug_read_rom = [this](unsigned address, std::uint8_t value) {
-            const auto& teleport = source_.teleport_state;
-            for (unsigned axis = 0; axis < 2; ++axis) {
-                const unsigned coordinate_address = teleport.destination_table + 16 * teleport.entry_size +
-                    (axis ? teleport.destination_y : teleport.destination_x);
-                if (address == coordinate_address || address == coordinate_address + 1) {
-                    const auto coordinate = (axis ? active_teleport_->y : active_teleport_->x) / 8;
-                    return std::uint8_t(coordinate >> ((address - coordinate_address) * 8));
-                }
-            }
-            return value;
-        };
-        write_word(source_.teleport_state.destination, 16);
-        write_word(source_.teleport_state.style, 3); // TELEPORT_STYLE::INSTANT
-        pending_request_.reset();
-        status_ = "Teleport requested.";
+        // FADE_OUT_WITH_MOSAIC with Y=0 is the game's ordinary blocking fade:
+        // one brightness step per frame, no mosaic. Do not publish a teleport
+        // destination until it returns, so no map load can precede the blackout.
+        call_game_routine(source_.gameplay_routines.fade_out, 1, 1, 0, CallContinuation::FadeOut);
+        status_ = "Fading out...";
     }
+}
+
+void GameDebug::start_teleport() {
+    const auto places = debug_destinations();
+    active_teleport_ = *std::find_if(places.begin(), places.end(), [this](auto place) { return place.id == pending_request_->destination; });
+    // Slot 16 is the unused final PSI destination. Redirect its four
+    // coordinate bytes for this one transition; the original instant-warp
+    // routine loads the map, places followers, and fades back in.
+    bus_.debug_read_rom = [this](unsigned address, std::uint8_t value) {
+        const auto& teleport = source_.teleport_state;
+        for (unsigned axis = 0; axis < 2; ++axis) {
+            const unsigned coordinate_address = teleport.destination_table + 16 * teleport.entry_size +
+                (axis ? teleport.destination_y : teleport.destination_x);
+            if (address == coordinate_address || address == coordinate_address + 1) {
+                const auto coordinate = (axis ? active_teleport_->y : active_teleport_->x) / 8;
+                return std::uint8_t(coordinate >> ((address - coordinate_address) * 8));
+            }
+        }
+        return value;
+    };
+    write_word(source_.teleport_state.destination, 16);
+    write_word(source_.teleport_state.style, 3); // TELEPORT_STYLE::INSTANT
+    pending_request_.reset();
+    status_ = "Teleport requested.";
 }
 }

@@ -4,6 +4,7 @@
 #include "eb/asset_store.hpp"
 #include "eb/game_debug.hpp"
 #include "eb/game_session.hpp"
+#include "eb/input_replay.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/snes_bus.hpp"
@@ -55,6 +56,7 @@ struct DirectCore {
         : hardware(assets.image, assets.version), audio_cpu(hardware), audio_dsp(audio_cpu),
           main_cpu(hardware), game_debug(hardware, main_cpu) {
         main_cpu.reset_from_vector();
+        main_cpu.set_runtime(eb::MainCpuRuntime::Legacy);
         main_cpu.set_gameplay_timing(enhanced);
         hardware.on_presentation_frame = [&](std::span<const std::uint32_t> pixels, unsigned width,
                                              std::uint64_t frame) {
@@ -103,12 +105,14 @@ std::uint16_t buttons_for_frame(std::uint64_t frame) {
     constexpr std::array<std::uint16_t, 8> sequence{0x1000, 0, 0x0080, 0, 0x8000, 0, 0x0100, 0};
     return sequence[((frame - 180) / 30) % sequence.size()];
 }
-void run(const eb::GameAssets& assets, std::uint64_t target_frames, bool enhanced) {
+void run(const eb::GameAssets& assets, std::uint64_t target_frames, bool enhanced,
+         const std::vector<eb::InputChange>& script, bool require_native) {
     eb::GameSession session(assets.image, assets.version, enhanced);
     auto direct = std::make_unique<DirectCore>(assets, enhanced);
     std::vector<CapturedFrame> callbacks;
     session.observe_completed_frames([&](eb::PresentationFrame completed) { callbacks.emplace_back(completed); });
     std::uint64_t iterations = 0, total_callbacks = 0, audio_frames = 0;
+    eb::InputReplay replay(script);
     compare(session, *direct);
     try {
         while (session.frames() < target_frames) {
@@ -117,14 +121,13 @@ void run(const eb::GameAssets& assets, std::uint64_t target_frames, bool enhance
             const bool effects = (session.frames() / 23) % 2 != 0;
             session.configure_presentation(width, effects);
             direct->hardware.set_presentation_width(width);
-            direct->main_cpu.set_entity_preload_width(width);
             direct->hardware.set_presentation_effects_enabled(effects);
             session.debug().configure({});
             direct->game_debug.configure({});
             // Exercise real partial-frame stepping in addition to whole-frame
             // calls. Limits are absolute and remain valid after long DMA steps.
             const auto limit = iterations % 13 == 0 ? session.steps() + 11 : 0;
-            const auto input = buttons_for_frame(session.frames());
+            const auto input = script.empty() ? buttons_for_frame(session.frames()) : replay.buttons_for_frame(session.frames());
             const auto previous_frame = session.frames();
             const auto completed = session.advance_frame(input, limit);
             direct->advance(input, limit);
@@ -149,9 +152,12 @@ void run(const eb::GameAssets& assets, std::uint64_t target_frames, bool enhance
     }
     // Clearing the observer is safe while the producer remains alive.
     session.observe_completed_frames({});
+    require(!require_native || session.diagnostics().native_gameplay_batches > 0,
+            "Replay did not exercise native gameplay batches");
     std::cout << (assets.version == eb::GameVersion::US ? "US" : "JP") << (enhanced ? " enhanced" : " original")
               << " frames=" << session.frames() << " steps=" << session.steps()
               << " callbacks=" << total_callbacks << " audio_frames=" << audio_frames
+              << " native_batches=" << session.diagnostics().native_gameplay_batches
               << " exact session/direct-core match\n";
 }
 } // namespace
@@ -159,16 +165,20 @@ int main(int argc, char** argv) {
     try {
         std::vector<std::filesystem::path> packs;
         std::uint64_t frames = 900;
+        std::string script_path;
+        bool require_native = false;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
             if (option == "--assets" && i + 1 < argc) packs.emplace_back(argv[++i]);
             else if (option == "--frames" && i + 1 < argc) frames = std::stoull(argv[++i]);
-            else throw std::invalid_argument("Usage: game_session_differential --assets pack.ebpak [--assets other.ebpak] --frames N");
+            else if (option == "--input-script" && i + 1 < argc) script_path = argv[++i];
+            else if (option == "--require-native") require_native = true;
+            else throw std::invalid_argument("Usage: game_session_differential --assets pack.ebpak [--assets other.ebpak] --frames N [--input-script route] [--require-native]");
         }
         require(!packs.empty() && frames > 0, "Supply at least one --assets pack and a positive frame count");
         for (const auto& pack : packs) {
             const auto assets = eb::load_game_assets(pack, eb::asset_profiles());
-            for (bool enhanced : {false, true}) run(assets, frames, enhanced);
+            for (bool enhanced : {false, true}) run(assets, frames, enhanced, eb::input_script(script_path), require_native);
         }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

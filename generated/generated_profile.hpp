@@ -76,6 +76,8 @@ struct SourceProfile {
         std::uint32_t main_loop;
         std::uint32_t add_party_character;
         std::uint32_t remove_party_character;
+        std::uint32_t fade_out;
+        std::uint32_t wait_frames;
     } gameplay_routines;
     struct DmaQueue {
         std::uint32_t write_index;

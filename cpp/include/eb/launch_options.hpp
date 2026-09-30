@@ -25,9 +25,11 @@ struct LaunchOptions {
     bool aspect_override = false;
     bool widescreen_override = false;
     bool flashing_override = false;
+    bool crt_override = false;
     bool vrr_override = false;
     bool fps_override = false;
     bool interpolation_override = false;
+    bool direct_rendering_override = false;
     bool game_override = false;
     GameVersion game = GameVersion::US;
     DisplaySettings display;

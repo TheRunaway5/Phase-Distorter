@@ -108,10 +108,14 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                                  default_asset_path ? "" : options.assets);
         InputReplay input(input_script(options.input_script), options.buttons);
         GameSession session(program.image, game, !options.original_timing);
+        if (!options.original_timing) {
+            session.set_logical_clock_policy(LogicalClockPolicy::ActorFrames);
+            session.enable_native_sprite_runtime();
+        }
         if (!options.save.empty())
             load_save(options.save, session.save_memory());
         session.configure_presentation(settings.render_width(width * options.scale, height * options.scale),
-                                       settings.reduce_flashing);
+                                       settings.reduce_flashing, settings.high_frame_rate() && settings.direct_rendering);
         const double native_rate = display ? display->frame_rate() : FramePacer::frame_rate;
         std::unique_ptr<DeviceAudioQueue> audio;
         if (display && options.audio)
@@ -178,7 +182,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                 session.configure_presentation(
                     display ? display->render_width()
                             : settings.render_width(width * options.scale, height * options.scale),
-                    settings.reduce_flashing);
+                    settings.reduce_flashing, settings.high_frame_rate() && settings.direct_rendering);
 
                 if (!presentation.simulation_due(std::chrono::steady_clock::now())) {
                     present_and_wait();
@@ -229,6 +233,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
         const auto diagnostics = session.diagnostics(true);
         std::cout << "frames=" << diagnostics.frames << " steps=" << diagnostics.steps
                   << " instructions=" << diagnostics.cpu_instructions
+                  << " native_batches=" << diagnostics.native_gameplay_batches
                   << " spc_instructions=" << diagnostics.audio_cpu_instructions
                   << " audio_frames=" << diagnostics.audio_frames << " elapsed=" << std::fixed
                   << std::setprecision(3) << elapsed << "s\n"
@@ -266,7 +271,7 @@ int run_application(int argc, char **argv) {
             options.game_override = options.default_assets_only = true;
             options.display = next->display;
             options.aspect_override = options.widescreen_override = options.flashing_override =
-                options.vrr_override = options.fps_override = options.interpolation_override = true;
+                options.vrr_override = options.fps_override = options.interpolation_override = options.crt_override = options.direct_rendering_override = true;
             options.start_fullscreen = next->fullscreen;
             options.assets.clear();
             options.import_rom.clear();

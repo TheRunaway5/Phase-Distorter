@@ -22,13 +22,17 @@ translation targets are the US EarthBound and Japanese Mother 2 retail source
 configurations. The imported pack selects its matching compiled program.
 [Source navigation](docs/source-navigation.md) maps the hardware modules,
 generated game routines, register names and regional metadata for contributors.
+[Game runtime](docs/game-runtime.md) describes the new dialogue, cutscene, entity,
+NPC and enemy continuations, their independent semantic implementation, and
+their differential verification against the retained executor.
 
 For a release source tree containing only `cpp/` and the pre-generated program
 in a sibling `generated/` directory, configure with
 `cmake -S cpp -B build -DEB_PREGENERATED_DIR="$PWD/generated"`. This mode requires
 no original assembly, extraction YAML, ca65/ld65, or SPC assembler. All generated
-C++ sources, headers and `program_sources.cmake` must be present; JSON reports
-are useful for source navigation but are not needed to compile. Python is
+C++ sources, headers, both CMake inventories, `game_runtime_manifest.json` and
+regional `game/runtime_index.json` files must be present. Other translation JSON
+reports support source navigation and are not needed to compile. Python is
 required only when tests are enabled (`-DEB_BUILD_TESTS=OFF` disables them).
 Assembler-dependent translator fixtures report skips when their tools are
 unavailable. Omitting `EB_PREGENERATED_DIR` keeps the normal source-generation
@@ -251,7 +255,9 @@ VRR must already be enabled in your display/graphics settings. `--vrr` and
 
 Expensive overworld entity updates receive extra CPU capacity once they exceed
 the normal budget, while hardware waits and transfers keep their native timing.
-`--original-timing` restores the original CPU budget for comparisons. See
+Overworld sprite images use host-managed storage with offscreen artwork
+preparation. `--original-timing` restores the original CPU budget, scene timing
+and sprite storage for comparisons. See
 [gameplay and display timing](docs/timing.md) for the policy, tests and limits.
 
 ## Optional control panel and widescreen
@@ -269,13 +275,13 @@ scenery uses data beyond the streamed tile buffer, battle patterns continue
 their existing layer transforms, and Lumine Hall uses its complete prepared
 text columns. Menus and HUD remain in the original view.
 
-The desktop session also widens horizontal NPC/enemy loading queries to cover
-the selected view plus an offscreen preload band. Actors have a larger retention
-band so they do not unload at the old screen boundary. Source event conditions,
-encounter selection and entity limits still apply. This activates actors sooner
-and can change encounter timing/random-number consumption in wide modes; the
-native-width loading policy remains unchanged. Camera coordinates, collision
-and the read-only wider renderer are unchanged.
+The desktop session keeps the original NPC/enemy activation region. Expanding
+the source loader exhausted its sprite pool during the title demo and gameplay;
+it is now disabled in the desktop. This fixes that freeze trigger but leaves
+late actor appearance at the far widescreen edges. The ongoing
+[native engine migration](docs/native-engine.md) replaces those fixed pools with
+host resources and separates offscreen artwork preparation from gameplay
+activation. Widescreen scenery and existing actor continuation remain enabled.
 
 Near a map region's edge, the wider display camera stops at the matching
 tileset-sector boundary. This covers the Fourside tunnel and desert road
@@ -304,4 +310,12 @@ See [STATUS.md](STATUS.md) for the validation evidence and remaining limits.
 
 ### Presentation frame rate
 
-Use **F1 → Display → Frame rate** for Native, 90–300 FPS or Uncapped. `--fps 300` caps presentation; `--fps 0` removes the cap. Gameplay and audio retain their native update rate. Optional **Interpolate frames** generates intermediate overworld and battle pictures with one game frame of visual latency. Motion matching samples every pixel and uncertain edges hold a source picture to avoid translucent trails; overlapping effects and fast motion can still step or match incorrectly. Use `--no-interpolation` for the original completed frames. Preferences persist across restarts and game switches. See [timing and verification](docs/timing.md).
+Higher frame rates are available under **F1 → Display → Frame rate**: Native, 90–300 FPS, or Uncapped (`--fps 0`). **Direct scene rendering** draws verified overworld backgrounds and sprites at fractional positions without blending completed frames; gameplay and audio retain their original speed. It adds one game frame of visual latency. Battles and unsupported effects retain native frames. Use `--native-frames` to disable smoothing, or `--interpolation` for legacy image-based generation. See [timing and verification](docs/timing.md).
+
+**CRT Filter** in **F1 → Display** adds a flat CRT-Lottes Fast treatment:
+scanlines, aperture-grille phosphor detail and compensated brightness, without
+curvature, rounded corners or temporal trails. It works with native and direct
+scene rendering, leaves the settings overlay sharp, and is saved separately from
+frame rate. It defaults off; use `--crt` or `--no-crt` to override the saved choice.
+The public-domain [upstream shader](https://github.com/libretro/glsl-shaders/blob/a8136d8b8b5c6375296f833e7e81efa15ed76f11/crt/shaders/crt-lottes-fast.glsl)
+is credited and bundled with the source; the executable embeds its flat adaptation.

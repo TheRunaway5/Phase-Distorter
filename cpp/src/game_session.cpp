@@ -5,6 +5,8 @@
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/spc700_audio_cpu.hpp"
+#include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -30,7 +32,7 @@ struct GameSession::State {
     PresentationFrame picture() const {
         return {hardware.presentation_pixels(),       hardware.presentation_width(),
                 hardware.presentation_fixed_aspect(), hardware.completed_frames,
-                hardware.presentation_effect_mask(),  hardware.presentation_effect_reference()};
+                hardware.presentation_effect_mask(),  hardware.presentation_effect_reference(), hardware.direct_scene()};
     }
 };
 
@@ -54,8 +56,9 @@ std::uint64_t GameSession::advance_frame(std::uint16_t buttons, std::uint64_t st
             if (state.main_cpu.is_stopped)
                 throw std::runtime_error("CPU executed STP before the requested run completed");
             state.game_debug.before_step();
-            state.main_cpu.step_instruction();
-            ++completed_steps;
+            const auto available = step_limit ? std::min<std::uint64_t>(step_limit - completed_steps,
+                std::numeric_limits<unsigned>::max()) : std::numeric_limits<unsigned>::max();
+            completed_steps += state.main_cpu.advance_gameplay(static_cast<unsigned>(available));
         } while (state.hardware.completed_frames == previous_frame &&
                  (!step_limit || completed_steps < step_limit));
     } catch (...) {
@@ -82,10 +85,25 @@ std::span<const std::uint32_t, 256 * 224> GameSession::native_pixels() const {
     return state_->hardware.native_framebuffer;
 }
 
-void GameSession::configure_presentation(unsigned width, bool identify_flashing_effects) {
+void GameSession::configure_presentation(unsigned width, bool identify_flashing_effects, bool direct_rendering) {
     state_->hardware.set_presentation_width(width);
-    state_->main_cpu.set_entity_preload_width(width);
+    // Display width must not consume the source engine's fixed sprite pools.
+    // Host-owned actor resources will provide offscreen loading independently.
     state_->hardware.set_presentation_effects_enabled(identify_flashing_effects);
+    state_->hardware.set_direct_rendering_enabled(direct_rendering);
+}
+
+void GameSession::enable_host_sprite_resources(bool enabled) {
+    state_->hardware.enable_host_sprite_resources(enabled);
+}
+void GameSession::enable_native_sprite_runtime(bool enabled) {
+    state_->hardware.enable_native_sprite_runtime(enabled, enabled);
+}
+void GameSession::set_logical_clock_policy(LogicalClockPolicy policy) {
+    state_->hardware.set_logical_clock_policy(policy);
+}
+LogicalClockPolicy GameSession::logical_clock_policy() const {
+    return state_->hardware.logical_clock_policy();
 }
 
 void GameSession::observe_completed_frames(FrameObserver observer) {
@@ -121,6 +139,7 @@ SessionDiagnostics GameSession::diagnostics(bool include_registers) const {
     snapshot.source_width = state_->hardware.presentation_width();
     snapshot.master_clocks = state_->hardware.master_clocks();
     snapshot.cpu_instructions = state_->main_cpu.instruction_count;
+    snapshot.native_gameplay_batches = state_->main_cpu.native_gameplay_batches();
     snapshot.audio_cpu_instructions = state_->audio_cpu.instruction_count;
     snapshot.audio_frames = state_->audio_dsp.generated_stereo_frame_count();
     if (include_registers) {

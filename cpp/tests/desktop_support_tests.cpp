@@ -71,7 +71,7 @@ void option_contract() {
     const auto defaults = options({});
     require(!defaults.headless && defaults.vsync && defaults.audio && !defaults.replay_only &&
                 defaults.scale == 3 && defaults.display.frame_limit == 60 &&
-                defaults.display.interpolate_frames,
+                defaults.display.interpolate_frames && defaults.display.direct_rendering,
             "Launch defaults changed");
     const auto selected =
         options({"--headless", "--frames", "0x100", "--buttons", "0x8000", "--game", "jp", "--aspect", "32:9",
@@ -83,6 +83,17 @@ void option_contract() {
                 selected.display.frame_limit == 300 && !selected.display.interpolate_frames &&
                 selected.replay_only,
             "Explicit CLI settings or override markers were lost");
+    require(!defaults.display.crt_filter && options({"--crt"}).display.crt_filter &&
+                !options({"--crt", "--no-crt"}).display.crt_filter && options({"--crt"}).crt_override,
+            "CRT CLI toggle or default failed");
+    const auto direct = options({"--direct-rendering"});
+    require(direct.display.direct_rendering && !direct.display.interpolate_frames && direct.direct_rendering_override,
+            "Direct scene CLI mode failed");
+    const auto native = options({"--native-frames"});
+    require(!native.display.direct_rendering && !native.display.interpolate_frames && native.direct_rendering_override,
+            "Native-frame CLI mode failed");
+    require(!options({"--interpolation"}).display.direct_rendering,
+            "Legacy interpolation failed to override direct rendering");
     require(options({"--fps", "0"}).display.frame_limit == 0, "Uncapped CLI mode changed");
     require(options({"--replay-only", "--buttons", "128"}).replay_only,
             "Replay-only must work with held buttons without a script");
@@ -110,36 +121,37 @@ void option_contract() {
 void preference_contract(const std::filesystem::path &directory) {
     const auto path = directory / std::filesystem::path(u8"設定") / "display.cfg";
     eb::DisplaySettings saved;
-    saved.widescreen = saved.reduce_flashing = saved.variable_refresh = true;
+    saved.widescreen = saved.reduce_flashing = saved.variable_refresh = saved.crt_filter = true;
     saved.frame_limit = 240;
     saved.interpolate_frames = false;
+    saved.direct_rendering = false;
     saved.aspect = eb::AspectRatio::Custom;
     saved.custom_aspect = 3.25f;
     eb::store_display_settings(path_text(path), saved, eb::GameVersion::JP);
     auto game = eb::GameVersion::US;
     const auto restored = eb::load_display_settings(path_text(path), game);
     require(game == eb::GameVersion::JP && restored.widescreen && restored.reduce_flashing &&
-                restored.variable_refresh && restored.frame_limit == 240 && !restored.interpolate_frames &&
+                restored.variable_refresh && restored.crt_filter && restored.frame_limit == 240 && !restored.interpolate_frames && !restored.direct_rendering &&
                 restored.aspect == eb::AspectRatio::Custom && restored.custom_aspect == 3.25f,
             "Display preferences did not roundtrip on a UTF-8 path");
     auto launch = options({"--config", path_text(path), "--game", "us", "--no-widescreen", "--no-vrr",
-                           "--fps", "0", "--interpolation", "--no-reduce-flashing", "--aspect", "4:3"});
+                           "--fps", "0", "--interpolation", "--no-crt", "--no-reduce-flashing", "--aspect", "4:3"});
     auto resolved = eb::resolve_display_settings(launch, game);
     require(game == eb::GameVersion::US && resolved.widescreen && !resolved.variable_refresh &&
-                !resolved.reduce_flashing && resolved.frame_limit == 0 && resolved.interpolate_frames &&
+                !resolved.reduce_flashing && !resolved.crt_filter && resolved.frame_limit == 0 && resolved.interpolate_frames &&
                 resolved.aspect == eb::AspectRatio::FourThree,
             "CLI overrides did not win over saved preferences in argument order");
     launch = options({"--config", path_text(path), "--no-vrr"});
     resolved = eb::resolve_display_settings(launch, game);
     require(game == eb::GameVersion::JP && resolved.widescreen && resolved.reduce_flashing &&
-                !resolved.variable_refresh && resolved.frame_limit == 240 && !resolved.interpolate_frames &&
+                !resolved.variable_refresh && resolved.crt_filter && resolved.frame_limit == 240 && !resolved.interpolate_frames &&
                 resolved.custom_aspect == 3.25f,
             "Unspecified CLI settings overwrote saved preferences");
     write_file(path, "widescreen 7\nvariable_refresh yes\nframe_limit 999\ninterpolate_frames 2\n"
-                     "aspect -1\ncustom_aspect nan\ngame other\nunknown 12\nreduce_flashing 1\n");
+                     "crt_filter nope\naspect -1\ncustom_aspect nan\ngame other\nunknown 12\nreduce_flashing 1\n");
     game = eb::GameVersion::JP;
     const auto recovered = eb::load_display_settings(path_text(path), game);
-    require(!recovered.widescreen && !recovered.variable_refresh && recovered.frame_limit == 60 &&
+    require(!recovered.widescreen && !recovered.crt_filter && !recovered.variable_refresh && recovered.frame_limit == 60 &&
                 recovered.interpolate_frames && recovered.aspect == eb::AspectRatio::SixteenNine &&
                 recovered.reduce_flashing && game == eb::GameVersion::JP,
             "Malformed preferences did not retain defaults and valid independent fields");

@@ -30,6 +30,56 @@ void until(eb::SnesBus& bus, unsigned line) {
     while (bus.scanline_index() != line)
         bus.advance_cpu_cycles(1);
 }
+void intro_static(eb::GameVersion version) {
+    for (unsigned width : {400u, 1024u}) {
+        auto bus = std::make_unique<eb::SnesBus>(std::array<uint8_t, 1>{0}, version);
+        bus->set_presentation_width(width);
+        bus->set_presentation_effects_enabled(width == 1024);
+        bus->write_byte(0x2100, 15);
+        bus->write_byte(0x2105, 3);
+        bus->write_byte(0x2107, 0x78);
+        bus->write_byte(0x2108, 0x7c);
+        bus->write_byte(0x210b, 0x60);
+        bus->write_byte(0x212c, 1); // The authored intro card.
+        bus->write_byte(0x212d, 2); // Animated interference on the subscreen.
+        bus->write_byte(0x2130, 2);
+        bus->write_byte(0x2131, 3);
+        color(*bus, 1, 0x001f);
+        color(*bus, 33, 0x03e0);
+        for (unsigned row = 0; row < 8; ++row) {
+            bus->video_ram[row * 2] = 255;
+            bus->video_ram[0xc000 + row * 2] = 0xaa;
+        }
+        for (unsigned tile = 0; tile < 1024; ++tile) bus->video_ram[0xf801 + tile * 2] = 8;
+        const auto memory = bus->work_ram;
+        const auto vram = bus->video_ram;
+        until(*bus, 225);
+        check(bus->presentation_width() == width && bus->presentation_fixed_aspect() == 0,
+              "Giygas intro interference uses the full requested canvas");
+        if (bus->presentation_width() == width) {
+            const unsigned margin = (width - 256) / 2;
+            const auto pixels = bus->presentation_pixels();
+            check(pixels[0] == 0xff00ff00 && pixels[1] == 0xff000000 &&
+                      pixels[width - 2] == 0xff00ff00 && pixels[width - 1] == 0xff000000,
+                  "Animated intro static fills both margins without repeating the card");
+            bool center_matches = true;
+            for (unsigned y = 0; y < 224; ++y)
+                center_matches &= std::equal(pixels.begin() + y * width + margin,
+                    pixels.begin() + y * width + margin + 256, bus->native_framebuffer.begin() + y * 256);
+            check(center_matches, "Extending intro static preserves every native card pixel");
+            if (width == 1024)
+                check(std::equal(pixels.begin(), pixels.end(), bus->presentation_effect_reference().begin()),
+                      "Intro static reference pixels cover the same wide canvas");
+        }
+        check(bus->work_ram == memory && bus->video_ram == vram, "Intro static extension changed game memory");
+        bus->write_byte(0x212d, 0);
+        bus->write_byte(0x2130, 0);
+        bus->write_byte(0x2131, 0);
+        until(*bus, 0); until(*bus, 225);
+        check(bus->presentation_width() == 256 && bus->presentation_fixed_aspect() == 4.0 / 3,
+              "The static-free intro card retains its authored 4:3 composition");
+    }
+}
 auto battle(eb::GameVersion version) {
     auto bus = std::make_unique<eb::SnesBus>(std::array<uint8_t, 1>{0}, version);
     const auto& source = eb::source_profile(version);
@@ -121,6 +171,93 @@ void targeted_psi(eb::GameVersion version) {
                           bus->presentation_effect_reference()[display_target] == 0xff0000ff,
                       "Flash-filter metadata follows the resized PSI overlay");
             }
+}
+void masked_world_camera(eb::GameVersion version) {
+    const auto& source = eb::source_profile(version);
+    enum class Mask { Disabled, Main, Sub, Color };
+    for (const unsigned width : {398u, 522u})
+        for (const auto mask : {Mask::Disabled, Mask::Main, Mask::Sub, Mask::Color}) {
+            std::vector<uint8_t> content(0x300000);
+            // Adjacent sector rows describe a room narrowing on its left. The
+            // unmasked wide camera shifts 128 pixels when entering row two.
+            const auto sectors = source.rom_map_tileset_palette_sectors;
+            content[sectors + 32 + 1] = content[sectors + 32 + 2] = 8;
+            content[sectors + 64 + 2] = 8;
+            auto bus = std::make_unique<eb::SnesBus>(content, version);
+            bus->set_presentation_width(width);
+            bus->write_byte(0x2100, 15);
+            bus->write_byte(0x2105, 1);
+            bus->write_byte(0x2107, 0x39);
+            bus->write_byte(0x2108, 0x59);
+            bus->write_byte(0x210b, 1); // Blank BG1 artwork, separate from OBJ.
+            bus->write_byte(0x212c, mask == Mask::Sub ? 1 : 17);
+            bus->write_byte(0x2125, mask == Mask::Color ? 0x20 : 3);
+            bus->write_byte(0x2126, 120);
+            bus->write_byte(0x2127, 143);
+            if (mask == Mask::Main)
+                bus->write_byte(0x212e, 16);
+            if (mask == Mask::Sub) {
+                bus->write_byte(0x212d, 16);
+                bus->write_byte(0x212f, 16);
+                bus->write_byte(0x2130, 2);
+                bus->write_byte(0x2131, 32); // Add masked sub-screen OBJ to backdrop.
+            }
+            if (mask == Mask::Color)
+                bus->write_byte(0x2130, 0x40); // Black outside the native aperture.
+            ram(*bus, source.wram_loaded_map_tile_combination, 1);
+            ram(*bus, source.wram_first_entity, 0);
+            ram(*bus, source.wram_entity_next, 0xffff);
+            ram(*bus, source.wram_entity_screen_coordinates.x, 128);
+            ram(*bus, source.wram_entity_screen_coordinates.y, 105);
+            ram(*bus, source.wram_entity_world_coordinates.x, 512);
+            ram(*bus, source.wram_entity_world_coordinates.y, 121);
+            ram(*bus, source.wram_entity_spritemap_pointers.low, 0x4800);
+            ram(*bus, source.wram_entity_spritemap_pointers.high, 0x7e);
+            ram(*bus, source.wram_entity_draw_callback, source.entity_draw_callbacks.screen_space);
+            ram(*bus, source.wram_entity_body_divides, 0x0101);
+            ram(*bus, source.wram_entity_draw_priority, 1);
+            bus->work_ram[0x4802] = 0x30;
+            bus->work_ram[0x4804] = 0x80;
+            for (unsigned slot = 0; slot < 128; ++slot)
+                bus->object_attributes[slot * 4 + 1] = 240;
+            bus->object_attributes[0] = 128;
+            bus->object_attributes[1] = 104;
+            bus->object_attributes[3] = 0x30;
+            color(*bus, 129, 31);
+            for (unsigned row = 0; row < 8; ++row)
+                bus->video_ram[row * 2] = 255;
+            for (const unsigned camera_y : {16u, 144u}) {
+                for (unsigned layer = 0; layer < 2; ++layer) {
+                    const auto x = layer ? source.wram_background_scroll.layer2_x : source.wram_background_scroll.layer1_x;
+                    const auto y = layer ? source.wram_background_scroll.layer2_y : source.wram_background_scroll.layer1_y;
+                    ram(*bus, x, 384);
+                    ram(*bus, y, camera_y);
+                    bus->write_byte(0x210d + layer * 2, 128);
+                    bus->write_byte(0x210d + layer * 2, 1);
+                    bus->write_byte(0x210e + layer * 2, camera_y);
+                    bus->write_byte(0x210e + layer * 2, 0);
+                }
+                until(*bus, 225);
+                const auto pixels = bus->presentation_pixels();
+                const unsigned margin = (width - 256) / 2;
+                check(bus->native_framebuffer[104 * 256 + 128] == 0xffff0000,
+                      "World aperture fixture keeps its source actor visible");
+                if (mask == Mask::Disabled && camera_y == 144) {
+                    check(pixels[104 * width + margin] == 0xffff0000 &&
+                              pixels[104 * width + margin + 128] == 0xff000000,
+                          "Unmasked world retains authored-sector boundary recentering");
+                } else {
+                    bool same = true;
+                    for (unsigned row = 0; row < 224; ++row)
+                        same &= std::equal(pixels.begin() + row * width + margin,
+                                           pixels.begin() + row * width + margin + 256,
+                                           bus->native_framebuffer.begin() + row * 256);
+                    check(same, "World camera remains aligned with its native aperture across sector rows, mask=" +
+                                    std::to_string(unsigned(mask)) + ", width=" + std::to_string(width));
+                }
+                until(*bus, 0);
+            }
+        }
 }
 void entities(eb::GameVersion version) {
     const auto& source = eb::source_profile(version);
@@ -231,9 +368,11 @@ void entities(eb::GameVersion version) {
 } // namespace
 int main() {
     for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        intro_static(version);
         psi_overlay(version);
         battle_exit(version);
         targeted_psi(version);
+        masked_world_camera(version);
         entities(version);
     }
     std::cout << checks << " checks, " << failures << " failures\n";

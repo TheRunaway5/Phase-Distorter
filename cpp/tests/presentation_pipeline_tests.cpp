@@ -57,8 +57,8 @@ void native_and_headless() {
     require(native.wake_time(Time{}) > Time{} + 16ms && native.wake_time(Time{}) < Time{} + 17ms,
             "Native deadline no longer follows its selected monitor rate");
     native.simulation_finished(canvas.view(2), 1, Time{} + 100ms);
-    require(!native.presentation_due(Time{} + 100ms) && native.catch_up_frames() == 1,
-            "A late native picture did not omit only its presentation");
+    require(native.presentation_due(Time{} + 100ms) && native.catch_up_frames() == 1,
+            "Catch-up failed to offer a fresh picture after a long gap");
     require(native.wake_time(Time{} + 100ms) == Time{} + 100ms, "Dropped native presentation added a wait");
 
     settings.frame_limit = 0;
@@ -72,6 +72,33 @@ void native_and_headless() {
                 headless.current_picture().pixels[0] == 0xffabcdef,
             "Headless partial-canvas identity changed");
     require(headless.wake_time(Time{}) == Time{}, "Headless run gained a presentation wait");
+}
+
+// A busy host can finish successive ticks just behind their deadlines. The
+// catch-up path must keep showing fresh pictures while preserving every tick.
+void sustained_lateness() {
+    for (int fps : {60, 240}) {
+        Canvas canvas;
+        eb::DisplaySettings settings; settings.frame_limit = fps;
+        settings.interpolate_frames = false;
+        Pipeline pipeline(Time{}, settings, 60, fps, true, canvas.view(0));
+        Time now{}, previous{};
+        auto largest_gap = 0ms;
+        unsigned draws = 0;
+        for (unsigned tick = 1; tick <= 120; ++tick) {
+            now += 22ms;
+            canvas.pixels[0] = 0xff000000 | tick;
+            pipeline.completed_frame(canvas.view(tick));
+            pipeline.simulation_finished(canvas.view(tick), 1, now);
+            if (pipeline.presentation_due(now)) {
+                require(pipeline.picture(now).pixels[0] == canvas.pixels[0], "Catch-up presented an obsolete frame");
+                largest_gap = std::max(largest_gap, std::chrono::duration_cast<std::chrono::milliseconds>(now - previous));
+                previous = now; pipeline.presented(now); ++draws;
+            }
+        }
+        std::cout << "late ticks: limit=" << fps << " draws=" << draws << " max_gap_ms=" << largest_gap.count() << '\n';
+        require(draws >= 59 && largest_gap <= 44ms, "Catch-up starved visible frames during sustained lateness");
+    }
 }
 
 void independent_rates() {
@@ -251,6 +278,7 @@ void interpolation_setting_boundary() {
     };
     eb::DisplaySettings settings;
     settings.frame_limit = 300;
+    settings.direct_rendering = false;
     Pipeline pipeline(Time{}, settings, eb::FramePacer::frame_rate, 300, true);
     scroll(0);
     const auto first = canvas.pixels;
@@ -272,6 +300,37 @@ void interpolation_setting_boundary() {
     pipeline.completed_frame(canvas.view(4));
     pipeline.simulation_finished(canvas.view(4), 1, Time{});
     require(copy(pipeline.picture(Time{})) == canvas.pixels, "Re-enabled interpolation reused incompatible history");
+}
+
+void direct_scene_boundary() {
+    Canvas canvas;
+    eb::DisplaySettings settings;
+    settings.frame_limit = 300;
+    Pipeline pipeline(Time{}, settings, 60, 300, true);
+    auto artwork = [&](unsigned frame, float x) {
+        auto scene = std::make_shared<eb::DirectSceneFrame>();
+        scene->frame = frame; scene->scene_identity = 1; scene->width = canvas.width;
+        scene->motions = {{1,x,0}};
+        auto view = canvas.view(frame); view.scene = scene;
+        pipeline.completed_frame(view);
+        pipeline.simulation_finished(view, 1, Time{});
+        return scene;
+    };
+    const auto first = artwork(1, 0), second = artwork(2, 1);
+    auto picture = pipeline.picture(Time{});
+    require(picture.scene && picture.scene->artwork == second && picture.scene->offsets[0].x == -1,
+            "Direct mode did not retain source artwork and previous actor pose");
+    pipeline.completed_frame(canvas.view(3));
+    require(!pipeline.picture(Time{}).scene && copy(pipeline.picture(Time{})) == canvas.pixels,
+            "Unsupported scene used stale geometry or image interpolation");
+    artwork(4, 2);
+    require(pipeline.picture(Time{}).scene->offsets[0].x == 0,
+            "Recovery from unsupported scene retained stale movement");
+    settings.reduce_flashing = true;
+    pipeline.configure(settings, 60, 300, Time{});
+    canvas.flashing(); artwork(5, 3);
+    require(!pipeline.picture(Time{}).scene && pipeline.picture(Time{}).pixels[0] != 0xffffffff,
+            "Direct artwork bypassed the flashing filter");
 }
 
 void filter_toggles_and_partial_failures() {
@@ -313,12 +372,14 @@ void filter_toggles_and_partial_failures() {
 
 int main() {
     try {
+        sustained_lateness();
         native_and_headless();
         independent_rates();
         callbacks_and_picture_lifetime();
         changes_and_discontinuities();
         audio_reopen_deadline();
         interpolation_setting_boundary();
+        direct_scene_boundary();
         filter_toggles_and_partial_failures();
         std::cout
             << "Presentation pipeline: native/headless identity, independent caps, VRR changes, callback ownership, "

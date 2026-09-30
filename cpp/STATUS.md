@@ -1,9 +1,16 @@
 # Port verification record
 
-This records the independent C++ port's evidence, updated 2026-09-29. Build and
+This records the independent C++ port's evidence, updated 2026-09-30. Build and
 launch instructions are in the standalone [project README](../README.md). The implementation and all
 new tests live in `cpp/`; the pre-existing C runtime and decompilation tools are
 not inputs to this build.
+
+The latest Linux launcher now selects host-owned overworld sprite resources and
+an independent actor-clock policy. Both regional demo cycles and same-clock
+Twoson state comparisons pass; the pyramid aperture fix and CRT softness also
+pass presentation checks. See the detailed [native resource verification](docs/native-engine.md)
+for the timing contract, source-oracle results and remaining engine boundaries.
+The Windows and packaged-release evidence below predates this Linux cutover.
 
 The desktop is composed from explicit module owners. `GameSession` contains the
 hardware/processors/debug lifetime and exposes frame advancement, audio, save
@@ -13,6 +20,68 @@ contains frame history, filtering/interpolation and host pacing; `DesktopDisplay
 contains window, UI and physical input. CLI/preferences, input replay, persistence
 and audio output have focused modules. `--replay-only` suppresses physical game
 buttons while retaining desktop/UI events.
+
+## Native engine migration — in progress
+
+The accepted goal is a fully native game pipeline without CPU/SPC execution or
+emulated graphics storage. The current game still uses the compatibility
+runtime. Independent native modules now own sprite resources/appearance, NPC
+content, area palettes, compiled action scripts, named actor operations, the
+actor scheduler, maps, collision content and map animation. Source comparisons
+cover both regions, and whole native scenes pass GPU readbacks. A native-only probe runs 464
+moving actors with matching simulation at native/wide presentation widths;
+2,000 scripted actors and 20,001 graphical actors pass separate lifecycle tests.
+These modules are not yet integrated into GameSession.
+See [the migration record](docs/native-engine.md) for the evidence and open work.
+
+The interim desktop fix disables widened source actor activation to avoid the
+original sprite-pool exhaustion. Both 9,000-frame regional demos and a 5,200-frame
+Twoson route pass their native-width comparisons. The flat CRT's direct path now
+matches both-axis softness at tested 3x, 4x and 5x scales on Mesa and NVIDIA.
+
+## Teleport fades and intro static — 2026-09-29
+
+Debug warps call the source fade-out without mosaic, hold black through two
+native frame waits, then load the map and use the original fade-in. Requests
+stay busy throughout that sequence and cannot publish a destination early.
+The intro's Giygas interference uses the selected wide canvas, extends its BG2
+animation/color math into both margins, and leaves the native card pixels exact.
+The still card returns to its 4:3 composition when interference is disabled.
+
+The 194-check widescreen fixture covers both regions, wide/ultrawide margins,
+native-center identity, effect references and the still-card transition. Imported
+frame-1,200 pictures use 398 and 522 columns for EarthBound and Mother 2; the
+Windows pictures under Wine exactly match Linux. The debug fixture contains
+3,061 checks, including keeping the destination unset during fade and blackout.
+All 30 native CTests pass; the widescreen/debug fixtures also pass under Wine.
+Native asset-backed routes in both games verify seven exact-coordinate arrivals
+each, with 15–16 fade-out brightness levels, a complete black widescreen frame
+before the load starts, and full brightness after arrival.
+
+## Source-derived gameplay runtime checkpoint — 2026-09-29
+
+The default backend now executes 808 US and 783 Japanese source-owned routines
+through independent named C++ semantics, under `generated/{us,jp}/game/` folders
+for dialogue, cutscenes, entities, NPCs and enemies. These preserve machine-state
+continuations and instruction retirement; they are not hand-decompiled high-level
+gameplay systems. Shared gameplay services retain the original compiled executor.
+Authored dialogue/scripts/placement/enemy records still come from the local import.
+
+All 29 final native tests have passed (28-test combined suite, then the added
+and strengthened fixtures). Windows passed the 22-test isolated executable suite
+and 14 affected integrated tests. Both regions pass 900-frame comparisons under
+both timing policies on Windows. Separate native audit replays match through
+26,097 US frames and 15,000 Japanese frames for each policy, including ordered
+hardware accesses, state, callbacks, pictures and PCM. These are bounded paths,
+not a complete playthrough or proof of every dialogue/scene branch.
+
+Both launcher executables and ZIPs now include this runtime, the separately
+completed direct scene renderer, and its widescreen startup fix. Extracted
+packages match their tested binaries and pass regional Linux/Wine image/audio
+comparisons plus visible 21:9 startup checks. See [game runtime](docs/game-runtime.md)
+for ownership, reproduction commands and the distinction between this checkpoint
+and a future high-level gameplay rewrite. Older evidence below describes its
+stated historical checkpoint.
 
 ## Implemented
 
@@ -47,8 +116,10 @@ gameplay retains its in-memory assets. Confirmed switching restarts the selected
 game, preserves normal SRAM and display/fullscreen preferences, and opens ROM
 setup if its default pack is missing. Custom asset overrides do not control an
 intentional menu switch and their files are never deleted. The startup importer
-has no gameplay bar. A separate wider presentation buffer draws existing scene data
-without changing emulated camera coordinates, entity activation, or spawn rules.
+has no gameplay bar. A separate wider presentation buffer draws existing scene data without changing
+emulated camera coordinates. All desktop widths now retain the original source
+entity activation region. Its experimental expansion caused pool exhaustion and
+is disabled until host entity/resource ownership replaces it.
 The original 256×224 framebuffer remains available for strict comparisons.
 Active world sprites now extend from the source's published entity descriptors,
 including parts clipped out of OAM, while invisibility and allocation remain
@@ -87,12 +158,15 @@ See [source navigation](docs/source-navigation.md).
 
 ## Evidence
 
-- Current source modernization: all 19 native Linux CTests and all 18 Windows
-  C++ tests pass under Wine/Xvfb. The Windows run excludes Python translation
-  fixtures; its asset-cache symlink cases explicitly skip because Wine cannot
-  create them. The tests include session lifecycle and observers, independent
-  scene-renderer ownership, presentation scheduling/history, and 60 desktop
-  support contracts covering options/preferences, replay, persistence and audio.
+- The combined checkout, including the separately completed interpolation and
+  entity-preload changes, passes all 20 native Linux CTests and all 19 Windows
+  C++ tests under Wine/Xvfb. The isolated module-refactoring checkpoint passed
+  19 native tests and 18 Windows tests. The Windows run excludes Python
+  translation fixtures; its asset-cache symlink cases explicitly skip because
+  Wine cannot create them. The tests include session lifecycle and observers,
+  independent scene-renderer ownership, presentation scheduling/history, entity
+  preloading, and 60 desktop support contracts covering options/preferences,
+  replay, persistence and audio.
 - A separate SDL-free, frontend-disabled build compiles and passes
   `game_session_tests`, exercising the session without desktop dependencies.
 - Native Linux and Wine asset-backed session/direct-core comparisons pass for
@@ -104,6 +178,15 @@ See [source navigation](docs/source-navigation.md).
   covering both battle layer layouts. These fixtures validate sampled map
   boundaries and authored animation mapping; they are not natural visits to
   every map or live battles with every effect.
+
+- Refactor-only before/after Linux replays complete 16,000 US and 15,000 JP
+  frames with identical final registers, instruction counts, native/presentation
+  captures and complete WAV bytes. Shared-machine elapsed times rose about 3%;
+  these are approximate throughput observations, not controlled benchmarks.
+- The final combined ZIPs pass manifests, executable parity and permissions.
+  All 20 packaged checks (two platforms, two regions, headless/Native/300 FPS/
+  Uncapped/VRR) preserve final state, counters, native captures and WAV bytes
+  through 180 frames. Windows runs under Wine; physical VRR remains unverified.
 
 - September 29 timing update: all 14 Linux CTests pass. Both regional compiled
   entity stress fixtures retain ordered writes and movement callbacks while a

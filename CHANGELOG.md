@@ -1,4 +1,18 @@
 # Unreleased
+
+- Keep the pyramid demo's scenery and party aligned with its fixed screen
+  aperture in wide and ultrawide views.
+- Store overworld actor graphics in host-managed resources, prepare nearby
+  NPC/enemy artwork, and retain active actor graphics beyond the original cull.
+- Select an explicit actor clock independently of graphics storage; preserve
+  the original resource and timing path with `--original-timing`.
+- Keep CRT Filter softness consistent between completed-frame and direct scene
+  rendering, verified on NVIDIA and Mesa.
+- Fade debug teleports fully to black before loading the destination, then use
+  the native fade-in at arrival.
+- Extend the intro's Giygas static across widescreen and ultrawide margins while
+  preserving the original center artwork and the still card's 4:3 composition.
+
 ## Module ownership
 
 - Make `GameSession` own deterministic simulation, processor/DSP lifetimes, diagnostics and completed-frame observers without SDL or filesystem dependencies.

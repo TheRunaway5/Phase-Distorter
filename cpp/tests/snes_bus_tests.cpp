@@ -1030,6 +1030,32 @@ void world_map_presentation(eb::GameVersion version) {
             }
         return b;
     };
+    for (unsigned width : {256u, 398u, 522u, 1024u}) {
+        auto direct = setup(1024, width, 0, 32);
+        auto reference = std::make_unique<eb::SnesBus>(*direct);
+        direct->set_direct_rendering_enabled(true);
+        until(*direct, 225); until(*reference, 225);
+        check(bool(direct->direct_scene()), "Verified world publishes direct source artwork at every aspect");
+        if (direct->direct_scene()) {
+            const auto frame = direct->direct_scene();
+            const auto rebuilt = eb::rasterize_direct_scene({frame, {}});
+            check(std::equal(rebuilt.begin(), rebuilt.end(), direct->presentation_pixels().begin()),
+                  "Direct source primitives reconstruct the complete canonical frame");
+            check(direct->work_ram == reference->work_ram && direct->video_ram == reference->video_ram &&
+                      direct->native_framebuffer == reference->native_framebuffer,
+                  "Direct capture preserves native storage and pixels");
+            const auto atlas = frame->atlas;
+            until(*direct, 0); until(*direct, 100);
+            color(*direct, 1, 0x7fff); // Unsupported mid-screen palette change.
+            until(*direct, 225);
+            check(!direct->direct_scene(), "Raster palette changes discard incompatible source artwork");
+            check(frame->atlas == atlas, "Published artwork remains immutable across later captures");
+            until(*direct, 0); until(*direct, 225);
+            check(bool(direct->direct_scene()), "Direct capture recovers after a stable frame");
+            direct->set_direct_rendering_enabled(false);
+            check(!direct->direct_scene(), "Disabling direct rendering releases stale artwork");
+        }
+    }
     auto world = setup(1024, 1024, 0, 32);
     const auto before = world->work_ram;
     until(*world, 2);

@@ -57,6 +57,7 @@ public:
     void execute_opcode_semantics(uint8_t opcode, uint16_t operand, unsigned instruction_size);
 
 private:
+    friend struct RuntimeStateAudit;
     SnesBus* system_bus_ = nullptr;
     std::span<uint8_t> instruction_test_memory_;
     uint8_t control_register_ = 0x80, test_register_ = 0x0a, dsp_register_address_ = 0;

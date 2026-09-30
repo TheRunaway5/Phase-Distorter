@@ -2,15 +2,22 @@
 
 #include "eb/game_version.hpp"
 #include "eb/game_scene_renderer.hpp"
+#include "eb/overworld_sprite_bridge.hpp"
+#include "eb/overworld_sprite_runtime.hpp"
+#include "eb/overworld_sprite_effects.hpp"
+#include "eb/actor_fade_service.hpp"
+#include "eb/logical_clock_policy.hpp"
 
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace eb {
 struct SourceProfile;
+class MainCpu65816;
 
 // HiROM cartridge and the CPU-visible SNES hardware. Pixel words are 0xAARRGGBB.
 class SnesBus {
@@ -24,6 +31,10 @@ class SnesBus {
     // reads can acknowledge interrupts, advance ports, and update open bus.
     uint8_t read_byte(uint32_t address);
     void write_byte(uint32_t address, uint8_t value);
+#ifdef EB_GAMEPLAY_AUDIT
+    // Verification-only ordered CPU/DMA/HDMA bus accesses; never changes state.
+    std::function<void(bool write, uint32_t address, uint8_t value)> observe_bus_access;
+#endif
     // Empty during ordinary play. Explicit debug cheats may override WRAM
     // accesses, including mirrors and DMA, without modifying cartridge code.
     std::function<uint8_t(unsigned, uint8_t)> debug_read_wram, debug_write_wram;
@@ -31,9 +42,71 @@ class SnesBus {
     void advance_cpu_cycles(unsigned cpu_cycles); // advance hardware by this many six-clock units
     void advance_master_clocks_with_refresh(unsigned master_clocks); // include WRAM refresh pauses
     unsigned access_clocks(uint32_t address) const;
+    // Exclusive deadline for an ordinary-RAM native batch. The caller must
+    // require its complete clock cost to be strictly less than this result,
+    // and independently guard CPU state, observers and timing-policy changes.
+    // Zero requires source-instruction execution. This never consumes an
+    // interrupt, invokes an observer, or advances any hardware.
+    unsigned native_execution_budget() const;
     // Source math helpers wait a fixed number of CPU instructions before
     // reading results. Extra gameplay capacity must preserve that latency.
     bool math_pending() const { return math_remaining_cpu_cycles_ != 0; }
+    // Transitional graphics ownership adapter. It observes named sprite
+    // operations without changing gameplay state or installing a write observer.
+    // Disabled in generic hardware fixtures and independently copyable with a bus.
+    void enable_host_sprite_resources(bool enabled);
+    // Native resource services replace the ordinary actor allocation/graphics
+    // path. The frontend selects this at startup; hardware fixtures opt in.
+    // Real sessions additionally prepare proven stationary NPC artwork before
+    // gameplay. Minimal graphics fixtures can omit the world-content import.
+    void enable_native_sprite_runtime(bool enabled, bool prepare_stationary = false);
+    OverworldSpriteRuntime *native_sprite_runtime() {
+        return native_sprite_runtime_ ? &*native_sprite_runtime_ : nullptr;
+    }
+    const OverworldSpriteRuntime *native_sprite_runtime() const {
+        return native_sprite_runtime_ ? &*native_sprite_runtime_ : nullptr;
+    }
+    const OverworldSpriteEffects *native_sprite_effects() const {
+        return native_sprite_effects_ ? &*native_sprite_effects_ : nullptr;
+    }
+    bool try_execute_native_sprite_operation(MainCpu65816 &cpu);
+    // Startup-only and orthogonal to graphics ownership. SourceTiming retains
+    // original admission/fade timing even with native artwork. ActorFrames can
+    // also drive an oracle that retains all original graphics allocations.
+    void set_logical_clock_policy(LogicalClockPolicy policy);
+    LogicalClockPolicy logical_clock_policy() const { return logical_clock_policy_; }
+    bool try_execute_clock_operation(MainCpu65816 &cpu);
+    // Fixed native actor admission. An enabled authored pass may start once
+    // per hardware frame. An early next pass stays at its entry while hardware
+    // events/audio advance; no authored pass or processor instruction is lost.
+    bool wait_for_native_actor_tick(std::uint32_t program_counter);
+    std::uint64_t native_actor_tick_count() const { return native_actor_tick_count_; }
+    std::uint64_t native_actor_wait_clocks() const { return native_actor_wait_clocks_; }
+    const ActorFadeService &native_actor_fades() const { return native_actor_fades_; }
+    // Observe source draw-buffer ownership independently of pixel storage, so
+    // the source/host differential uses the same presentation timing. Native
+    // resource startup enables this; isolated fixtures can opt in separately.
+    void enable_sprite_snapshots() { sprite_snapshots_enabled_ = true; }
+    OverworldSpriteBridge* host_sprites() { return host_sprites_ ? &*host_sprites_ : nullptr; }
+    const OverworldSpriteBridge* host_sprites() const { return host_sprites_ ? &*host_sprites_ : nullptr; }
+    void capture_game_sprite_instruction(std::uint32_t pc, std::uint16_t a, std::uint16_t x,
+                                         std::uint16_t y, std::uint16_t stack, std::uint16_t direct) {
+        if (!sprite_snapshots_enabled_)
+            return;
+        // RUN_ACTIONSCRIPT_FRAME executes through bank $80; its near calls
+        // reach the same ROM code as $C0. Normalize only mapped ROM addresses,
+        // never low-bank RAM/I/O or the executable WRAM banks $7E/$7F.
+        const unsigned bank = pc >> 16;
+        if (bank != 0x7e && bank != 0x7f && ((bank & 0x40) || (pc & 0x8000)))
+            pc |= 0xc00000;
+        // Most instructions have no graphics semantics. Keep view construction
+        // and snapshot parsing off that path, including native gameplay batches.
+        if (host_sprites_ || (pc >= 0xc08800 && pc < 0xc0a500))
+            capture_sprite_operation(pc, a, x, y, stack, direct);
+    }
+    // Borrowed read-only rendering state, valid until this bus is changed.
+    // Used by resource verification without copying or executing the game.
+    SceneReadView scene_read_view() const { return scene_view(); }
     // NMI is consumed as an edge. IRQ is a level that stays asserted until the
     // game's register access acknowledges it. DMA clocks are CPU stall debt.
     bool take_nmi();
@@ -49,6 +122,8 @@ class SnesBus {
         scene_renderer_.set_presentation_width(scene_view(), width);
     }
     unsigned presentation_width() const { return scene_renderer_.presentation_width(); }
+    void set_direct_rendering_enabled(bool enabled) { scene_renderer_.enable_direct_rendering(enabled); }
+    std::shared_ptr<const DirectSceneFrame> direct_scene() const { return scene_renderer_.direct_scene(); }
     std::span<const uint32_t> presentation_pixels() const {
         return scene_renderer_.presentation_pixels(native_framebuffer);
     }
@@ -102,9 +177,21 @@ class SnesBus {
     std::span<const uint8_t, 0x40> ppu_registers() const { return ppu_registers_; }
 
   private:
+    friend struct RuntimeStateAudit;
     const GameVersion game_version_;
     const SourceProfile *source_profile_;
+    bool sprite_snapshots_enabled_{};
+    void capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::uint16_t x,
+                                  std::uint16_t y, std::uint16_t stack, std::uint16_t direct);
     std::vector<uint8_t> cartridge_rom_;
+    std::optional<OverworldSpriteBridge> host_sprites_;
+    std::optional<OverworldSpriteRuntime> native_sprite_runtime_;
+    bool native_stationary_sprites_enabled_{};
+    std::optional<OverworldSpriteEffects> native_sprite_effects_;
+    LogicalClockPolicy logical_clock_policy_ = LogicalClockPolicy::SourceTiming;
+    std::optional<std::uint64_t> native_actor_frame_;
+    std::uint64_t native_actor_tick_count_{}, native_actor_wait_clocks_{};
+    ActorFadeService native_actor_fades_;
     std::array<uint8_t, 0x40> ppu_registers_{};
     std::array<uint8_t, 0x20> cpu_io_registers_{};
     std::array<std::array<uint8_t, 16>, 8> dma_registers_{};
@@ -136,6 +223,7 @@ class SnesBus {
     uint8_t sprite_status_ = 0;
     GameSceneRenderer scene_renderer_;
     SceneReadView scene_view() const;
+    unsigned next_hardware_event_clocks() const;
 
     uint8_t read_io_register(uint16_t address);
     void write_io_register(uint16_t address, uint8_t value);

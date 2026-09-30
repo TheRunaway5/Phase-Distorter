@@ -1,6 +1,7 @@
 #pragma once
 
 #include "eb/display_settings.hpp"
+#include "eb/direct_scene.hpp"
 #include "eb/frame_interpolator.hpp"
 #include "eb/frame_pacer.hpp"
 #include "eb/photosensitivity_filter.hpp"
@@ -70,6 +71,8 @@ private:
     bool high_rate_{};
     bool reduce_flashing_{};
     bool interpolate_frames_{};
+    bool direct_rendering_{};
+    DirectSceneMotion scene_motion_;
     double native_rate_{};
     double presentation_rate_{};
     FramePacer native_pacer_;
@@ -80,6 +83,10 @@ private:
     std::optional<std::uint64_t> filtered_frame_;
     bool native_picture_pending_{};
     bool native_wait_pending_{};
+    // Bound visible starvation while simulation catches up. A fresh picture
+    // can be displayed at least every two native periods even when still late.
+    bool fresh_picture_pending_{};
+    Time last_presented_{};
     std::uint64_t presented_frames_{};
     std::uint64_t catch_up_frames_{};
 };

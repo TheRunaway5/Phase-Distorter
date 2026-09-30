@@ -1,6 +1,7 @@
 #pragma once
 
 #include "eb/game_version.hpp"
+#include "eb/logical_clock_policy.hpp"
 #include "eb/presentation_frame.hpp"
 #include <cstdint>
 #include <functional>
@@ -15,6 +16,7 @@ class GameDebug;
 struct SessionDiagnostics {
     std::uint64_t frames{}, steps{}, master_clocks{};
     std::uint64_t cpu_instructions{}, audio_cpu_instructions{}, audio_frames{};
+    std::uint64_t native_gameplay_batches{};
     unsigned source_width{};
     std::string cpu_state, audio_cpu_state;
 };
@@ -45,7 +47,17 @@ class GameSession {
     // and must not re-enter or mutate the session.
     PresentationFrame presentation_frame() const;
     std::span<const std::uint32_t, 256 * 224> native_pixels() const;
-    void configure_presentation(unsigned width, bool identify_flashing_effects);
+    void configure_presentation(unsigned width, bool identify_flashing_effects, bool direct_rendering = false);
+    // Use owned sprite artwork after validated game content has been loaded.
+    // This does not change the actor scheduler, animation cadence or input.
+    void enable_host_sprite_resources(bool enabled = true);
+    // Select host-owned overworld graphics at startup. The frontend enables
+    // this except with --original-timing; isolated sessions opt in explicitly.
+    void enable_native_sprite_runtime(bool enabled = true);
+    // Explicit startup policy, independent of native artwork. The default
+    // preserves source timing; selecting artwork alone does not change it.
+    void set_logical_clock_policy(LogicalClockPolicy policy);
+    LogicalClockPolicy logical_clock_policy() const;
     void observe_completed_frames(FrameObserver observer);
 
     std::vector<std::int16_t> take_audio_samples();

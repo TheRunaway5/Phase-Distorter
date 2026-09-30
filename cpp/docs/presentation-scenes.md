@@ -7,9 +7,10 @@ game, calling its map-loading routines, or changing WRAM, camera movement,
 collision, event flags, entity allocation, or spawn decisions. The original
 `runtime` and decompilation tools are not inputs to this analysis.
 
-The desktop session now also enables a separate [actor preload policy](entity-preload.md).
-It deliberately changes activation distances; the rendering contracts below
-and their state-equivalence tests concern the read-only renderer itself.
+The experimental [actor preload policy](entity-preload.md) changes gameplay
+activation distances. It is disabled in the desktop session because the expanded
+activation can exhaust source resources and disrupt scripted demos. The rendering
+contracts below concern the read-only renderer itself.
 
 ## World graphics and boundaries
 
@@ -37,6 +38,14 @@ game's own camera remains unchanged. Such a wider-view clamp is a port policy;
 it should not be described as a pre-existing native camera constraint. Collision
 walls, hotspot triggers, and NPC spawn boundaries are not interchangeable with
 graphics-region boundaries.
+
+Screen-space window effects retain the source framing. A scenery-only boundary
+adjustment would move actors independently of a fixed layer mask or color window.
+In the pyramid title demo, crossing a sector-row boundary moved the party outside
+the circular aperture even though the source camera still followed correctly.
+Active main/subscreen layer windows and color-window effects therefore bypass
+the presentation boundary adjustment. Out-of-area map tiles still use the
+authored lookup rules. Unmasked scenes retain the wider-view boundary policy.
 
 Use current `BG1_X_POS`/`BG1_Y_POS` at WRAM `$31`/`$33`, reconciled with the actual
 latched PPU scroll phase. The seemingly suitable `BG12_POSITION_X/Y_COPY` at
@@ -134,7 +143,13 @@ Do not suppress BG3 in every scene. `src/battle/load_battlebg.asm` targets BG2
 in one configuration and BG3 in another. The active animated-layer metadata and
 actual PPU configuration should control that case. The gas-station interference
 intro uses BG1 main-screen `$01`, BG2 sub-screen `$02`, and palette animation;
-it is distinct from the static title signature and uses its fixed 4:3 card.
+it is distinct from the static title signature. While BG2 subscreen mixing is
+active, use the requested wide canvas and continue only that procedural static
+into both margins. Black BG1 coverage in the margins lets the same source color
+math add the interference without repeating the card. Native center pixels stay
+exact. When the source disables BG2/color math, the still card returns to its
+fixed 4:3 composition. The check uses the scene's mode/map/screen-enable/color-math
+signature and does not treat unrelated BG2 layers as intro static.
 
 ## Active entities and battle effects
 
