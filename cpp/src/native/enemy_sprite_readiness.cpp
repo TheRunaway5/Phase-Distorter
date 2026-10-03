@@ -1,4 +1,6 @@
 #include "eb/native/enemy_sprite_readiness.hpp"
+#include "eb/snapshot_archive.hpp"
+#include <algorithm>
 #include <stdexcept>
 
 namespace eb::native {
@@ -20,5 +22,17 @@ void EnemySpriteReadiness::prepare(EnemySpriteRectangle footprint,
   groups_.swap(groups);
   leases_.images.swap(leases.images);
   leases_.image_bytes = leases.image_bytes;
+}
+void EnemySpriteReadiness::snapshot_io(SnapshotArchive &archive) {
+  archive(limits_.images, limits_.image_bytes, groups_, leases_.image_bytes);
+  if (archive.loading()) {
+    if (!std::is_sorted(groups_.begin(), groups_.end()) ||
+        std::adjacent_find(groups_.begin(), groups_.end()) != groups_.end())
+      throw std::runtime_error("Invalid snapshot enemy readiness groups");
+    auto leases = lease_sprite_images(*resources_, groups_, limits_);
+    if (leases.image_bytes != leases_.image_bytes)
+      throw std::runtime_error("Invalid snapshot enemy readiness statistics");
+    leases_.images = std::move(leases.images);
+  }
 }
 } // namespace eb::native

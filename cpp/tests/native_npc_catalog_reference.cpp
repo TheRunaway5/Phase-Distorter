@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
             throw std::runtime_error("native_npc_catalog_reference pack.ebpak ...");
         for (int argument = 1; argument < argc; ++argument) {
             const auto assets = eb::load_game_assets(argv[argument], eb::asset_profiles());
-            const auto layout = npc_catalog_layout(assets.version);
+            const auto layout = npc_catalog_layout(assets.version, false);
             const NpcCatalog catalog(assets.image, layout);
             unsigned highest_flag = 0, placements = 0;
             for (unsigned id = 0; id < catalog.size(); ++id) {

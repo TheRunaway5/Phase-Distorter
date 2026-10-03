@@ -13,8 +13,11 @@ using NpcId = std::uint16_t;
 struct NpcCatalogLayout {
     std::uint32_t cell_pointers, placements, placements_end, definitions, map_tilesets;
     unsigned definition_count, photograph_script;
+    bool restore_threed_npcs = false;
 };
-NpcCatalogLayout npc_catalog_layout(GameVersion version);
+// Retail gameplay restores the two broken Threed conditions. Source oracles
+// can explicitly request the unmodified SNES definitions.
+NpcCatalogLayout npc_catalog_layout(GameVersion version, bool restore_threed_npcs = true);
 
 enum class NpcType { Person = 1, ItemBox = 2, Object = 3 };
 enum class NpcAppearance { Always, FlagOff, FlagOn };

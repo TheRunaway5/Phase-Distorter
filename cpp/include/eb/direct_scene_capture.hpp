@@ -4,11 +4,13 @@
 #include <array>
 
 namespace eb {
+class SnapshotArchive;
 class GameSceneRenderer;
 // Captures source draw commands only when requested. The visible scanlines
 // verify that raster state stayed compatible, then publish an immutable frame.
 class DirectSceneCapture {
   public:
+    void snapshot_io(SnapshotArchive &archive);
     void enable(bool enabled);
     void scanline(const SceneReadView &view, GameSceneRenderer &renderer, unsigned y);
     std::shared_ptr<const DirectSceneFrame> frame() const { return published_; }

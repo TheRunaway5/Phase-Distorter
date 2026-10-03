@@ -1,6 +1,11 @@
 // Real native ActorWorld + imported synthetic map/sprite/palette content.
 // No original code or authored assets, mock actor advancement, or GPU proof.
 #include "eb/native/story/scene.hpp"
+#include "eb/native/story/battle_publication.hpp"
+#include "eb/native/battle/animation_commands.hpp"
+#include "eb/native/battle/roster.hpp"
+#include "eb/native/battle/action_state.hpp"
+#include "eb/native/world_display_fade.hpp"
 #include "eb/native/dialogue/window_graphics.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include <algorithm>
@@ -447,6 +452,473 @@ void signed_camera(eb::GameVersion version) {
     check(actual==eb::rasterize_direct_scene({expected,{}}),"Scene interpreted wrapped source camera words as positive world coordinates");
     check(actual!=eb::rasterize_direct_scene({wrapped,{}}),"Signed-camera fixture did not distinguish the incorrect unsigned view");
 }
+BattleBackgroundScene battle_background(unsigned depth) {
+    std::vector<std::uint8_t> bytes(0x110000);
+    const auto layout=battle_background_layout(eb::GameVersion::US);
+    for(unsigned i=0;i<327;++i) bytes[layout.configurations+i*17+2]=std::uint8_t(depth);
+    for(unsigned i=0;i<103;++i) {
+        pointer(bytes,layout.graphics+i*4,0x1000);
+        pointer(bytes,layout.arrangements+i*4,0x1100);
+    }
+    for(unsigned i=0;i<114;++i) pointer(bytes,layout.palettes+i*4,0x1200);
+    unsigned at=0x1000;zero_run(bytes,at,32);
+    at=0x1100;zero_run(bytes,at,2048);
+    return BattleBackgroundScenes(bytes,eb::GameVersion::US).prepare(BattleBackgroundPair{0,0,0});
+}
+BattleCombatants battle_catalog() {
+    std::vector<std::uint8_t> bytes(84);
+    BattleCombatantLayout layout{0,16,48,56,64,68,4,0,2,1,1,1,1};
+    pointer(bytes,0,80);bytes[4]=1;
+    put(bytes,48,1);pointer(bytes,56,64);
+    bytes[64]=1;bytes[67]=255;
+    // One actual compressed512-byte4bpp sprite; every texel is color15.
+    bytes[80]=0xe5;bytes[81]=0xff;bytes[82]=0xff;bytes[83]=0xff;
+    return BattleCombatants(bytes,layout);
+}
+BattleCombatantScene battle_objects() { return battle_catalog().prepare(0); }
+void battle_publication(eb::GameVersion version, unsigned depth) {
+    Fixture f(version); f.start();
+    auto background=battle_background(depth);
+    battle::PaletteBankState colors;
+    auto objects=battle_objects();
+    battle::PsiScratch scratch;
+    battle::PsiDisplayState display;
+    eb::DirectSceneFrame::Effects policy;
+    policy.main={true,true,true,true,true};
+    const unsigned psi_base=depth==2?48:64;
+    for(unsigned bank=0;bank<16;++bank) {
+        colors.staged[bank].fill(0x7fff);
+        colors.displayed[bank].fill(0x7c00);
+    }
+    colors.displayed[0][0]=0;
+    colors.displayed[psi_base/16][2]=0x3e0;
+    colors.staged[psi_base/16][2]=0x1f;
+    // Retain tile0 with index1 and tile1 with index2 in the actual plane.
+    for(unsigned y=0;y<8;++y) {
+        display.graphics[y*2]=255;
+        display.graphics[depth*8+y*2+1]=255;
+    }
+    display.tilemap.fill(0x3000);
+    story::BattlePublication publisher(colors,scratch,display,background,objects,f.windows,policy);
+    f.scene->bind_publication(publisher);
+    std::array<BattleCombatantPresentation,1> rows{{{8,0,0,888,128,112}}};
+    objects.publish(rows);
+    f.scene->refresh_world_capture();
+    const auto old=f.scene->frame();
+    const auto old_pixels=eb::rasterize_direct_scene({old,{}});
+    f.windows.publish_palette(1);
+    check(colors.upload_mode==8 && colors.staged[0][0]==0,
+          "Full window theme lost its background-only source upload request");
+    f.windows.animate_palette(1,4);
+    check(colors.upload_mode==24,"Animated window colors lost the full upload request");
+    display.queue_frame(100);
+    scratch.bytes.fill(1);
+    // Source's later enemy effect replaces the full request, including the
+    // PSI colors. The map still uploads and reads the current source bytes.
+    colors.upload_mode=16;
+    auto frame=f.scene->begin(story::TickKind::Frame);
+    service(*frame,story::SceneService::Frame);
+    const auto before=publisher.capture(*old);
+    check(display.tilemap[0]==0x3000 && colors.upload_mode==16 &&
+          eb::rasterize_direct_scene({before,{}})==old_pixels,
+          "Read-only battle sampling consumed pending state");
+    colors.upload_mode=7;
+    rejects([&]{frame->complete_frame({0x4000,0});},
+            "Scene consumed an invalid battle palette transfer");
+    check(f.scene->completed_frames()==0 && f.clock.frame_counter==255 &&
+          f.input.held[0]==0 && f.scene->frame()==old && !display.pending().empty() &&
+          colors.upload_mode==7,
+          "Failed frame publication consumed the clock, input or queued battle transfers");
+    colors.upload_mode=16;
+    const auto input_before=f.input;
+    frame->complete_publication();
+    check(f.clock.new_frame_started==1 && f.clock.input_polls==0 && f.input==input_before &&
+          display.pending().empty() && frame->frame_requirement()==story::FrameRequirement::InputOnly,
+          "Battle transfer publication consumed input or failed its actual queue");
+    const auto transfer_frame=f.scene->frame();
+    frame->complete_frame({0x8000,0}); finish(*frame);
+    check(f.scene->frame()==transfer_frame && f.clock.new_frame_started==0 && f.clock.input_polls==1,
+          "Battle WAIT republished an already completed transfer boundary");
+    check(f.scene->completed_frames()==1 && f.clock.frame_counter==0 &&
+          f.input.held[0]==0x8000 && f.actors.ticks()==0,
+          "Battle publication changed actor cadence or missed the real input/frame boundary");
+    check(display.pending().empty() && display.tilemap[0]==0x3001 &&
+          colors.upload_mode==0 && colors.displayed[psi_base/16][2]==0x3e0 &&
+          colors.displayed[8][15]==0x7fff,
+          "Battle boundary merged upload ranges or failed to publish live map/object colors");
+    const auto published=f.scene->frame();
+    const auto pixels=eb::rasterize_direct_scene({published,{}});
+    check(pixels[95*320+160]==0xff00ff00,
+          "High PSI priority did not cover the real enemy level2 object");
+    bool found=false;
+    for(const auto &quad:published->quads) if(quad.object) {
+        found=true;
+        check(quad.priority==(depth==2?8:7) &&
+              published->atlas[std::size_t(quad.v)*published->atlas_width+quad.u]==0xffffffff,
+              "Composed object retained old palette colors or used the wrong display-mode priority");
+    }
+    check(found,"Battle publication dropped its nonempty object commands");
+    check(eb::rasterize_direct_scene({old,{}})==old_pixels,
+          "Later battle publication mutated an earlier immutable scene");
+    const auto staged_before=colors.staged;
+    const auto displayed_before=colors.displayed;
+    const auto map_before=display.tilemap;
+    display.queue_clear();colors.upload_mode=24;
+    auto invalid_stamp=*published;invalid_stamp.width=255;
+    rejects([&]{publisher.capture_next(invalid_stamp);},"Invalid battle capture was accepted");
+    check(colors.staged==staged_before && colors.displayed==displayed_before &&
+          colors.upload_mode==24 && display.tilemap==map_before && !display.pending().empty(),
+          "Failed battle capture consumed palette or map transfers");
+    // The next actual frame consumes the same retained transfer once.
+    auto retry=f.scene->begin(story::TickKind::Frame);service(*retry,story::SceneService::Frame);
+    retry->complete_frame({0,0});finish(*retry);
+    check(display.tilemap[0]==0 && display.pending().empty() && colors.upload_mode==0 &&
+          f.scene->completed_frames()==2,"Retry lost or duplicated the battle publication");
+    display.queue_frame(200);scratch.bytes[200]=2;colors.upload_mode=24;
+    const auto old_serial=display.publication_serial();
+    const auto old_clock=f.clock.frame_counter;
+    f.clock.interrupt_mask=0;f.clock.new_frame_started=255;
+    auto vblank=f.scene->begin(story::TickKind::Frame);service(*vblank,story::SceneService::Frame);
+    vblank->complete_frame({0,0});finish(*vblank);
+    check(!display.pending().empty() && display.tilemap[0]==0 && colors.upload_mode==24 &&
+          display.publication_serial()==old_serial && f.clock.frame_counter==old_clock &&
+          f.clock.new_frame_started==0 && f.clock.input_polls==3,
+          "NMI-disabled VBlank consumed queued battle DMA or a source frame counter");
+    f.clock.interrupt_mask=0x80;
+    auto publish=f.scene->begin(story::TickKind::Frame);service(*publish,story::SceneService::Frame);
+    publish->complete_frame({0,0});finish(*publish);
+    check(display.tilemap[0]==0x3002 && display.pending().empty() && colors.upload_mode==0 &&
+          display.publication_serial()==old_serial+1,
+          "Restored NMI did not consume the retained live battle queue exactly once");
+    Fixture other(version);other.start();
+    rejects([&]{other.scene->bind_publication(publisher);},
+            "A scene accepted another window host's battle publication");
+    // Bind failure must not pin an unrelated combatant renderer's owner.
+    battle::PaletteBankState candidate,third;auto spare=battle_objects();
+    rejects([&]{story::BattlePublication rejected(candidate,scratch,display,background,spare,f.windows,policy);},
+            "Battle publication replaced a live window publisher");
+    spare.bind_palette_state(third);
+    // Reject a competing object owner and roll back the provisional UI binding.
+    auto other_objects=battle_objects();other_objects.bind_palette_state(third);
+    rejects([&]{story::BattlePublication rejected(candidate,scratch,display,background,other_objects,other.windows,policy);},
+            "Battle publication replaced another combatant palette owner");
+    auto final_objects=battle_objects();
+    story::BattlePublication accepted(candidate,scratch,display,background,final_objects,other.windows,policy);
+    other.scene->bind_publication(accepted);
+    // Scene borrows publisher; release scenes before their local publishers.
+    other.scene.reset();f.scene.reset();
+}
+std::shared_ptr<const battle::PsiResources> animation_resources(eb::GameVersion version) {
+    std::vector<std::uint8_t> bytes(0xd0000);
+    const unsigned shift=version==eb::GameVersion::JP?0x117:0;
+    const std::array<unsigned,4> graphics{0xcac25+shift,0xcb613+shift,0xcdb27+shift,0xce31d+shift};
+    for(unsigned at:graphics) {
+        bytes[at++]=15;
+        for(unsigned n=0;n<16;++n) bytes[at++]=std::uint8_t(n*13+1);
+        zero_run(bytes,at,4096-16);
+    }
+    for(unsigned id=0;id<34;++id) {
+        const unsigned config=0xcf04d+shift+id*12;
+        put(bytes,config,graphics[0]);bytes[config+2]=2;bytes[config+3]=3;
+        bytes[config+4]=1;bytes[config+5]=3;bytes[config+6]=1;
+        pointer(bytes,0xcf58f+shift+id*4,0x2000);
+        for(unsigned color=0;color<4;++color) put(bytes,0xcf47f+shift+id*8+color*2,color*0x421);
+    }
+    bytes[0x2000]=0xe7;bytes[0x2001]=0xff;bytes[0x2002]=1;bytes[0x2003]=0xff;
+    return battle::PsiResources::import(bytes,version);
+}
+struct AnimationFixture {
+    Fixture f;
+    std::shared_ptr<const battle::PsiResources> resources;
+    BattleBackgroundScene background;
+    BattleCombatants catalog=battle_catalog();
+    battle::PaletteBankState colors;
+    BattleCombatantScene objects=catalog.prepare(0);
+    battle::PsiAnimationState state;
+    battle::PsiScratch scratch;
+    battle::PsiDisplayState display;
+    battle::PaletteEffectState ramps;
+    battle::PaletteEffects effects{colors,ramps};
+    battle::Roster roster;
+    battle::ActionState action;
+    WorldDisplayFade fade;
+    WorldSwirlData swirl_data;
+    WorldSwirlState swirl;
+    WorldEncounterVisualState visual;
+    battle::PsiSetup setup;
+    battle::AnimationCommands commands;
+    story::BattlePublication publication;
+    explicit AnimationFixture(eb::GameVersion version,unsigned depth,bool blank=false,bool bind=true)
+        : f(version),resources(animation_resources(version)),background(battle_background(depth)),
+          roster(battle::EnemyResources::import(std::vector<std::uint8_t>(0x160000),version)),
+          fade(WorldDisplayFadeState{std::uint8_t(blank?0x80:15)}),
+          setup(resources,state,scratch,display,effects,background,roster,action,catalog,fade,f.clock),
+          commands(setup,*resources,roster,action,background,colors,swirl_data,swirl,visual),
+          publication(colors,scratch,display,background,objects,f.windows,visual,fade) {
+        action.target=8;
+        auto &target=roster.at(8);target.consciousness=1;target.side=1;
+        target.sprite=1;target.x=99;target.y=111;
+        visual.visible_layers.fill(true);
+        scratch.bytes.fill(0x5c);display.graphics.fill(0xa7);
+        f.start();
+        if(bind) {f.scene->bind_publication(publication);f.scene->bind_battle_animations(commands);}
+    }
+    ~AnimationFixture(){f.scene.reset();}
+};
+void animation_continuations(eb::GameVersion version,unsigned depth) {
+    for(bool blank:{false,true}) {
+        AnimationFixture a(version,depth,blank);auto &f=a.f;
+        const auto random=f.random;const auto input=f.input;
+        // Begin with255 so the first transfer NMI exercises actual byte wrap.
+        f.clock.new_frame_started=255;
+        auto operation=f.scene->begin_animation(0,0);
+        unsigned uploads=0;
+        while(next(*operation)==dialogue::Progress::Suspended && operation->service()==story::SceneService::Publication) {
+            ++uploads;
+            check(uploads<=2 && f.input==input && f.clock.input_polls==0 && a.state.total_frames==0,
+                  "Setup acknowledged input or finished before its transfer completed");
+            const auto serial=a.display.publication_serial();
+            const auto prior=f.scene->frame();
+            operation->complete_publication();
+            check(a.display.publication_serial()==serial+1 && f.scene->frame()!=prior &&
+                  a.display.pending().empty() && f.input==input && f.clock.input_polls==0 &&
+                  f.actors.ticks()==0 && f.random==random,
+                  "Setup transfer did not use the actual Scene publication without input");
+            if(uploads==1) check(f.clock.new_frame_started==0,"NMI did not wrap the raw pending byte");
+        }
+        check(operation->service()==story::SceneService::Frame && uploads==(blank?0u:depth==2?1u:2u),
+              "SHOW transfer chunks or explicit WAIT boundary were lost");
+        const auto expected=blank || depth==4?story::FrameRequirement::InputOnly:story::FrameRequirement::NmiPublication;
+        check(operation->frame_requirement()==expected,"SHOW explicit WAIT ignored real pending-byte state");
+        const auto frames=f.scene->completed_frames();
+        operation->complete_frame({0x80,0});finish(*operation);
+        check(f.clock.input_polls==1 && f.clock.new_frame_started==0 && f.input.held[0]==0x80 &&
+              f.scene->completed_frames()==frames+(expected==story::FrameRequirement::NmiPublication) &&
+              f.actors.ticks()==0 && f.random==random && a.state.total_frames==1 &&
+              a.state.palette_base==(depth==2?48:64) && a.roster.at(8).alternate==1 &&
+              a.display.graphics[0]==1 && a.display.graphics[1]==14,
+              "Real setup completion lost imported graphics, state, input or gameplay isolation");
+        check(a.display.staged_scroll[depth==2?1:0]==battle::PsiScroll{29,33},
+              "Real setup lost its target-dependent scroll tail");
+        // A completed Scene operation may remain retained while a new call starts.
+        auto second=f.scene->begin_animation(48,48);finish(*second);
+        check(f.clock.input_polls==1,"Immediate complete dispatch invented a WAIT");
+    }
+    {
+        AnimationFixture a(version,depth);auto &f=a.f;
+        a.colors.displayed[0][0]=0x7fff;
+        a.visual.window_rows_enabled=true;
+        f.scene->refresh_world_capture();
+        const auto old=f.scene->frame();
+        const auto old_pixels=eb::rasterize_direct_scene({old,{}});
+        check(std::ranges::any_of(old_pixels,[](auto pixel){return pixel!=0xff000000;}),
+              "Active fade fixture did not expose any illuminated pixels");
+        a.fade.begin_out(16,0);
+        auto operation=f.scene->begin_animation(0,0);service(*operation,story::SceneService::Publication);
+        const auto fade_before=a.fade.state();
+        a.colors.upload_mode=7;
+        rejects([&]{operation->complete_publication();},"Bad palette publication consumed active fade");
+        check(a.fade.state()==fade_before && a.visual.window_rows_enabled &&
+              a.display.publication_serial()==0 && f.scene->completed_frames()==0 &&
+              f.clock.input_polls==0 && !a.display.pending().empty() && f.scene->frame()==old,
+              "Rejected capture advanced fade, input or live graphics transport");
+        a.colors.upload_mode=0;operation->complete_publication();
+        check(a.fade.state().brightness==0x80 && !a.fade.active() && !a.visual.window_rows_enabled &&
+              f.clock.new_frame_started==1 && f.clock.input_polls==0 && a.display.publication_serial()==1,
+              "Actual setup publication did not commit fade and disable its row stream");
+        const auto black=f.scene->frame();
+        const auto pixels=eb::rasterize_direct_scene({black,{}});
+        check(std::ranges::all_of(pixels,[](auto pixel){return pixel==0xff000000;}),
+              "Forced blank was not reflected in the actual immutable battle frame");
+        service(*operation,story::SceneService::Frame);
+        check(a.display.pending().empty() && a.display.publication_serial()==1 &&
+              operation->frame_requirement()==story::FrameRequirement::InputOnly &&
+              a.display.graphics[depth==2?4095:8191]==0,
+              "Black-screen transition did not make remaining SHOW graphics transfer immediately");
+        const auto fade_after=a.fade.state();
+        operation->complete_frame({0,0});finish(*operation);
+        check(a.fade.state()==fade_after && f.scene->completed_frames()==1 && f.scene->frame()==black &&
+              f.clock.input_polls==1 && eb::rasterize_direct_scene({old,{}})==old_pixels,
+              "Input-only WAIT advanced fade or mutated a retained earlier frame");
+    }
+    {
+        AnimationFixture a(version,depth,false,false);auto &f=a.f;
+        const auto scratch=a.scratch.bytes;const auto state=a.state;const auto fade=a.fade.state();
+        rejects([&]{f.scene->bind_battle_animations(a.commands);},"Scene bound animation without its real publisher");
+        rejects([&]{f.scene->begin_animation(0,0);},"Scene began animation without admission");
+        check(a.scratch.bytes==scratch && a.state==state && a.fade.state()==fade &&
+              f.scene->completed_frames()==0 && !f.scene->failed() && !a.commands.failed(),
+              "Rejected animation binding mutated source state or poisoned the idle scene");
+        f.scene->bind_publication(a.publication);
+        story::TickState foreign_clock;
+        battle::PsiSetup wrong_clock(a.resources,a.state,a.scratch,a.display,a.effects,a.background,
+            a.roster,a.action,a.catalog,a.fade,foreign_clock);
+        battle::AnimationCommands wrong_clock_commands(wrong_clock,*a.resources,a.roster,a.action,a.background,
+            a.colors,a.swirl_data,a.swirl,a.visual);
+        rejects([&]{f.scene->bind_battle_animations(wrong_clock_commands);},
+                "Scene admitted animation using another input/frame receipt owner");
+        battle::PsiDisplayState foreign_display;
+        battle::PsiSetup wrong_display(a.resources,a.state,a.scratch,foreign_display,a.effects,a.background,
+            a.roster,a.action,a.catalog,a.fade,f.clock);
+        battle::AnimationCommands wrong_display_commands(wrong_display,*a.resources,a.roster,a.action,a.background,
+            a.colors,a.swirl_data,a.swirl,a.visual);
+        rejects([&]{f.scene->bind_battle_animations(wrong_display_commands);},
+                "Scene admitted setup whose actual display is not published here");
+        check(a.scratch.bytes==scratch && a.state==state && a.fade.state()==fade &&
+              f.scene->completed_frames()==0 && f.clock.input_polls==0 && !f.scene->failed(),
+              "Wrong-owner setup admission mutated source state");
+        f.scene->bind_battle_animations(a.commands);f.scene->bind_battle_animations(a.commands);
+        auto instant=f.scene->begin_animation(48,48);finish(*instant);
+    }
+    {
+        AnimationFixture a(version,depth);auto &f=a.f;
+        const auto blocked=f.actors.create(actor(1)),later=f.actors.create(actor());
+        auto parent=f.scene->begin(story::TickKind::WorldFrame);service(*parent,story::SceneService::ActorEngine);
+        check(parent->actor_request()->actor==blocked && f.clock.action_scripts_disabled==1,
+              "Nested setup fixture lacks its actual suspended ActorWorld callback");
+        f.output.policy().prompt_mode=1;
+        dialogue::Conversation script(program(version,{0x1c,0x13,1,1,0x02}),f.windows);
+        script.start(dialogue::EntryId{0});auto nested=f.scene->begin_nested(script,*parent);
+        unsigned uploads=0;
+        while(next(*nested)==dialogue::Progress::Suspended && nested->service()==story::SceneService::Publication) {
+            ++uploads;check(uploads<=2,"Nested setup failed to finish its real upload queue");
+            rejects([&]{parent->advance();},"Parent advanced behind the active authored animation");
+            nested->complete_publication();
+        }
+        check(nested->service()==story::SceneService::Frame && !script.finished() &&
+              f.actors.ticks()==0 && f.clock.action_scripts_disabled==1 &&
+              f.actors.actor(later).action().variables[0]==0,
+              "Authored CC setup escaped its live parent actor guard");
+        nested->complete_frame({0x40,0});finish(*nested);
+        check(script.finished() && f.text.window().active.working==1 && f.clock.input_polls==1 &&
+              parent->service()==story::SceneService::ActorEngine && a.state.total_frames==1 &&
+              f.actors.ticks()==0 && f.clock.action_scripts_disabled==1,
+              "CC responded before actual setup finished or lost its typed source result");
+        check(f.actors.erase(blocked),"Nested setup could not finish the actual parent callback");
+        service(*parent,story::SceneService::Frame);parent->complete_frame({0,0});finish(*parent);
+        check(f.actors.ticks()==1 && f.actors.actor(later).action().variables[0]==1 &&
+              f.clock.action_scripts_disabled==0,"Setup nesting replayed or skipped actors after return");
+    }
+}
+// Actual raw WAIT admission and callbacks. Publication-only service executes
+// IRQ work; input consumption owns no second IRQ, actor tick or random draw.
+void raw_frame_phases(eb::GameVersion version) {
+    struct Boundary : story::FrameBoundaryService {
+        Fixture &f;
+        mutable unsigned publication_checks{}, input_checks{};
+        unsigned publications{}, reads{};
+        bool reject_publication{}, reject_input{}, fail_input{};
+        std::optional<std::uint8_t> pending_after_irq;
+        explicit Boundary(Fixture &fixture):f(fixture) {}
+        void validate_publication() const override {
+            ++publication_checks;
+            if (reject_publication) throw std::logic_error("publication prerequisite");
+        }
+        void validate_input() const override {
+            ++input_checks;
+            if (reject_input) throw std::logic_error("input prerequisite");
+        }
+        void after_publication() override {
+            ++publications;
+            check(f.clock.input_polls==0 && f.input.state[0]==0,
+                  "Transfer IRQ polled input before its real WAIT");
+            if (pending_after_irq) f.clock.new_frame_started=*pending_after_irq;
+        }
+        std::array<std::uint16_t,2> read_input(std::array<std::uint16_t,2> raw) override {
+            ++reads;
+            check(f.clock.new_frame_started==0,"WAIT polled before clearing the source pending byte");
+            if (fail_input) throw std::runtime_error("input service failed");
+            return {raw[1],raw[0]};
+        }
+    };
+    for (unsigned mask : {0u, 1u, 0x10u, 0x20u, 0x30u, 0x80u, 0x81u, 0xb0u}) {
+        for (unsigned pending : {0u, 1u, 255u}) {
+            Fixture f(version); f.start(); Boundary boundary(f);
+            f.clock.interrupt_mask=std::uint8_t(mask);
+            f.clock.new_frame_started=std::uint8_t(pending);
+            const auto random=f.random;
+            auto operation=f.scene->begin(story::TickKind::Frame);
+            service(*operation,story::SceneService::Frame);
+            const auto requirement=!(mask&0xb0)?story::FrameRequirement::VBlank:
+                pending?story::FrameRequirement::InputOnly:story::FrameRequirement::NmiPublication;
+            check(operation->frame_requirement()==requirement,"WAIT chose the wrong raw NMITIMEN/pending path");
+            if ((mask&0xb0) && !(mask&0x80) && !pending) {
+                const auto frame=f.scene->frame();
+                rejects([&]{operation->complete_frame({0x40,0x80},boundary);},
+                        "IRQ-only WAIT fabricated an unsupported interrupt boundary");
+                check(!f.scene->failed() && f.scene->completed_frames()==0 && f.scene->frame()==frame &&
+                      f.clock.frame_counter==255 && f.clock.new_frame_started==0 &&
+                      f.clock.input_polls==0 && boundary.publications==0 && boundary.reads==0,
+                      "Unsupported interrupt admission consumed source state");
+                // A real already-pending source frame now permits the same WAIT.
+                f.clock.new_frame_started=7;
+            }
+            operation->complete_frame({0x40,0x80},boundary); finish(*operation);
+            const bool nmi=(mask&0x80) && pending==0;
+            const bool vblank=!(mask&0xb0);
+            check(boundary.publications==unsigned(nmi) && boundary.reads==1 &&
+                  f.scene->completed_frames()==unsigned(nmi||vblank) &&
+                  f.clock.frame_counter==(nmi?0:255) && f.clock.new_frame_started==0 &&
+                  f.clock.input_polls==1 && f.input.held[0]==0xc0 && f.input.held[1]==0x40 &&
+                  f.actors.ticks()==0 && f.random==random,
+                  "Raw WAIT conflated publication, input, source clocks or gameplay work");
+            rejects([&]{operation->complete_publication(boundary);},"Completed WAIT accepted an extra publication");
+        }
+    }
+    {
+        Fixture f(version);f.start();Boundary boundary(f);
+        auto operation=f.scene->begin(story::TickKind::Frame);service(*operation,story::SceneService::Frame);
+        boundary.reject_input=true;boundary.reject_publication=true;
+        const auto old=f.scene->frame();
+        rejects([&]{operation->complete_publication(boundary);},"Publication preflight did not reject");
+        check(!f.scene->failed() && f.scene->frame()==old && f.scene->completed_frames()==0 &&
+              f.clock.frame_counter==255 && f.clock.new_frame_started==0 && boundary.publications==0,
+              "Publication preflight consumed a source boundary");
+        boundary.reject_publication=false;
+        // A transfer-driven NMI must not ask for the unrelated input service.
+        operation->complete_publication(boundary);
+        check(boundary.input_checks==0 && boundary.publications==1 && boundary.reads==0 &&
+              f.clock.new_frame_started==1 && f.clock.input_polls==0 &&
+              operation->frame_requirement()==story::FrameRequirement::InputOnly,
+              "Publication-only boundary required or consumed input");
+        const auto published=f.scene->frame();
+        rejects([&]{operation->complete_frame({0,0},boundary);},"Pending input prerequisite was ignored");
+        check(f.scene->frame()==published && f.clock.new_frame_started==1 && !f.scene->failed(),
+              "Input preflight consumed a pending frame");
+        rejects([&]{operation->complete_publication(boundary);},"Pending input allowed a duplicate NMI");
+        boundary.reject_input=false;
+        operation->complete_frame({0x40,0x80},boundary);finish(*operation);
+        check(f.scene->completed_frames()==1 && boundary.publications==1 && boundary.reads==1 &&
+              f.scene->frame()==published && f.clock.input_polls==1,
+              "Pending frame consumption republished or replayed IRQ work");
+    }
+    {
+        Fixture f(version);f.start();Boundary boundary(f);
+        auto operation=f.scene->begin(story::TickKind::Frame);service(*operation,story::SceneService::Frame);
+        // A real IRQ callback can clear the byte. WAIT remains pending and does
+        // not invent successful input merely because one NMI has elapsed.
+        boundary.pending_after_irq=0;
+        operation->complete_frame({0,0},boundary);
+        check(operation->service()==story::SceneService::Frame && f.clock.input_polls==0 &&
+              f.scene->completed_frames()==1 && boundary.reads==0,
+              "WAIT escaped a zero pending byte after the publication callback");
+        boundary.pending_after_irq.reset();
+        operation->complete_frame({0,0},boundary);finish(*operation);
+        check(f.scene->completed_frames()==2 && boundary.publications==2 && f.clock.input_polls==1,
+              "Resumed WAIT lost its next real NMI");
+    }
+    {
+        Fixture f(version);f.start();Boundary boundary(f);
+        f.clock.new_frame_started=3;boundary.fail_input=true;
+        auto operation=f.scene->begin(story::TickKind::Frame);service(*operation,story::SceneService::Frame);
+        rejects([&]{operation->complete_frame({0,0},boundary);},"Input failure was acknowledged");
+        check(f.scene->failed() && f.scene->completed_frames()==0 && f.clock.new_frame_started==0 &&
+              f.clock.input_polls==0 && boundary.reads==1 && boundary.publications==0,
+              "Failed pending-frame input lost its consumed/poisoned state");
+        rejects([&]{operation->complete_frame({0,0},boundary);},"Failed input was replayed");
+        check(boundary.reads==1,"Poisoned scene repeated its input service");
+    }
+}
 void rejection_and_poison(eb::GameVersion version) {
     Fixture failed(version);
     const dialogue::PartyQueryRequest count_query{dialogue::PartyQueryKind::ControlledCount};
@@ -485,6 +957,9 @@ int main() {
             actor_frames_and_sampling(region);conversations(region);nested_actor_callbacks(region);
             authored_meters_and_party_query(region);
             camera_and_battle(region);signed_camera(region);rejection_and_poison(region);
+            battle_publication(region,2);battle_publication(region,4);
+            raw_frame_phases(region);
+            animation_continuations(region,2);animation_continuations(region,4);
         }
         std::cout<<"Native story scene: "<<checks<<" checks passed (real actor scripts, software rendering only)\n";
         return 0;

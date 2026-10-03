@@ -1,5 +1,7 @@
 #include "eb/enemy_sprite_preparation.hpp"
 #include "eb/overworld_sprite_runtime.hpp"
+#include "eb/render_distance.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "generated_profile.hpp"
 #include <algorithm>
 #include <new>
@@ -19,11 +21,10 @@ void EnemySpritePreparation::clear() noexcept {
     ready_.reset(); request_.reset(); failure_ = EnemyResourcePreparationFailure::None;
 }
 void EnemySpritePreparation::prepare(const SceneReadView &view, unsigned width) {
-    if (width < 256 || width > 1024 || (width & 1))
-        throw std::invalid_argument("Invalid enemy preparation viewport width");
+    const RenderDistance distance(width);
     if (view.game_version != version_)
         throw std::invalid_argument("Enemy preparation region mismatch");
-    if (!view.native_sprites || width == 256) { clear(); return; }
+    if (!view.native_sprites) { clear(); return; }
     if (view.native_sprites->resources() != sprites_)
         throw std::invalid_argument("Enemy preparation does not own this runtime's resources");
     const auto &source = view.source_profile;
@@ -45,11 +46,11 @@ void EnemySpritePreparation::prepare(const SceneReadView &view, unsigned width) 
     }
     const int camera_x = std::int16_t(word(source.wram_background_scroll.layer1_x)),
               camera_y = std::int16_t(word(source.wram_background_scroll.layer1_y));
-    const int margin = int(width - 256) / 2, overscan = margin + 128;
-    // Match stationary/NPC resource preparation, including the additional
-    // area-boundary recenter exposure and a 64-pixel content-readiness pad.
-    Request next{{camera_x - margin - overscan - 64, camera_y - 64,
-                  camera_x + 256 + margin + overscan + 64, camera_y + 288}, tileset};
+    auto artwork = sprites_->artwork_bounds();
+    --artwork.top; --artwork.bottom;
+    const auto bounds = distance.placement_bounds(artwork);
+    Request next{{camera_x + bounds.left, camera_y + bounds.top,
+                  camera_x + bounds.right, camera_y + bounds.bottom}, tileset};
     std::copy(flags.begin(), flags.end(), next.flags.begin());
     if (request_ && request_->bounds.left == next.bounds.left && request_->bounds.top == next.bounds.top &&
         request_->bounds.right == next.bounds.right && request_->bounds.bottom == next.bounds.bottom &&
@@ -77,5 +78,31 @@ void EnemySpritePreparation::prepare(const SceneReadView &view, unsigned width) 
         failure_ = EnemyResourcePreparationFailure::Allocation;
         ++failures_;
     }
+}
+void EnemySpritePreparation::snapshot_io(SnapshotArchive &archive) {
+    archive(limits_.images, limits_.image_bytes, queries_, failures_, failure_);
+    bool ready = ready_.has_value();
+    archive(ready);
+    if (archive.loading()) {
+        if (ready) ready_.emplace(catalog_, sprites_, limits_);
+        else ready_.reset();
+    }
+    if (ready) archive(*ready_);
+    bool request = request_.has_value();
+    archive(request);
+    if (archive.loading()) {
+        if (request) request_.emplace();
+        else request_.reset();
+    }
+    if (request) {
+        auto &r = *request_;
+        archive(r.bounds.left, r.bounds.top, r.bounds.right, r.bounds.bottom, r.tileset, r.flags);
+        if (archive.loading() && (r.tileset >= 32 || r.bounds.left >= r.bounds.right ||
+                                  r.bounds.top >= r.bounds.bottom))
+            throw std::runtime_error("Invalid snapshot enemy preparation request");
+    }
+    if (archive.loading() && (failure_ < EnemyResourcePreparationFailure::None ||
+                              failure_ > EnemyResourcePreparationFailure::Allocation))
+        throw std::runtime_error("Invalid snapshot enemy preparation failure");
 }
 } // namespace eb

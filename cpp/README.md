@@ -26,6 +26,18 @@ generated game routines, register names and regional metadata for contributors.
 NPC and enemy continuations, their independent semantic implementation, and
 their differential verification against the retained executor.
 
+Gameplay restores two original Threed/Threek NPC bugs in both regions. The
+Investigator appears after Master Belch; the Ghost Enthusiast remains available
+afterward so his existing later dialogue can be reached. Only their appearance
+conditions change. Imported ROM data, dialogue, sprites, placements and save
+flags remain intact. The Investigator's post-Belch timing follows the likely
+intent described in [Starmen's original hacking research](https://vblank.fangamer.com/mother2/gameinfo/factoids/);
+the unused original flag does not establish that timing conclusively.
+
+`threed_npc_restoration_tests` checks both regional loaders and native catalogs.
+The original-source NPC oracle tests explicitly retain the unmodified conditions
+to keep their SNES parity checks meaningful.
+
 For a release source tree containing only `cpp/` and the pre-generated program
 in a sibling `generated/` directory, configure with
 `cmake -S cpp -B build -DEB_PREGENERATED_DIR="$PWD/generated"`. This mode requires
@@ -274,20 +286,40 @@ Widescreen adds picture on either side of the original 256×224 view. Map
 scenery uses data beyond the streamed tile buffer, battle patterns continue
 their existing layer transforms, and Lumine Hall uses its complete prepared
 text columns. Menus and HUD remain in the original view.
+Photo Man's snapshot aperture and Carpainter's lightning each map their single
+authored overlay across the full display, including narrow rooms and side borders.
+Scene capture retains 64 pixels of artwork beyond all four viewport edges for
+camera and actor interpolation. NPC and enemy artwork preparation also runs at
+the original width, before those actors reach an edge.
 
-The desktop session keeps the original NPC/enemy activation region. Expanding
-the source loader exhausted its sprite pool during the title demo and gameplay;
-it is now disabled in the desktop. This fixes that freeze trigger but leaves
-late actor appearance at the far widescreen edges. The ongoing
-[native engine migration](docs/native-engine.md) replaces those fixed pools with
-host resources and separates offscreen artwork preparation from gameplay
-activation. Widescreen scenery and existing actor continuation remain enabled.
+NPC and enemy artwork readiness, prop drawing, and tile capture share the
+viewport policy in `RenderDistance`. It includes padding beyond the display,
+the extra area exposed by camera recentering, and imported sprite extents.
+Verified stationary people and props use imported first-pose artwork before
+source activation, including
+benches, streetlights, signposts, and the fixed-position animated NPC program.
+Proven moving NPC programs and actual enemy strip queries use guarded source
+loading across the wider horizontal band. Their own scripts and authored
+selection determine appearance and movement. Shared admission checks reserve
+actor/task capacity, including workers that have not started yet. Earlier
+simulation can change random choices and encounter timing; unproven NPC
+programs and fixed source pools still limit coverage. See
+[offscreen loading](docs/entity-preload.md). The ongoing [native engine migration](docs/native-engine.md)
+replaces the remaining fixed logical pools with host-owned world state.
 
 Near a map region's edge, the wider display camera stops at the matching
 tileset-sector boundary. This covers the Fourside tunnel and desert road
 regions without altering the game's camera or collision data. Regions narrower
 than the selected view are centered with side borders. HUD placement stays
 centered while world scenery and visible actors follow the display camera.
+When connected sector rows have different safe spans, the display keeps its
+previous target until the new span persists for eight logical frames, then
+eases the boundary correction by at most four pixels per frame. Walking across
+a forest seam no longer instantly replaces the framing, and brief movement
+back and forth across that seam does not keep reversing the camera. Ordinary
+source camera movement remains immediate. Teleports, scene/window changes,
+and viewport resizing initialize fresh framing. New snapshots preserve an
+ongoing adjustment, and earlier snapshot files remain loadable.
 
 Display preferences are stored separately from game saves in `display.cfg` in
 the application data directory. `--config FILE` selects another preferences

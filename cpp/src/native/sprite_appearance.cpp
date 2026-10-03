@@ -1,4 +1,5 @@
 #include "eb/native/sprite_appearance.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <array>
 #include <stdexcept>
 
@@ -135,5 +136,31 @@ SpriteActor SpriteAppearance::draw(const ActionActorState &actor, float x, float
     picture.visible = available_ && actor.alive && !(actor.animation & 0x8000) &&
                       displayed_.has_value() && !flashing_hidden_;
     return picture;
+}
+void SpriteFrameSelection::snapshot_io(SnapshotArchive &archive) {
+    archive(sprite, pose, surface, format);
+    if (archive.loading() &&
+        (surface < SpriteSurface::Normal || surface > SpriteSurface::Deep ||
+         format < SpriteFrameFormat::FourDirection || format > SpriteFrameFormat::EightDirection))
+        throw std::runtime_error("Invalid snapshot sprite selection");
+}
+void SpriteAppearance::snapshot_io(SnapshotArchive &archive) {
+    archive(geometry_sprite_, requested_sprite_, displayed_, fingerprint_, flashing_hidden_, available_);
+    if (archive.loading()) {
+        const auto &geometry = resources_->definition(geometry_sprite_);
+        const auto &requested = resources_->definition(requested_sprite_);
+        if (geometry.width != requested.width || geometry.height != requested.height ||
+            geometry.shape != requested.shape || (!available_ && displayed_))
+            throw std::runtime_error("Invalid snapshot sprite appearance geometry");
+        image_.reset();
+        if (displayed_) {
+            const auto &definition = resources_->definition(displayed_->sprite);
+            if (definition.width != geometry.width || definition.height != geometry.height ||
+                definition.shape != geometry.shape)
+                throw std::runtime_error("Invalid snapshot displayed sprite geometry");
+            image_ = resources_->acquire(displayed_->sprite, displayed_->pose,
+                                         displayed_->surface, displayed_->format);
+        }
+    }
 }
 } // namespace eb::native

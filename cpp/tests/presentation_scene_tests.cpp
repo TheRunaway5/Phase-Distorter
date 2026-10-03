@@ -2,10 +2,13 @@
 // Actual imported sector/metatile data drives synthetic colored arrangements,
 // making every expanded/clamped pixel independently checkable without CPU code.
 #include "eb/snes_bus.hpp"
+#include "eb/native/world_map.hpp"
 #include "generated_assets.hpp"
 #include "generated_profile.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <vector>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -122,6 +125,189 @@ void run_case(const eb::GameAssets& game, const char* name, unsigned combo, unsi
               << ", display origin=" << origin << ", native origin=" << camera
               << ", every display pixel matches source fixture\n";
 }
+// Real forest-sector seams from both local imported games. Camera centers are
+// sampled on source-passable ground, but this remains a map/rendering fixture:
+// no scripted walk, party simulation, or live display is implied by the test.
+struct ForestPathFixture {
+    const eb::GameAssets &game;
+    const eb::SourceProfile &source;
+    const char *name;
+    unsigned combo, width;
+    std::unique_ptr<eb::SnesBus> bus;
+    eb::GameSceneRenderer renderer;
+    ForestPathFixture(const eb::GameAssets &assets, const char *label, unsigned combination, unsigned display_width)
+        : game(assets), source(eb::source_profile(game.version)), name(label), combo(combination), width(display_width),
+          bus(std::make_unique<eb::SnesBus>(game.image, game.version)) {
+        store(*bus, source.wram_loaded_map_tile_combination, combo);
+        store(*bus, source.wram_first_entity, 0xffff);
+        for (unsigned block = 0; block < 1024; ++block)
+            for (unsigned tile = 0; tile < 16; ++tile)
+                store(*bus, source.wram_map_tile_arrangements + block * 32 + tile * 2, block % 15 + 1);
+        for (unsigned tile = 1; tile < 16; ++tile) {
+            bus->palette_ram[tile * 2] = shade(tile);
+            bus->palette_ram[tile * 2 + 1] = shade(tile) >> 8;
+            for (unsigned y = 0; y < 8; ++y)
+                for (unsigned plane = 0; plane < 4; ++plane)
+                    bus->video_ram[tile * 32 + (plane / 2) * 16 + y * 2 + (plane % 2)] =
+                        (tile & (1u << plane)) ? 255 : 0;
+        }
+        bus->write_byte(0x2105, 1);
+        bus->write_byte(0x2107, 0x39);
+        bus->write_byte(0x2108, 0x59);
+        bus->write_byte(0x212c, 1);
+        bus->write_byte(0x2100, 15);
+        renderer.set_presentation_width(view(), width);
+        renderer.enable_direct_rendering(true);
+    }
+    eb::SceneReadView view() const {
+        auto result = bus->scene_read_view();
+        result.object_scene = &renderer;
+        return result;
+    }
+    std::array<int, 2> span(int center_x, int center_y) const {
+        const unsigned row = unsigned(center_y) / 128;
+        int first = center_x / 256, end = first + 1;
+        const auto valid = [&](int column) {
+            return column >= 0 && column < 32 &&
+                   (game.image[source.rom_map_tileset_palette_sectors + row * 32 + unsigned(column)] >> 3) == combo;
+        };
+        require(valid(first), std::string(name) + ": source forest path left its combination");
+        while (valid(first - 1)) --first;
+        while (valid(end)) ++end;
+        return {first * 256, end * 256};
+    }
+    int target(int center_x, int center_y) const {
+        const auto bounds = span(center_x, center_y);
+        const int camera = center_x - 128, margin = int(width - 256) / 2;
+        return bounds[1] - bounds[0] >= int(width)
+                   ? std::clamp(camera - margin, bounds[0], bounds[1] - int(width))
+                   : bounds[0] - (int(width) - bounds[1] + bounds[0]) / 2;
+    }
+    int frame(int center_x, int center_y, bool verify_pixels = false) {
+        const int camera_x = center_x - 128, camera_y = center_y - 112;
+        for (unsigned layer = 0; layer < 2; ++layer) {
+            store(*bus, layer ? source.wram_background_scroll.layer2_x : source.wram_background_scroll.layer1_x,
+                  unsigned(camera_x));
+            store(*bus, layer ? source.wram_background_scroll.layer2_y : source.wram_background_scroll.layer1_y,
+                  unsigned(camera_y));
+            bus->write_byte(0x210d + layer * 2, camera_x & 255);
+            bus->write_byte(0x210d + layer * 2, (camera_x >> 8) & 3);
+            bus->write_byte(0x210e + layer * 2, camera_y & 255);
+            bus->write_byte(0x210e + layer * 2, (camera_y >> 8) & 3);
+        }
+        // Rebuild the canonical ring and picture for the chosen authored map
+        // position before taking the immutability snapshot. Renderer calls
+        // themselves cannot populate caches, alter hardware, or advance clocks.
+        for (unsigned y = 0; y < 32; ++y)
+            for (unsigned x = 0; x < 64; ++x) {
+                const int tx = camera_x / 8 + int(x), ty = camera_y / 8 + int(y);
+                const unsigned mx = unsigned(tx) & 63, my = unsigned(ty) & 31;
+                const unsigned at = 0x7000 + (mx / 32) * 2048 + (my * 32 + (mx & 31)) * 2;
+                const unsigned tile = block_at(game, source, combo, tx * 8, ty * 8) % 15 + 1;
+                bus->video_ram[at] = tile;
+                bus->video_ram[at + 1] = 0;
+            }
+        for (unsigned y = 0; y < 224; ++y)
+            for (unsigned x = 0; x < 256; ++x)
+                bus->native_framebuffer[y * 256 + x] =
+                    rgb(shade(block_at(game, source, combo, camera_x + int(x), camera_y + int(y) + 1) % 15 + 1));
+        ++bus->completed_frames;
+        const auto ram = bus->work_ram;
+        const auto video = bus->video_ram;
+        const auto palette = bus->palette_ram;
+        const auto objects = bus->object_attributes;
+        const auto native = bus->native_framebuffer;
+        const auto before = view();
+        const std::vector<std::uint8_t> registers(before.ppu_registers.begin(), before.ppu_registers.end());
+        const auto clocks = bus->master_clocks(), frames = bus->completed_frames;
+        std::array<std::uint16_t, 8> scroll{};
+        for (unsigned layer = 0; layer < 4; ++layer) {
+            scroll[layer] = before.background_scroll_x[layer];
+            scroll[layer + 4] = before.background_scroll_y[layer];
+        }
+        for (unsigned y = 0; y < 224; ++y) {
+            const auto current = view();
+            renderer.begin_scanline(current, y);
+            renderer.render_presentation_margins(current, y);
+            renderer.capture_direct_scanline(current, y);
+        }
+        const auto after = view();
+        bool scroll_same = true;
+        for (unsigned layer = 0; layer < 4; ++layer)
+            scroll_same &= scroll[layer] == after.background_scroll_x[layer] &&
+                           scroll[layer + 4] == after.background_scroll_y[layer];
+        require(ram == bus->work_ram && video == bus->video_ram && palette == bus->palette_ram &&
+                    objects == bus->object_attributes && native == bus->native_framebuffer && scroll_same &&
+                    clocks == bus->master_clocks() && frames == bus->completed_frames &&
+                    before.fixed_color == after.fixed_color &&
+                    std::equal(registers.begin(), registers.end(), after.ppu_registers.begin()),
+                std::string(name) + ": presentation camera changed source hardware or gameplay");
+        const auto direct = renderer.direct_scene();
+        require(direct && direct->motions.size() >= 3,
+                std::string(name) + ": camera path did not publish exact direct scene reconstruction");
+        const int origin = int(std::lround(-direct->motions[1].x)) - int(width - 256) / 2;
+        if (verify_pixels) {
+            const auto bounds = span(center_x, center_y);
+            const auto pixels = renderer.presentation_pixels(bus->native_framebuffer);
+            const auto raster = eb::rasterize_direct_scene({direct, {}});
+            require(raster.size() == pixels.size() && std::equal(raster.begin(), raster.end(), pixels.begin()),
+                    std::string(name) + ": direct raster differs from presentation pixels");
+            for (unsigned y = 0; y < 224; ++y)
+                for (unsigned x = 0; x < width; ++x) {
+                    const int wx = origin + int(x);
+                    const auto expected = wx < bounds[0] || wx >= bounds[1]
+                                              ? 0xff000000
+                                              : rgb(shade(block_at(game, source, combo, wx,
+                                                                   camera_y + int(y) + 1) % 15 + 1));
+                    if (pixels[y * width + x] != expected)
+                        throw std::runtime_error(std::string(name) + ": eased frame sampled outside its authored map "
+                                                 "or clipped incorrectly at " + std::to_string(x) + "," +
+                                                 std::to_string(y));
+                }
+            ++checks;
+        }
+        return origin;
+    }
+};
+void run_forest_path(const eb::GameAssets &game, const eb::native::WorldMap &map, const char *name,
+                     unsigned combo, int center_x, int seam_y, std::array<int, 2> old_bounds,
+                     std::array<int, 2> new_bounds, unsigned width) {
+    ForestPathFixture fixture(game, name, combo, width);
+    require(fixture.span(center_x, seam_y - 1) == old_bounds &&
+                fixture.span(center_x, seam_y) == new_bounds,
+            std::string(name) + ": imported forest seam boundaries changed");
+    // These centers straddle real walkable forest cells. Empty event flags
+    // preserve the source's initial collision arrangements at this location.
+    const std::array<std::uint8_t, 128> flags{};
+    const auto area = map.prepare(combo, flags);
+    for (int y = seam_y - 16; y <= seam_y + 16; ++y)
+        require(!(area.collision(center_x / 8, y / 8) & 0xc0),
+                std::string(name) + ": selected source forest path is blocked");
+    const int before_target = fixture.target(center_x, seam_y - 1), after_target = fixture.target(center_x, seam_y);
+    const int old_jump = std::abs(after_target - before_target);
+    require(old_jump > 4, std::string(name) + ": source path no longer reproduces the old sector camera snap");
+    int origin = fixture.frame(center_x, seam_y - 1, true);
+    require(origin == before_target, std::string(name) + ": fresh forest camera did not start at its source target");
+    int largest_step = 0;
+    // Repeatedly crossing one sector edge must hold its accepted framing;
+    // merely limiting each jump would still make the camera hunt left/right.
+    for (unsigned i = 0; i < 12; ++i) {
+        const int next = fixture.frame(center_x, seam_y - int(i & 1), i == 0 || i == 11);
+        largest_step = std::max(largest_step, std::abs(next - origin));
+        require(next == before_target, std::string(name) + ": brief forest seam dither changed camera framing");
+        origin = next;
+    }
+    for (unsigned i = 0; i < 128; ++i) {
+        const int next = fixture.frame(center_x, seam_y, i == 0 || i == 127);
+        largest_step = std::max(largest_step, std::abs(next - origin));
+        origin = next;
+    }
+    require(largest_step <= 4,
+            std::string(name) + ": one-pixel forest movement produced a correction above 4 pixels");
+    require(origin == after_target, std::string(name) + ": stable forest camera never settled at its authored target");
+    std::cout << name << ": width=" << width << ", old one-pixel seam jump=" << old_jump
+              << "px, largest correction=" << largest_step << "px, settled origin=" << origin << '\n';
+}
 } // namespace
 int main(int argc, char** argv) {
     try {
@@ -133,6 +319,13 @@ int main(int argc, char** argv) {
         run_case(game, "Fourside tunnel ultrawide", 5, 26, 22, 25, 5888, 1024);
         run_case(game, "Desert road row77 west", 8, 77, 1, 23, 256, 800);
         run_case(game, "Desert road row78 east", 8, 78, 1, 23, 5632, 1024);
+        const eb::native::WorldMap map(game.image, eb::native::world_map_layout(game.version));
+        for (unsigned width : {400u, 448u, 512u, 800u, 1024u}) {
+            run_forest_path(game, map, "Peaceful Rest Valley forest", 6, 4368, 2048,
+                            {4352, 6144}, {4096, 5888}, width);
+            run_forest_path(game, map, "Winters forest", 13, 576, 3840,
+                            {0, 768}, {0, 1024}, width);
+        }
         std::cout << "PASS " << game.title << ": " << checks
                   << " source-backed rendering checks (fixture, not gameplay)\n";
     } catch (const std::exception& e) {

@@ -16,6 +16,8 @@ struct BattleCombatantArtwork {
   unsigned width{}, height{};
   int left{}, top{}; // Authored anchor offsets, before final Y registration.
   std::vector<std::uint8_t> indices;
+  // Immutable decompressor output, in authored32x32 planar block order.
+  std::vector<std::uint8_t> planar;
 };
 struct BattleCombatantResource {
   unsigned enemy{}, sprite{}, palette_id{};
@@ -30,6 +32,7 @@ struct BattleCombatantLayout {
   unsigned enemy_stride{}, sprite_offset{}, palette_offset{};
   unsigned picture_count = 110, palette_count = 32, enemy_count = 231,
            group_count = 484;
+  unsigned allocation_offsets{}, tile_arrangements{};
 };
 BattleCombatantLayout battle_combatant_layout(GameVersion);
 // Borrowed presentation inputs; the gameplay owner retains formation, RNG,
@@ -69,7 +72,7 @@ public:
 private:
   friend class BattleCombatantScene;
   std::shared_ptr<const std::vector<BattleCombatantResource>> resources_;
-  std::array<std::optional<BattleCombatantPalette>, 4> alternate_{};
+  std::array<std::optional<BattleCombatantPalette>, 4> normal_{}, alternate_{};
   std::vector<BattleCombatantDraw> commands_;
 };
 class BattleCombatants;
@@ -78,7 +81,8 @@ public:
   std::span<const BattleCombatantResource> resources() const {
     return *resources_;
   }
-  // Borrow the effect owner's four alternate banks (physical banks12..15).
+  // Borrow the published object banks (physical banks8..15). The caller
+  // initializes and publishes this owner; binding never seeds its colors.
   // It must outlive this scene and any copies of the scene. Rebinding to a
   // different owner is rejected. Captured frames never borrow this owner.
   // Binding takes effect at the next explicit publication.
@@ -104,7 +108,7 @@ private:
   explicit BattleCombatantScene(
       std::shared_ptr<const std::vector<BattleCombatantResource>>);
   std::array<std::optional<BattleCombatantPalette>, 4>
-  capture_alternate_palettes() const;
+  capture_palettes(unsigned first_bank) const;
   std::shared_ptr<const std::vector<BattleCombatantResource>> resources_;
   const battle::PaletteBankState *palette_state_{};
   std::array<std::optional<BattleCombatantPalette>, 4> alternate_{};
@@ -116,6 +120,18 @@ public:
   BattleCombatants(std::span<const std::uint8_t>, BattleCombatantLayout);
   unsigned size() const;
   std::shared_ptr<const BattleCombatantArtwork> artwork(unsigned sprite) const;
+  // Complete GET_BATTLE_SPRITE_HEIGHT for owned sprite IDs, in eight-pixel
+  // units. ID0 reads the original wrapped table0 alias after multiply carry.
+  unsigned height(unsigned sprite) const;
+  unsigned width(unsigned sprite) const;
+  unsigned shape(unsigned sprite) const;
+  std::span<const std::uint8_t> planar(unsigned sprite) const;
+  // Only non-content source aliases require a live sequential read owner.
+  // Importing ordinary artwork never reads platform hardware.
+  std::optional<std::uint32_t> live_planar_source(unsigned sprite) const;
+  const std::array<std::uint16_t, 16> &packed_palette(unsigned palette) const;
+  unsigned allocation_offset(unsigned block) const;
+  unsigned tile_arrangement(unsigned block) const;
   BattleCombatantResource enemy(unsigned enemy) const;
   // Includes every authored group record, even count0, as C2EEE7 does.
   BattleCombatantScene prepare(unsigned battle) const;

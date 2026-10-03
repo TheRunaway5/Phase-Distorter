@@ -1,7 +1,9 @@
 #include "eb/native/stationary_npc_sprites.hpp"
 #include "eb/native/action_scripts.hpp"
 #include "eb/native/sprite_appearance.hpp"
+#include "eb/native/stationary_npc_policy.hpp"
 #include "eb/native/world_collision.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <algorithm>
 #include <new>
 #include <stdexcept>
@@ -48,6 +50,16 @@ void verify_stationary_programs(const ActionScriptData &scripts, GameVersion ver
     restore.call(jp ? 0xc44690 : 0xc46914); // Read authored NPC direction.
     restore.call(jp ? 0xc446d3 : 0xc46957); // Restore it only if changed.
     restore.byte(6); restore.byte(0x50); restore.byte(0x19); restore.word(repeat);
+    Expected animated{scripts, scripts.entry(606)};
+    initialize(animated); animated.byte(7); animated.word(child); animated.byte(0x19);
+    const unsigned animation_loop = (animated.at & 0xff0000) | scripts.byte(animated.at) |
+                                    unsigned(scripts.byte(animated.at + 1)) << 8;
+    animated.word(animation_loop);
+    Expected blink{scripts, animation_loop};
+    blink.byte(6); blink.byte(24); blink.byte(0x3b); blink.byte(1);
+    blink.call(jp ? 0xc0a491 : 0xc0a4b2);
+    blink.byte(6); blink.byte(24); blink.call(0xc40015);
+    blink.byte(0x0b); blink.word(animation_loop); blink.byte(0x19); blink.word(scripts.entry(35));
 }
 }
 struct StationaryNpcSprites::State {
@@ -58,8 +70,8 @@ struct StationaryNpcSprites::State {
     NpcSpriteReadinessLimits resource_limits;
     std::vector<std::optional<NpcPlacement>> placements;
     State(std::span<const std::uint8_t> assets, GameVersion version, std::shared_ptr<SpriteResources> resources,
-          NpcSpriteReadinessLimits limits)
-        : npcs(assets, npc_catalog_layout(version)), map(assets, world_map_layout(version)),
+          NpcSpriteReadinessLimits limits, bool restore_threed_npcs)
+        : npcs(assets, npc_catalog_layout(version, restore_threed_npcs)), map(assets, world_map_layout(version)),
           collision(assets, world_collision_layout(version)), sprites(std::move(resources)), resource_limits(limits) {
         if (!sprites) throw std::invalid_argument("Missing stationary NPC sprite resources");
         if (!limits.images || !limits.image_bytes)
@@ -77,12 +89,13 @@ struct StationaryNpcSprites::State {
 };
 StationaryNpcSprites::StationaryNpcSprites(std::span<const std::uint8_t> assets, GameVersion version,
                                          std::shared_ptr<SpriteResources> sprites,
-                                         NpcSpriteReadinessLimits limits)
-    : state_(std::make_shared<State>(assets, version, std::move(sprites), limits)) {}
+                                         NpcSpriteReadinessLimits limits, bool restore_threed_npcs)
+    : state_(std::make_shared<State>(assets, version, std::move(sprites), limits,
+                                     restore_threed_npcs)) {}
 bool StationaryNpcSprites::supports(NpcId npc) const {
     if (npc >= state_->npcs.size()) return false;
     const auto &definition = state_->npcs.definition(npc);
-    return definition.type == NpcType::Person && (definition.script == 8 || definition.script == 605);
+    return supports_stationary_npc_preview(definition.type, definition.script);
 }
 std::optional<NpcPlacement> StationaryNpcSprites::placement(NpcId npc) const {
     return supports(npc) ? state_->placements[npc] : std::nullopt;
@@ -155,6 +168,9 @@ std::vector<StationaryNpcSprite> StationaryNpcSprites::prepare(NpcRectangle boun
         const auto left = state_->collision.edge(*preparation.area_, origin, sprite.shape, CollisionEdge::Left);
         const auto flags = state_->collision.edge(*preparation.area_, origin, sprite.shape, CollisionEdge::Right, left);
         SpriteAppearance appearance(state_->sprites, definition.sprite);
+        // All three verified programs publish this exact first pose without
+        // moving. Script606's later animation belongs to its eventual active
+        // owner; readiness neither runs that timeline nor consumes randomness.
         appearance.select_four(definition.direction, 0, flags);
         const auto &selected = *appearance.displayed();
         result.push_back({candidate.placement,
@@ -162,5 +178,55 @@ std::vector<StationaryNpcSprite> StationaryNpcSprites::prepare(NpcRectangle boun
             sprite.palette, flags});
     }
     return result;
+}
+void StationaryNpcSprites::snapshot_preparation_io(SnapshotArchive &archive,
+                                                   StationaryNpcPreparation &preparation) const {
+    auto &p = preparation;
+    archive(p.area_preparations_, p.resource_queries_, p.resource_failures_, p.resource_failure_, p.flags_);
+    bool area = p.area_.has_value();
+    archive(area);
+    if (area) {
+        unsigned combination = archive.loading() ? 0 : p.area_->combination();
+        archive(combination);
+        if (archive.loading()) {
+            p.area_ = state_->map.prepare(combination, p.flags_);
+            p.owner_ = state_;
+        }
+    } else if (archive.loading()) {
+        p.area_.reset();
+        p.owner_.reset();
+    }
+    bool resources = p.resources_.has_value();
+    archive(resources);
+    if (archive.loading()) {
+        if (resources) {
+            p.resources_.emplace(std::shared_ptr<const NpcCatalog>(state_, &state_->npcs),
+                                  state_->sprites, state_->resource_limits);
+            p.resource_owner_ = state_;
+        } else {
+            p.resources_.reset();
+            p.resource_owner_.reset();
+        }
+    }
+    if (resources) archive(*p.resources_);
+    bool request = p.resource_request_.has_value();
+    archive(request);
+    if (archive.loading()) {
+        if (request) p.resource_request_.emplace();
+        else p.resource_request_.reset();
+    }
+    if (request) {
+        auto &r = *p.resource_request_;
+        archive(r.bounds.left, r.bounds.top, r.bounds.right, r.bounds.bottom,
+                r.tileset, r.objects_only, r.photograph, r.flags);
+        if (archive.loading()) {
+            if (r.tileset >= 32 || r.bounds.left > r.bounds.right || r.bounds.top > r.bounds.bottom)
+                throw std::runtime_error("Invalid snapshot NPC preparation request");
+            r.owner = state_;
+        }
+    }
+    if (archive.loading() && (p.resource_failure_ < NpcResourcePreparationFailure::None ||
+                              p.resource_failure_ > NpcResourcePreparationFailure::Allocation))
+        throw std::runtime_error("Invalid snapshot NPC preparation failure");
 }
 } // namespace eb::native

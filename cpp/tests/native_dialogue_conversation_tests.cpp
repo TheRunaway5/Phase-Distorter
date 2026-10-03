@@ -113,6 +113,38 @@ void stable_pending(Fixture& f) {
                 f.output.window(Fixture::first).cursor == cursor, "Frame sampling advanced native text");
     }
 }
+void battle_animation_prompt(eb::GameVersion version) {
+    for (unsigned mode : {0u, 1u, 2u, 0xffffu}) {
+        Fixture f({0x1c, 0x13, 0, 255, 4, 3, 0, 2}, version);
+        f.output.policy().prompt_mode = mode;
+        f.state.window().active.working = 0xffff4321;
+        f.conversation.start(EntryId{0});
+        if (!mode) {
+            require(next(f.conversation) == Progress::Finished && f.state.flag(3) &&
+                        f.state.window().active.working == 0xffff4321,
+                    "Disabled animation prompt changed working memory or failed to consume operands");
+            continue;
+        }
+        require(next(f.conversation) == Progress::Suspended &&
+                    std::holds_alternative<Request>(*f.conversation.event()),
+                "Nonzero prompt mode failed to reach the real battle animation owner");
+        const auto& request = std::get<Request>(*f.conversation.event());
+        require(request.kind == RequestKind::BattleAnimation &&
+                    request.battle_animation == BattleAnimationRequest{0xffff, 254} &&
+                    !f.state.flag(3), "Conversation changed literal battle arguments");
+        stable_pending(f);
+        f.output.policy().prompt_mode = 0;
+        f.state.focus = Fixture::second;
+        f.state.window().active.working = 0xabcd0000;
+        Response response;
+        response.battle_animation_result = BattleAnimationResult{true, true};
+        f.conversation.respond(response);
+        require(next(f.conversation) == Progress::Finished && f.state.flag(3) &&
+                    f.state.window().active.working == 1 &&
+                    f.state.windows.at(Fixture::first).active.working == 0xffff4321,
+                "Animation callback result ignored live focus or rechecked prompt mode after setup");
+    }
+}
 void ordered_glyph_effects(eb::GameVersion version) {
     Fixture f({0x71,4,1,0,0x72,2}, version);
     f.output.policy().instant = false; f.output.policy().text_speed = 1; f.output.policy().sound_mode = 2;
@@ -672,6 +704,7 @@ void dialogue_from_window_operation(eb::GameVersion version) {
 int main() {
     try {
         for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+            battle_animation_prompt(version);
             ordered_glyph_effects(version); wrap_handoff(version); nested_depth(version);
             window_control_and_restore(version); window_effect_nesting(version); dialogue_from_window_operation(version);
         }

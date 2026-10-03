@@ -56,7 +56,7 @@ struct Character {
   std::uint8_t miss_rate{};
   std::uint8_t boosted_speed{}, boosted_guts{}, boosted_vitality{},
       boosted_iq{}, boosted_luck{};
-  std::array<std::uint8_t, 3> reserved_92_94{};
+  std::array<std::uint8_t, 2> reserved_92_93{};
 };
 struct PersistedState {
   GameVersion version = GameVersion::US;

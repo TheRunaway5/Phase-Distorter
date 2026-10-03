@@ -198,6 +198,16 @@ Progress Conversation::advance(unsigned work_budget) {
                 output_.policy().prompt_mode = std::uint16_t(request.count);
                 runtime_.respond();
                 break;
+            case RequestKind::BattleAnimation:
+                if (!output_.policy().prompt_mode) {
+                    Response response;
+                    response.battle_animation_result = BattleAnimationResult{false, false};
+                    runtime_.respond(response);
+                } else {
+                    event_ = request;
+                    return Progress::Suspended;
+                }
+                break;
             case RequestKind::InputLock:
                 if (windows_) {
                     windows_->prompt_state().input_lock = std::uint16_t(request.count);
@@ -275,6 +285,13 @@ Progress Conversation::advance(unsigned work_budget) {
             case RequestKind::PartyQuery: {
                 if (!request.party_query) throw std::logic_error("Party query lacks its typed operands");
                 const auto result = windows_ ? windows_->query_party(*request.party_query) : std::nullopt;
+                if (result) runtime_.respond({*result});
+                else { event_ = request; return Progress::Suspended; }
+                break;
+            }
+            case RequestKind::BattleGrammar: {
+                if (!request.battle_grammar) throw std::logic_error("Battle grammar lacks its literal selector");
+                const auto result = windows_ ? windows_->query_battle(*request.battle_grammar) : std::nullopt;
                 if (result) runtime_.respond({*result});
                 else { event_ = request; return Progress::Suspended; }
                 break;

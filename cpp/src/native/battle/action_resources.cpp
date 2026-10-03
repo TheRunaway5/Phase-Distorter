@@ -22,8 +22,14 @@ std::shared_ptr<const ActionResources> ActionResources::import(
     if (table > image.size() || action_count * stride > image.size() - table)
         throw std::invalid_argument("Truncated battle action table");
     auto result = std::shared_ptr<ActionResources>(new ActionResources(version));
-    for (unsigned i = 0; i < action_count; ++i)
-        result->types_[i] = image[table + i * stride + 2];
+    for (unsigned i = 0; i < action_count; ++i) {
+        const auto row = image.subspan(table + i * stride, stride);
+        auto& action = result->actions_[i];
+        action.direction = row[0]; action.target = row[1];
+        action.type = row[2]; action.pp_cost = row[3];
+        for (unsigned byte = 0; byte < 4; ++byte)
+            action.description |= std::uint32_t(row[4 + byte]) << (byte * 8);
+    }
     for (unsigned i = 0; i < references.size(); ++i)
         for (unsigned byte = 0; byte < 4; ++byte)
             result->messages_[i][byte] = std::uint8_t(references[i] >> (byte * 8));

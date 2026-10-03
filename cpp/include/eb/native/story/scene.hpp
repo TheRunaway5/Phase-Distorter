@@ -6,13 +6,17 @@
 #include "eb/native/story/input.hpp"
 #include "eb/native/story/ticks.hpp"
 
+namespace eb::native { class WorldDisplayFade; struct WorldEncounterVisualState; }
+namespace eb::native::battle { class AnimationCommands; class Frame; class FrameDisplay; }
 namespace eb::native::npcs { class Interactions; }
 namespace eb::native::party { class Inventory; }
 
 namespace eb::native::story {
+class BattleDialogue;
 class PartyFormation;
 class TeddyParty;
-enum class SceneService { Frame, ActorEngine, CameraRefresh, BattleHelper, Dialogue, PartySpriteBlink, TeddyRefresh, ItemFailureScan, ScriptSound, BicycleDismount };
+enum class SceneService { Frame, ActorEngine, CameraRefresh, BattleHelper, Dialogue, PartySpriteBlink, TeddyRefresh, ItemFailureScan, ScriptSound, BicycleDismount, Publication };
+enum class FrameRequirement { NmiPublication, VBlank, InputOnly };
 struct SceneView {
     unsigned width = 256, overscan = 64;
     std::uint64_t identity = 1;
@@ -20,16 +24,17 @@ struct SceneView {
     bool raised_windows = true;
 };
 
-// The real source frame boundary publishes first, runs its scheduled world
-// callback, then acquires raw input. This service cannot advance another scene
-// or actor tick. Validation precedes publication; an execution failure after
-// publication poisons the scene rather than replaying a consumed frame.
+// NMI publication invokes scheduled IRQ work without polling input. WAIT can
+// subsequently consume that pending frame. All callbacks borrow stable owners;
+// validation is read-only, and post-publication failures poison the Scene.
 class FrameBoundaryService {
 public:
     virtual ~FrameBoundaryService() = default;
-    virtual void validate_frame() const = 0;
+    virtual void validate_publication() const = 0;
+    virtual void after_publication() = 0;
+    virtual void validate_input() const = 0;
     virtual std::array<std::uint16_t, 2>
-        read_after_publication(std::array<std::uint16_t, 2> host) = 0;
+        read_input(std::array<std::uint16_t, 2> host) = 0;
 };
 
 // The scene owns publication order; an optional native compositor captures
@@ -39,7 +44,27 @@ class ScenePublication {
 public:
     virtual ~ScenePublication() = default;
     virtual std::shared_ptr<const DirectSceneFrame> capture(const DirectSceneFrame &) const = 0;
+    // A frame-boundary capture may consume pending display transfers only after
+    // constructing a valid immutable result. Ordinary capture stays read-only.
+    virtual std::shared_ptr<const DirectSceneFrame> capture_next(const DirectSceneFrame &source) {
+        return capture(source);
+    }
+    // A non-null owner means capture composes that host's actual published
+    // windows itself. Scene validates identity and passes only the frame stamp.
+    virtual const dialogue::WindowHost *window_host() const noexcept { return nullptr; }
     virtual void complete_publication() = 0;
+    virtual dialogue::WindowPalettePublication *window_palette_publication() noexcept { return nullptr; }
+    virtual const WorldDisplayFade *display_fade() const noexcept { return nullptr; }
+    virtual const WorldEncounterVisualState *publication_visual() const noexcept { return nullptr; }
+    virtual bool uses_visual(const WorldEncounterVisualState &) const noexcept { return false; }
+    virtual const battle::FrameDisplay *frame_display() const noexcept { return nullptr; }
+    virtual bool uses_frame_display(const battle::FrameDisplay &display) const noexcept {
+        return frame_display() == &display;
+    }
+    // Admission verifies the setup child and display publisher borrow the
+    // same transport, palette, background and scratch owners.
+    virtual bool supports_animation(const battle::AnimationCommands &) const noexcept { return false; }
+    virtual bool supports_battle_frame(const battle::Frame &) const noexcept { return false; }
 };
 
 // Runs native story effects against the real actor world and immutable scene
@@ -55,7 +80,13 @@ class Scene {
         Operation &operator=(const Operation &) = delete;
         dialogue::Progress advance(unsigned work_budget = 4096);
         const std::optional<SceneService> &service() const;
-        // Complete one real frame with raw controller words, then resume.
+        // WAIT either requires a physical boundary or consumes an already
+        // pending NMI. Publication-only transfer waits never poll input.
+        FrameRequirement frame_requirement() const;
+        void complete_publication();
+        void complete_publication(FrameBoundaryService &);
+        // Complete the required boundary and real input poll, then resume.
+        // A wrapped pending byte leaves WAIT suspended for another NMI.
         // Debug/input globals come from the shared WindowHost prompt state.
         void complete_frame(std::array<std::uint16_t, 2> raw);
         void complete_frame(std::array<std::uint16_t, 2> host, FrameBoundaryService &);
@@ -91,6 +122,7 @@ class Scene {
         friend class Scene;
         struct Execution;
         explicit Operation(std::unique_ptr<Execution>);
+        void complete_publication_impl(FrameBoundaryService *);
         void complete_frame_impl(std::array<std::uint16_t, 2>, FrameBoundaryService *);
         std::unique_ptr<Execution> execution_;
     };
@@ -100,6 +132,13 @@ class Scene {
     Scene(const Scene &) = delete;
     Scene &operator=(const Scene &) = delete;
     std::unique_ptr<Operation> begin(TickKind);
+    // One real NMI publication; no Ticks traversal or WAIT/input consumption.
+    std::unique_ptr<Operation> begin_publication();
+    // Complete C43568: one real WAIT followed by the bound C2DB3F body.
+    std::unique_ptr<Operation> begin_battle_frame();
+    std::unique_ptr<Operation> begin_nested_battle_frame(Operation &parent);
+    std::unique_ptr<Operation> begin_animation(std::uint16_t ally, std::uint16_t enemy);
+    std::unique_ptr<Operation> begin_nested_animation(std::uint16_t ally, std::uint16_t enemy, Operation &parent);
     // Complete a standalone window operation's actual yielded effect. The
     // caller acknowledges that window operation only after this completes.
     std::unique_ptr<Operation> begin(dialogue::WindowEffect);
@@ -120,12 +159,30 @@ class Scene {
     void bind_party_formation(PartyFormation&);
     void bind_teddy_party(TeddyParty&);
     void bind_world_control(WorldControlCommandService&);
+    void bind_battle_animations(battle::AnimationCommands&);
+    void bind_battle_frame(battle::Frame&);
     // Loading explicitly invalidates old object artwork. Refreshing scenery
     // retains that capture state and never simulates actors or consumes input.
     void bind_publication(ScenePublication &);
+    struct BattleServices {
+        battle::Frame *frame{};
+        battle::AnimationCommands *animations{};
+    };
+    // An explicit source loading phase changes routing while forced blank.
+    // All owners are admitted before replacement. The current immutable frame
+    // remains visible to borrowers until a subsequent real publication.
+    void handoff_publication(ScenePublication &expected, ScenePublication &next,
+                             const WorldDisplayFade &, BattleServices);
+    const ScenePublication *publication() const noexcept;
+    bool uses(const TickState &) const noexcept;
+    bool uses(const dialogue::WindowHost&, const party::State&) const noexcept;
+    bool uses(const BattleDialogue&) const noexcept;
+    bool uses(const PartyFormation&) const noexcept;
     void clear_world_capture();
     void refresh_world_capture();
     bool shares_world(const dialogue::WindowHost&, const ActorWorld&) const;
+    bool failed() const noexcept;
+    bool busy() const noexcept;
     std::uint64_t completed_frames() const;
     std::shared_ptr<const DirectSceneFrame> frame() const;
     std::vector<WorldSoundEvent> take_sound_events();
@@ -133,6 +190,8 @@ class Scene {
     struct Execution;
     std::unique_ptr<Execution> execution_;
     std::unique_ptr<Operation> begin(std::optional<TickKind>, dialogue::Conversation *, Operation *,
-                                     std::optional<dialogue::WindowEffect> = {});
+                                     std::optional<dialogue::WindowEffect> = {},
+                                     std::optional<std::array<std::uint16_t, 2>> animation = {},
+                                     bool battle_wait = false);
 };
 } // namespace eb::native::story

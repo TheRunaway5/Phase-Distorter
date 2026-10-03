@@ -9,6 +9,7 @@ namespace eb::native {
 // image owners.
 class EnemySpriteReadiness {
 public:
+  void snapshot_io(SnapshotArchive &archive);
   EnemySpriteReadiness(std::shared_ptr<const EnemySpriteCatalog> catalog,
                        std::shared_ptr<SpriteResources> resources,
                        SpriteImageLeaseLimits limits = {});

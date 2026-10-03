@@ -3,6 +3,7 @@
 #include "eb/native/sprite_appearance.hpp"
 #include "eb/overworld_sprite_runtime.hpp"
 #include "eb/snes_bus.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "generated_profile.hpp"
 #include <map>
 #include <stdexcept>
@@ -246,5 +247,28 @@ bool OverworldSpriteEffects::try_execute(MainCpu65816 &cpu, SnesBus &bus,
   }
   finish(cpu);
   return true;
+}
+void OverworldSpriteEffects::snapshot_io(SnapshotArchive &archive) {
+  auto &state = *state_;
+  auto count = archive.count(state.effects.size());
+  archive(count);
+  archive.check_count(count);
+  if (archive.loading()) {
+    state.effects.clear();
+    for (std::uint32_t i = 0; i < count; ++i) {
+      unsigned ordinal{}, byte_slot{};
+      std::uint64_t resource{};
+      archive(ordinal, resource, byte_slot);
+      auto canvas = native::SpriteEffectCanvas::from_snapshot(archive);
+      if (!resource || byte_slot >= 60 || (byte_slot & 1) ||
+          !state.effects.emplace(ordinal, State::Effect{resource, byte_slot, std::move(canvas)}).second)
+        throw std::runtime_error("Invalid snapshot native sprite effect owner");
+    }
+  } else {
+    for (auto &[ordinal, effect] : state.effects)
+      archive(ordinal, effect.resource, effect.byte_slot, effect.canvas);
+  }
+  auto &d = state.diagnostics;
+  archive(d.seeds, d.rows, d.columns, d.pixels, d.uploads, d.clears);
 }
 } // namespace eb

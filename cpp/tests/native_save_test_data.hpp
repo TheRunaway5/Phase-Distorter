@@ -110,7 +110,7 @@ inline void check_named_values(const eb::native::saves::PersistedState &s,
                 v.paralysis_resistance == c[85 - cd] &&
                 v.hypnosis_brainshock_resistance == c[86 - cd] &&
                 schar.boosted_luck == c[91 - cd] &&
-                schar.reserved_92_94[2] == c[94 - cd],
+                schar.values.battle_selection == c[94 - cd],
             "Character resistance/archival mapping");
   }
   require(std::equal(s.event_flags.begin(), s.event_flags.end(),

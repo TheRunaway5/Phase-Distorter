@@ -5,6 +5,8 @@
 #include "eb/main_cpu_65816.hpp"
 #include "eb/native/sprite_appearance.hpp"
 #include "eb/snes_bus.hpp"
+#include "eb/snapshot_archive.hpp"
+#include "eb/source_entity_admission.hpp"
 #include "generated_profile.hpp"
 #include <array>
 #include <stdexcept>
@@ -68,6 +70,7 @@ struct OverworldSpriteRuntime::State {
     };
     Layout layout;
     GameVersion version;
+    const SourceTaskContentProof task_content;
     std::shared_ptr<native::SpriteResources> resources;
     OverworldSpriteAllocation allocations;
     ActorSurfaceService surfaces;
@@ -80,6 +83,7 @@ struct OverworldSpriteRuntime::State {
 
     State(std::span<const std::uint8_t> assets, GameVersion region)
         : layout(region == GameVersion::JP ? jp : us), version(region),
+          task_content(verify_source_task_content(assets, region)),
           resources(std::make_shared<native::SpriteResources>(assets, native::sprite_catalog_layout(region))),
           allocations(resources, native::import_actor_creation_data(assets, region)), surfaces(assets, region) {
         const auto catalog = native::sprite_catalog_layout(region);
@@ -94,7 +98,7 @@ struct OverworldSpriteRuntime::State {
         }
     }
     State(const State &other)
-        : layout(other.layout), version(other.version), resources(other.resources),
+        : layout(other.layout), version(other.version), task_content(other.task_content), resources(other.resources),
           allocations(other.allocations), surfaces(other.surfaces), frame_refs(other.frame_refs), graphics_banks(other.graphics_banks),
           actors(other.actors), releases(other.releases), counts(other.counts) {
         for (const auto &creation : other.creations)
@@ -141,15 +145,29 @@ struct OverworldSpriteRuntime::State {
         const unsigned direction = word(ram, l.direction + byte_slot);
         const unsigned animation = word(ram, eight ? l.animation + byte_slot : l.second);
         const unsigned flags = word(ram, l.surface + byte_slot);
-        const unsigned frame = eight ? native::eight_direction_pose(direction, animation)
-                                     : native::four_direction_pose(direction, animation);
-        const unsigned reference = frame_refs.at(*group).at(frame);
-        allocations.set_sprite(actor.id, *group);
-        if (eight)
-            allocations.select_eight(actor.id, direction, animation, flags);
-        else
-            allocations.select_four(actor.id, direction, animation, flags);
-        actor.override_image.reset();
+        unsigned reference;
+        if (eight && animation == 0xffff) {
+            // INIT_ENTITY leaves new party members hidden with animation -1.
+            // C0A6E3 can still refresh them before their action selects a pose;
+            // C0A0E3 suppresses drawing until that sentinel is replaced. Keep
+            // C0A794's raw frame-reference latch without decoding hidden bytes
+            // as an ordinary image. Its two ADCs retain carry and wrap the low
+            // pointer within the original graphics-table bank.
+            const unsigned sum = (address & 0xffff) + native::eight_direction_pose(direction, 0) * 2;
+            const auto low = std::uint16_t(sum + animation + unsigned(sum > 0xffff));
+            const unsigned offset = ((address & 0xff0000) | low) - 0xc00000;
+            reference = word(bus.scene_read_view().cartridge_rom, offset);
+        } else {
+            const unsigned frame = eight ? native::eight_direction_pose(direction, animation)
+                                         : native::four_direction_pose(direction, animation);
+            reference = frame_refs.at(*group).at(frame);
+            allocations.set_sprite(actor.id, *group);
+            if (eight)
+                allocations.select_eight(actor.id, direction, animation, flags);
+            else
+                allocations.select_four(actor.id, direction, animation, flags);
+            actor.override_image.reset();
+        }
         // A fully submerged short sprite exits before source displayed-frame
         // metadata changes. Preserve that authored visibility/orientation latch.
         const unsigned blank_rows = (reference & 2) || !(flags & 8) ? 0 : (flags & 4) ? 2 : 1;
@@ -195,6 +213,9 @@ NativeSpriteRuntimeDiagnostics OverworldSpriteRuntime::diagnostics() const {
     auto result = state_->counts;
     result.live_resources = state_->allocations.size();
     return result;
+}
+SourceTaskContentProof OverworldSpriteRuntime::source_task_content_proof() const {
+    return state_->task_content;
 }
 std::shared_ptr<native::SpriteResources> OverworldSpriteRuntime::resources() const {
     return state_->resources;
@@ -301,5 +322,52 @@ bool OverworldSpriteRuntime::try_execute(MainCpu65816 &cpu, SnesBus &bus) {
         state.unsupported("mutable artwork requires a native effect service", pc);
     }
     return false;
+}
+void OverworldSpriteRuntime::snapshot_io(SnapshotArchive &archive) {
+    auto &state = *state_;
+    archive(state.allocations);
+    for (auto &actor : state.actors) {
+        archive(actor.id, actor.geometry, actor.override_image, actor.custom);
+        if (archive.loading() && actor.id) {
+            const auto retained = state.allocations.snapshot(actor.id);
+            const auto &definition = state.resources->definition(actor.geometry);
+            if (definition.width != retained.creation.sprite.width ||
+                definition.height != retained.creation.sprite.height ||
+                definition.shape != retained.creation.sprite.shape)
+                throw std::runtime_error("Invalid snapshot native actor geometry");
+            if (actor.override_image &&
+                *actor.override_image->layout != *state.resources->acquire(actor.geometry, 0)->layout)
+                throw std::runtime_error("Invalid snapshot native actor effect image");
+        }
+    }
+    auto count = archive.count(state.creations.size());
+    archive(count);
+    archive.check_count(count);
+    if (archive.loading()) {
+        state.creations.clear();
+        for (std::uint32_t i = 0; i < count; ++i) {
+            unsigned stack{}, sprite{};
+            archive(stack, sprite);
+            auto lease = state.allocations.prepare(sprite);
+            state.allocations.snapshot_lease_io(archive, lease);
+            if (!lease || stack > 0xffff)
+                throw std::runtime_error("Invalid snapshot native actor creation");
+            state.creations.push_back({stack, sprite, std::move(lease)});
+        }
+    } else {
+        for (auto &creation : state.creations) {
+            archive(creation.stack, creation.sprite);
+            state.allocations.snapshot_lease_io(archive, creation.lease);
+        }
+    }
+    archive.sequence(state.releases, [](SnapshotArchive &io, State::Release &release) {
+        io(release.stack, release.slot);
+        if (io.loading() && (release.stack > 0xffff || release.slot >= 30))
+            throw std::runtime_error("Invalid snapshot native actor release");
+    });
+    auto &c = state.counts;
+    archive(c.creations, c.releases, c.resets, c.selections, c.graphics_allocations_bypassed,
+            c.map_allocations_bypassed, c.map_builds_bypassed, c.graphics_releases_bypassed,
+            c.map_releases_bypassed, c.unsupported_services);
 }
 } // namespace eb

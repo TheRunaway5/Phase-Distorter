@@ -30,15 +30,13 @@ std::uint32_t argb(std::uint16_t value) {
     const unsigned c = (value >> shift) & 31;
     return (c << 3) | (c >> 2);
   };
-  return 0xff000000u | (channel(0) << 16) | (channel(5) << 8) |
-         channel(10);
+  return 0xff000000u | (channel(0) << 16) | (channel(5) << 8) | channel(10);
 }
 // One real compressed 32x32 sprite, with one tile of each palette index.
 // Enemy IDs, resource order and catalog palette IDs deliberately disagree.
 struct Content {
   std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(160);
-  BattleCombatantLayout layout{0, 16, 80, 112, 128, 160,
-                              4, 0, 2, 1, 2, 4, 2};
+  BattleCombatantLayout layout{0, 16, 80, 112, 128, 160, 4, 0, 2, 1, 2, 4, 2};
   std::array<PackedPalette, 2> normal{};
   void word(unsigned at, unsigned value) {
     bytes.at(at) = std::uint8_t(value);
@@ -90,45 +88,60 @@ void initialize(PaletteBankState &palettes) {
     for (unsigned color = 0; color < 16; ++color)
       palettes.palette(bank)[color] =
           std::uint16_t(packed(bank + color, 3, 4) | 0x8000);
-    palettes.palette(bank)[1] =
-        std::uint16_t(packed(2 + bank, 3, 4) | 0x8000);
-    palettes.palette(bank)[2] =
-        std::uint16_t(packed(31, 3 + bank, 4) | 0x8000);
+    palettes.palette(bank)[1] = std::uint16_t(packed(2 + bank, 3, 4) | 0x8000);
+    palettes.palette(bank)[2] = std::uint16_t(packed(31, 3 + bank, 4) | 0x8000);
   }
   palettes.upload_mode = 7;
+}
+void publish_initial(PaletteBankState &palettes,
+                     std::span<const BattleCombatantResource> resources) {
+  for (unsigned bank = 0; bank < resources.size(); ++bank)
+    for (unsigned color = 0; color < 16; ++color) {
+      const auto c = resources[bank].palette[color];
+      palettes.staged_palette(8 + bank)[color] = packed(c.red, c.green, c.blue);
+    }
+  palettes.upload_mode = 24;
+  require(palettes.publish_pending(),
+          "Initial palette publication did not run");
+  palettes.upload_mode = 7; // Invalid sentinel: capture must not consume it.
 }
 std::vector<BattleCombatantDraw> commands(const BattleCombatantFrame &frame) {
   return {frame.commands().begin(), frame.commands().end()};
 }
 void check_colors(const BattleCombatantFrame &frame,
-                  std::span<const BattleCombatantResource> resources,
-                  const Content &content,
-                  const std::array<PackedPalette, 4> &alternate) {
+                  const std::array<PackedPalette, 16> &displayed) {
   const auto draw = frame.draw();
   require(draw->quads.size() == frame.commands().size(),
           "Synthetic sprite was not emitted as one object");
-  require(draw->palette_indices.empty(),
-          "Literal combatant colors acquired an unrelated palette owner");
+  require(draw->palette_indices.size() == draw->atlas.size(),
+          "Bound combatant capture lost physical palette identities");
   for (unsigned i = 0; i < frame.commands().size(); ++i) {
     const auto &command = frame.commands()[i];
     const auto &quad = draw->quads[i];
-    require(quad.layer == eb::DirectSceneFrame::Layer::Actors &&
+    require(quad.priority == 7 &&
+                quad.layer == eb::DirectSceneFrame::Layer::Actors &&
                 quad.color_math_eligible == command.alternate,
             "Object layer or source palette color-math eligibility differs");
-    const auto &colors = command.alternate
-                             ? alternate[command.resource]
-                             : content.normal[resources[command.resource].palette_id];
+    const auto &colors = command.alternate ? displayed[12 + command.resource]
+                                           : displayed[8 + command.resource];
     for (unsigned color = 0; color < 16; ++color) {
       const unsigned x = color % 4 * 8, y = color / 4 * 8;
-      require(draw->atlas[(quad.v + y) * draw->atlas_width + quad.u + x] ==
-                  (color ? argb(colors[color]) : 0),
+      const auto at = (quad.v + y) * draw->atlas_width + quad.u + x;
+      require(
+          draw->palette_indices[at] ==
+              (color ? ((command.alternate ? 12 : 8) + command.resource) * 16 +
+                           color
+                     : 256),
+          "Object palette identity differs from actual physical bank");
+      require(draw->atlas[at] == (color ? argb(colors[color]) : 0),
               "Object used a wrong physical palette bank or color index");
     }
   }
 }
 void same_geometry(const BattleCombatantFrame &a,
                    const BattleCombatantFrame &b) {
-  require(commands(a) == commands(b), "Palette publication selected objects again");
+  require(commands(a) == commands(b),
+          "Palette publication selected objects again");
   const auto first = a.draw(320, 9, 42), next = b.draw(320, 9, 42);
   require(first->width == next->width && first->frame == next->frame &&
               first->scene_identity == next->scene_identity &&
@@ -158,20 +171,20 @@ void actual_effect_after_objects() {
   PaletteBankState palettes;
   initialize(palettes);
   auto scene = catalog.prepare(0);
+  publish_initial(palettes, scene.resources());
   PaletteEffectState state;
   PaletteEffects effects(palettes, state);
   BattleCombatantPalette stale{};
   scene.set_alternate_palette(0, stale);
   scene.bind_palette_state(palettes);
-  require(scene.resources().size() == 4 &&
-              scene.resources()[0].enemy == 2 &&
+  require(scene.resources().size() == 4 && scene.resources()[0].enemy == 2 &&
               scene.resources()[0].palette_id == 1 &&
               scene.resources()[2].palette_id == 1,
           "Fixture failed to separate physical banks from catalog palette IDs");
   std::vector<BattleCombatantPresentation> actors;
   for (unsigned bank = 0; bank < 4; ++bank) {
-    BattleCombatantPresentation normal{8 + bank, bank, bank & 1, 100 + bank,
-                                       std::uint8_t(32 + bank * 56), 70};
+    BattleCombatantPresentation normal{
+        8 + bank, bank, bank & 1, 100 + bank, std::uint8_t(32 + bank * 56), 70};
     normal.blink = 2;
     actors.push_back(normal);
     auto alternate = normal;
@@ -196,24 +209,26 @@ void actual_effect_after_objects() {
   std::reverse(actors.begin(), actors.end());
   scene.publish(actors, {3, 2, 7, false});
   const auto before = scene.snapshot();
-  const auto initial = palettes.palettes;
+  const auto initial = palettes.staged;
   const auto initial_pixels = eb::rasterize_direct_scene({before.draw(), {}});
   require(before.commands().size() == 8,
           "Initial row publication ignored visibility gates");
-  require(before.commands()[0].slot == 8 &&
-              before.commands()[1].slot == 10 &&
+  require(before.commands()[0].slot == 8 && before.commands()[1].slot == 10 &&
               before.commands()[4].slot == 9,
           "Initial row publication changed source row and slot order");
   for (const auto &actor : actors) {
-    require(actor.blink == (actor.slot == 21 ? 4 : actor.slot == 20 ? 3 : 1),
+    require(actor.blink == (actor.slot == 21   ? 4
+                            : actor.slot == 20 ? 3
+                                               : 1),
             "Initial object pass did not advance blink exactly once");
-    require(actor.alternate_flash == (actor.slot >= 20 ? 9 :
-                                      actor.alternate ? 8 : 0),
+    require(actor.alternate_flash == (actor.slot >= 20  ? 9
+                                      : actor.alternate ? 8
+                                                        : 0),
             "Initial object pass did not preserve timer short circuit");
   }
   require(palettes.upload_mode == 7 && state == PaletteEffectState{},
           "Object publication advanced or acknowledged palette effects");
-  check_colors(before, scene.resources(), content, initial);
+  check_colors(before, initial);
   effects.set_speed(2);
   for (unsigned bank = 0; bank < 4; ++bank) {
     effects.target(bank * 16, 31, 31, 31); // Color0 remains unprocessed.
@@ -224,13 +239,13 @@ void actual_effect_after_objects() {
   require(palettes.upload_mode == 16,
           "Real palette effect did not stage the source upload request");
   for (unsigned bank = 0; bank < 4; ++bank) {
-    require(palettes.palette(bank)[0] == initial[bank][0],
+    require(palettes.palette(bank)[0] == initial[12 + bank][0],
             "Real palette effect changed transparent color0");
     require(palettes.palette(bank)[1] ==
                 std::uint16_t(packed(6 + bank, 9, 12) | 0x8000),
             "Actual first effect step differs from the known target");
     require(palettes.palette(bank)[2] ==
-                std::uint16_t(initial[bank][2] + 1),
+                std::uint16_t(initial[12 + bank][2] + 1),
             "Raw packed carry was replaced by per-channel clamping");
   }
   require(scene.snapshot().draw()->atlas == before.draw()->atlas,
@@ -245,36 +260,57 @@ void actual_effect_after_objects() {
   }
   const auto borrowed = actors;
   const auto progressed = state;
-  const auto staged = palettes.palettes;
+  const auto staged = palettes.staged;
+  scene.publish_palettes();
+  require(scene.snapshot().draw()->atlas == before.draw()->atlas &&
+              palettes.upload_mode == 16,
+          "Late capture exposed staged colors before the actual DMA boundary");
+  require(palettes.publish_pending(), "Object palette DMA was not published");
   scene.publish_palettes();
   const auto after = scene.snapshot();
   require(actors == borrowed && state == progressed &&
-              palettes.palettes == staged && palettes.upload_mode == 16,
+              palettes.staged == staged && palettes.upload_mode == 0,
           "Late publication replayed logic or consumed upload intent");
   same_geometry(before, after);
-  check_colors(after, scene.resources(), content, staged);
+  check_colors(after, palettes.displayed);
   require(eb::rasterize_direct_scene({after.draw(), {}}) != initial_pixels,
           "Late effect colors did not reach emitted combatant pixels");
   require(eb::rasterize_direct_scene({before.draw(), {}}) == initial_pixels,
           "Late palette capture mutated an earlier snapshot");
   scene.publish_palettes();
   require(scene.snapshot().draw()->atlas == after.draw()->atlas &&
-              state == progressed && palettes.upload_mode == 16,
+              state == progressed && palettes.upload_mode == 0,
           "Repeated capture advanced a palette effect");
   effects.advance();
+  palettes.publish_pending();
   scene.publish_palettes();
-  check_colors(scene.snapshot(), scene.resources(), content, palettes.palettes);
+  check_colors(scene.snapshot(), palettes.displayed);
   require(after.draw()->atlas != scene.snapshot().draw()->atlas,
           "A second real effect step did not publish distinct colors");
   for (unsigned bank = 0; bank < 4; ++bank)
     effects.reverse(bank, 2);
   effects.advance();
   effects.advance();
-  require(palettes.palettes == initial,
+  require(palettes.staged == initial,
           "Actual reversed effect did not restore raw starting colors");
+  palettes.publish_pending();
   scene.publish_palettes();
-  require(eb::rasterize_direct_scene({scene.snapshot().draw(), {}}) == initial_pixels,
+  require(eb::rasterize_direct_scene({scene.snapshot().draw(), {}}) ==
+              initial_pixels,
           "Reversed effect did not restore original emitted pixels");
+  same_geometry(before, scene.snapshot());
+  palettes.staged_palette(8)[1] ^= 31;
+  palettes.upload_mode = 8;
+  palettes.publish_pending();
+  scene.publish_palettes();
+  require(scene.snapshot().draw()->atlas == before.draw()->atlas,
+          "Lower-half DMA incorrectly published an object normal bank");
+  palettes.upload_mode = 16;
+  palettes.publish_pending();
+  scene.publish_palettes();
+  check_colors(scene.snapshot(), palettes.displayed);
+  require(scene.snapshot().draw()->atlas != before.draw()->atlas,
+          "Bound normal colors remained tied to immutable imported palettes");
   same_geometry(before, scene.snapshot());
 }
 void owner_and_rejection() {
@@ -283,7 +319,9 @@ void owner_and_rejection() {
   PaletteBankState palettes, other;
   initialize(palettes);
   initialize(other);
-  auto scene = catalog.prepare(1); // Two resources, same normal catalog palette.
+  auto scene =
+      catalog.prepare(1); // Two resources, same normal catalog palette.
+  publish_initial(palettes, scene.resources());
   scene.bind_palette_state(palettes);
   scene.bind_palette_state(palettes);
   scene.publish_palettes();
@@ -315,19 +353,25 @@ void owner_and_rejection() {
   require(invalid == bad_input &&
               scene.snapshot().draw()->atlas == retained_pixels,
           "Failed row publication committed timers or newly staged colors");
+  palettes.upload_mode = 16;
+  palettes.publish_pending();
   scene.publish_palettes();
-  check_colors(scene.snapshot(), scene.resources(), content, palettes.palettes);
+  check_colors(scene.snapshot(), palettes.displayed);
   require(scene.snapshot().draw()->atlas != retained_pixels,
           "Rejected rebind lost the original live palette owner");
   const auto main_before = scene.snapshot();
   auto copy = scene;
   palettes.palette(1)[1] = 0;
-  palettes.palette(3)[1] = 0xffff; // Valid physical bank without a resource here.
+  palettes.palette(3)[1] =
+      0xffff; // Valid physical bank without a resource here.
+  palettes.upload_mode = 16;
+  palettes.publish_pending();
   copy.publish_palettes();
-  require(copy.snapshot().draw()->atlas != main_before.draw()->atlas &&
-              scene.snapshot().draw()->atlas == main_before.draw()->atlas,
-          "Scene copies aliased immutable publications or lost shared ownership");
-  check_colors(copy.snapshot(), copy.resources(), content, palettes.palettes);
+  require(
+      copy.snapshot().draw()->atlas != main_before.draw()->atlas &&
+          scene.snapshot().draw()->atlas == main_before.draw()->atlas,
+      "Scene copies aliased immutable publications or lost shared ownership");
+  check_colors(copy.snapshot(), palettes.displayed);
   require(retained.draw()->atlas == retained_pixels,
           "Raw bank mutation changed a retained snapshot");
 }
@@ -340,6 +384,7 @@ void unbound_and_lifetime() {
     PaletteBankState palettes;
     initialize(palettes);
     auto scene = catalog.prepare(0);
+    publish_initial(palettes, scene.resources());
     BattleCombatantPresentation actor{8, 3, 0, 99, 128, 100};
     actor.alternate = true;
     rejects([&] { scene.publish(std::span(&actor, 1)); },
@@ -365,15 +410,19 @@ void unbound_and_lifetime() {
     scene.publish_palettes();
     retained = scene.snapshot();
     retained_pixels = eb::rasterize_direct_scene({retained.draw(), {}});
-    palettes.palettes = {};
+    palettes.staged = {};
+    palettes.upload_mode = 24;
+    palettes.publish_pending();
     scene.publish_palettes();
     std::fill(content.bytes.begin(), content.bytes.end(), 0);
-    require(eb::rasterize_direct_scene({retained.draw(), {}}) == retained_pixels,
+    require(eb::rasterize_direct_scene({retained.draw(), {}}) ==
+                retained_pixels,
             "Retained frame depends on raw palette or content mutation");
   }
   require(retained.commands().size() == 1 &&
               retained.commands()[0].identity == 99 &&
-              eb::rasterize_direct_scene({retained.draw(), {}}) == retained_pixels,
+              eb::rasterize_direct_scene({retained.draw(), {}}) ==
+                  retained_pixels,
           "Retained frame borrowed a destroyed scene or palette owner");
 }
 } // namespace

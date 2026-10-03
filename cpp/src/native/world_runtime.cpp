@@ -1,4 +1,5 @@
 #include "eb/native/world_runtime.hpp"
+#include "eb/native/story/battle_publication.hpp"
 #include "eb/native/party/inventory.hpp"
 #include "eb/native/world_actor_movement.hpp"
 #include "eb/native/world_battle_entry.hpp"
@@ -147,16 +148,23 @@ struct WorldRuntime::State : story::FrameBoundaryService {
     return walking && walking->doors().transitions() != transitions;
   }
 
-  void validate_frame() const override {
+  void validate_publication() const override {
     require(transitions && !transitions->failed(),
             "Native frame requires healthy transition/scheduler owners");
+  }
+  void after_publication() override {
+    // An interrupt inside the live scheduled callback still publishes its
+    // frame; the source IN_IRQ_CALLBACK guard suppresses only recursion.
+    // process_frame reports that valid suppression as false, not an error.
+    (void)transitions->scheduler().process_frame();
+  }
+  void validate_input() const override {
+    validate_publication();
     require(!transitions->playback().recording_required(),
             "Native frame recording requires its real recording service");
   }
   std::array<std::uint16_t, 2>
-  read_after_publication(std::array<std::uint16_t, 2> host) override {
-    require(transitions->scheduler().process_frame(),
-            "Native frame cannot reenter its scheduled task phase");
+  read_input(std::array<std::uint16_t, 2> host) override {
     transitions->playback().read(host);
     return transitions->playback().state().raw;
   }
@@ -218,6 +226,7 @@ void WorldRuntime::check() const {
     std::rethrow_exception(s.failure);
   require(!s.abandoned,
           "An abandoned operation invalidated the native world runtime");
+  require(!s.scene.failed(), "Native scene continuation has failed");
   require(!s.transition_owner_changed(),
           "Native door producers and frame services have different owners");
   require(!s.maintenance || !s.maintenance->failed(),
@@ -330,6 +339,12 @@ WorldRuntime::begin(story::TickKind kind) {
           "Changed world content needs an explicit ordinary actor/screen tick "
           "before publication");
   return wrap(state_->scene.begin(kind), refresh);
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_publication() {
+  check_idle();
+  require(!state_->capture_dirty,
+          "Changed world content must be captured before publication");
+  return wrap(state_->scene.begin_publication());
 }
 std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_main_frame() {
   check_idle();
@@ -490,6 +505,43 @@ void WorldRuntime::bind_automatic(WorldAutomatic &automatic) {
                          *s.interaction_queue),
       "Native automatic movement must use this runtime's actual world owners");
   s.automatic = &automatic;
+}
+const story::Scene &WorldRuntime::scene() const noexcept { return state_->scene; }
+void WorldRuntime::bind_battle_publication(story::BattlePublication &publication) {
+  check_idle();
+  auto &s = *state_;
+  require(!s.presentation, "World-to-battle publication requires its encounter handoff lifecycle");
+  require(publication.window_host() == &s.windows,
+          "Battle publication and runtime must share the actual windows");
+  s.scene.bind_publication(publication);
+  s.capture_dirty = true;
+}
+void WorldRuntime::enter_battle_publication(WorldScenePresentation &expected,
+    story::BattlePublication &next, const WorldDisplayFade &fade, battle::Frame &frame,
+    battle::AnimationCommands *animations) {
+  check_idle();
+  auto &s = *state_;
+  require(!s.capture_dirty && s.presentation == &expected &&
+              next.uses(expected.visual(), fade) && expected.display_fade() == &fade,
+          "Battle handoff requires captured world and actual shared visual/fade owners");
+  s.scene.handoff_publication(expected, next, fade, {&frame, animations});
+}
+void WorldRuntime::return_world_publication(story::BattlePublication &expected,
+    WorldScenePresentation &next, const WorldDisplayFade &fade) {
+  check_idle();
+  auto &s = *state_;
+  require(!s.capture_dirty && s.presentation == &next &&
+              expected.uses(next.visual(), fade) && next.display_fade() == &fade,
+          "World return requires captured world and actual shared visual/fade owners");
+  s.scene.handoff_publication(expected, next, fade, {});
+}
+void WorldRuntime::bind_battle_animations(battle::AnimationCommands &animations) {
+  check_idle();
+  state_->scene.bind_battle_animations(animations);
+}
+void WorldRuntime::bind_battle_frame(battle::Frame &frame) {
+  check_idle();
+  state_->scene.bind_battle_frame(frame);
 }
 void WorldRuntime::bind_world_control_commands(WorldControlCommands &commands) {
   check_idle();
@@ -672,6 +724,8 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
       if (progress != dialogue::Progress::Suspended)
         continue;
       switch (*scene_->service()) {
+      case story::SceneService::Publication:
+        return dialogue::Progress::Suspended;
       case story::SceneService::Frame:
         if (main_effect_pending_) {
           s.encounter_effects->advance();
@@ -857,6 +911,24 @@ WorldRuntime::Operation::dialogue_event() const {
   return scene_->dialogue_event();
 }
 bool WorldRuntime::Operation::complete() const { return done_; }
+story::FrameRequirement WorldRuntime::Operation::frame_requirement() const {
+  runtime_.check_response(*this);
+  return scene_->frame_requirement();
+}
+void WorldRuntime::Operation::complete_publication() {
+  runtime_.check_response(*this);
+  const auto completed = runtime_.state_->scene.completed_frames();
+  try {
+    if (runtime_.state_->transitions)
+      scene_->complete_publication(*runtime_.state_);
+    else
+      scene_->complete_publication();
+  } catch (...) {
+    if (runtime_.state_->scene.failed() || runtime_.state_->scene.completed_frames() != completed)
+      runtime_.state_->failure = std::current_exception();
+    throw;
+  }
+}
 void WorldRuntime::Operation::complete_frame(std::array<std::uint16_t, 2> raw) {
   require(!main_effect_pending_, "Main frame must execute encounter effects before publication");
   runtime_.check_response(*this);
@@ -870,7 +942,7 @@ void WorldRuntime::Operation::complete_frame(std::array<std::uint16_t, 2> raw) {
     // Validation/render rejection before publication remains retryable. A
     // failing callback after publication consumed this frame and must not run
     // twice even if its own service does not expose a failure flag.
-    if (runtime_.state_->scene.completed_frames() != completed)
+    if (runtime_.state_->scene.failed() || runtime_.state_->scene.completed_frames() != completed)
       runtime_.state_->failure = std::current_exception();
     throw;
   }
@@ -1006,7 +1078,7 @@ bool WorldRuntime::advance_streaming(unsigned budget) {
 }
 bool WorldRuntime::streaming() const { return state_->streaming.busy(); }
 bool WorldRuntime::failed() const {
-  return bool(state_->failure) || state_->abandoned ||
+  return bool(state_->failure) || state_->abandoned || state_->scene.failed() ||
          state_->transition_owner_changed() || state_->streaming.failed() ||
          (state_->maintenance && state_->maintenance->failed()) ||
          (state_->walking && state_->walking->failed()) ||

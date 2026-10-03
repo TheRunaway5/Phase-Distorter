@@ -3,6 +3,7 @@
 #include "eb/native/world_encounter.hpp"
 
 namespace eb::native {
+namespace battle { struct PaletteBankState; class FrameDisplay; }
 struct WorldEncounterClip {
   EncounterWindowMask rows;
   bool second_window{};
@@ -38,6 +39,8 @@ public:
   virtual ~WorldEncounterRestoration() = default;
   virtual bool uses(const ScenePalette &,
                     const WorldEncounterVisualState &) const noexcept = 0;
+  virtual bool uses_battle_palette(const battle::PaletteBankState &,
+                    const WorldEncounterVisualState &) const noexcept { return false; }
   virtual void restore_battle_palettes() = 0;
   virtual void restore_selected_layer_configuration() = 0;
 };
@@ -47,11 +50,16 @@ public:
   WorldEncounterEffects(const WorldSwirlData &, const WorldEncounterEffectData &,
                         WorldSwirlState &, ScenePalette &,
                         WorldEncounterVisualState &, WorldEncounterRestoration &);
+  WorldEncounterEffects(const WorldSwirlData &, const WorldEncounterEffectData &,
+                        WorldSwirlState &, battle::PaletteBankState &,
+                        WorldEncounterVisualState &, WorldEncounterRestoration &);
   WorldEncounterEffects(const WorldEncounterEffects &) = delete;
   WorldEncounterEffects &operator=(const WorldEncounterEffects &) = delete;
   // One actual C4A7B0 invocation. It installs row content but does not publish
   // a frame, poll input, tick actors, or advance any other effect owner.
   void advance();
+  // Optional actual battle display transport, shared by all frame phases.
+  void bind_display(battle::FrameDisplay &);
   // Read-only materialization for native frame capture. No display samples
   // may change animation or the retained second-window interval.
   // A logical NMI publication resets the second interval before transporting
@@ -68,9 +76,11 @@ public:
   bool failed() const noexcept { return failed_; }
   bool uses(const WorldSwirlData &, const WorldSwirlState &, const ScenePalette &,
             const WorldEncounterVisualState &) const noexcept;
+  bool uses(const WorldSwirlData &, const WorldSwirlState &, const battle::PaletteBankState &,
+            const WorldEncounterVisualState &) const noexcept;
   bool uses(const WorldEncounterRestoration &) const noexcept;
   bool uses(const WorldEncounter &encounter) const noexcept {
-    return encounter.uses_effect_state(definitions_, swirl_, colors_, visual_);
+    return colors_ && encounter.uses_effect_state(definitions_, swirl_, *colors_, visual_);
   }
 
 private:
@@ -81,9 +91,12 @@ private:
   const WorldSwirlData &definitions_;
   const WorldEncounterEffectData &data_;
   WorldSwirlState &swirl_;
-  ScenePalette &colors_;
+  ScenePalette *colors_{};
+  battle::PaletteBankState *battle_colors_{};
+  bool restoration_matches() const noexcept;
   WorldEncounterVisualState &visual_;
   WorldEncounterRestoration &restoration_;
+  battle::FrameDisplay *display_{};
   bool executing_{}, failed_{};
 };
 } // namespace eb::native

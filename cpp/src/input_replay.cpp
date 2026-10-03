@@ -1,4 +1,5 @@
 #include "eb/input_replay.hpp"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -53,11 +54,18 @@ std::vector<InputChange> input_script(const std::string &path) {
 }
 
 InputReplay::InputReplay(std::vector<InputChange> changes, std::uint16_t initial_buttons)
-    : changes_(std::move(changes)), held_buttons_(initial_buttons) {
+    : changes_(std::move(changes)), held_buttons_(initial_buttons), initial_buttons_(initial_buttons) {
     for (std::size_t index = 1; index < changes_.size(); ++index) {
         if (changes_[index].frame <= changes_[index - 1].frame)
             throw std::invalid_argument("Input replay frames must be strictly increasing");
     }
+}
+
+void InputReplay::seek(std::uint64_t frame) {
+    const auto next = std::upper_bound(changes_.begin(), changes_.end(), frame,
+        [](std::uint64_t at, const InputChange &event) { return at < event.frame; });
+    next_change_ = std::size_t(next - changes_.begin());
+    held_buttons_ = next == changes_.begin() ? initial_buttons_ : std::prev(next)->buttons;
 }
 
 std::uint16_t InputReplay::buttons_for_frame(std::uint64_t frame, std::uint16_t physical_buttons) {

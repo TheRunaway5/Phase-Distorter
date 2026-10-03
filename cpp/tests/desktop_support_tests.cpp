@@ -170,6 +170,12 @@ void replay_contract(const std::filesystem::path &directory) {
     require(replay.buttons_for_frame(8, 0x8000) == 0x8000,
             "Skipped hardware boundaries did not consume due release");
     require(replay.buttons_for_frame(15) == 512, "Last replay mask did not remain held");
+    replay.seek(2);
+    require(replay.buttons_for_frame(2) == 0x80 && replay.buttons_for_frame(15) == 512,
+            "Snapshot rewind retained future replay input or skipped changes");
+    replay.seek(0);
+    require(replay.buttons_for_frame(0) == 0x1000,
+            "Snapshot rewind before first event lost initial buttons");
     eb::InputReplay deterministic(changes, 0x1000);
     const auto replay_only = options({"--replay-only"});
     require(deterministic.buttons_for_frame(2, replay_only.replay_only ? 0 : 0x8000) == 0x80,

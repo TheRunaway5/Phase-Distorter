@@ -106,7 +106,7 @@ struct Oracle {
 
 void run(const eb::GameAssets &assets) {
   auto catalog = std::make_shared<const NpcCatalog>(
-      assets.image, npc_catalog_layout(assets.version));
+      assets.image, npc_catalog_layout(assets.version, false));
   auto resources = std::make_shared<SpriteResources>(
       assets.image, sprite_catalog_layout(assets.version));
   NpcSpriteReadiness readiness(catalog, resources);

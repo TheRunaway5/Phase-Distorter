@@ -7,6 +7,7 @@
 
 namespace eb {
 class Spc700AudioCpu;
+class SnapshotArchive;
 // Owns the audio synthesis engine and its pending interleaved stereo samples.
 // It shares SPC RAM rather than copying it: sample decoding and echo writes
 // must observe the same bytes as the source-translated sound driver.
@@ -27,6 +28,7 @@ public:
     void advance_audio_clocks(unsigned audio_clocks);
     std::vector<std::int16_t> take_stereo_samples();
     std::uint64_t generated_stereo_frame_count() const { return generated_stereo_frames_; }
+    void snapshot_io(SnapshotArchive &archive);
 
 private:
     // Keep the third-party processor's type and headers out of this public API.

@@ -2,6 +2,7 @@
 // consumes no RNG and owns immutable images instead of a source graphics pool.
 #include "eb/native/stationary_npc_sprites.hpp"
 #include "eb/native/action_scripts.hpp"
+#include "eb/native/sprite_appearance.hpp"
 #include "eb/native/world_collision.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_bus.hpp"
@@ -96,11 +97,13 @@ struct Oracle {
         put(p.party_state.leader_x,place.x); put(p.party_state.leader_y,place.y);
         put(0x24,0x1234); put(0x26,0x5678); cache(area,place);
     }
-    void tick(const NpcPlacement &place) {
+    void tick(const NpcPlacement &place, bool animated = false) {
         call(run); ++ticks;
         require(get(p.wram_entity_world_coordinates.x) == place.x && get(p.wram_entity_world_coordinates.y) == place.y,
                 "Stationary script moved authored position");
-        require(get(p.wram_entity_animation_frame) == 0, "Stationary script changed animation0");
+        require(get(p.wram_entity_animation_frame) == 0 ||
+                    (animated && get(p.wram_entity_animation_frame) == 1),
+                "Stationary script changed its verified animation range");
         require(get(0x24) == 0x1234 && get(0x26) == 0x5678, "Stationary script mutated RNG");
         for (unsigned axis = 0; axis < 3; ++axis)
             require(get(0x0cf6 - script_delta + axis * 60) == 0 && get(0x0daa - script_delta + axis * 60) == 0,
@@ -141,12 +144,15 @@ void run(const eb::GameAssets &assets) {
     NpcCatalog catalog(assets.image,npc_catalog_layout(assets.version));
     WorldMap map(assets.image,world_map_layout(assets.version));
     Oracle oracle(assets);
-    std::array<std::array<bool,8>,2> long_cases{};
+    std::array<std::array<bool,8>,3> long_cases{};
     std::uint64_t candidates = 0, pixels = 0, exclusions = 0;
     std::array<bool,2> exterior_pair{};
+    std::array<bool,2> twoson_benches{}, twoson_facing{};
     for (unsigned id = 0; id < catalog.size(); ++id) {
         const auto &d = catalog.definition(NpcId(id));
-        require(ready.supports(NpcId(id)) == (d.type == NpcType::Person && (d.script == 8 || d.script == 605)),
+        require(ready.supports(NpcId(id)) ==
+                    ((d.type == NpcType::Person || d.type == NpcType::Object) &&
+                     (d.script == 8 || d.script == 605 || d.script == 606)),
                 "Readiness admitted an unsupported authored program");
     }
     for (unsigned pattern : {0u,255u}) {
@@ -167,19 +173,54 @@ void run(const eb::GameAssets &assets) {
                             "Theater exterior pair does not match authored catalog placement");
                     exterior_pair[member] = true;
                 }
-                oracle.seed(sprite.placement,definition,area); oracle.tick(sprite.placement);
+                if (sprite.placement.npc == 350 || sprite.placement.npc == 351) {
+                    const unsigned member = sprite.placement.npc - 350;
+                    require(tileset == 2 && definition.type == NpcType::Object && definition.script == 8 &&
+                                definition.sprite == 198 && sprite.placement.x == (member ? 2096u : 2440u) &&
+                                sprite.placement.y == (member ? 7064u : 7168u),
+                            "Twoson benches do not match source definitions/placements");
+                    twoson_benches[member] = true;
+                }
+                if (sprite.placement.npc == 304 || sprite.placement.npc == 311) {
+                    const unsigned member = sprite.placement.npc == 311;
+                    require(tileset == 2 && definition.type == NpcType::Person && definition.script == 606 &&
+                                definition.sprite == (member ? 78u : 55u) &&
+                                sprite.placement.x == (member ? 1480u : 1912u) &&
+                                sprite.placement.y == (member ? 6952u : 6912u),
+                            "Twoson fixed-position people do not match source definitions/placements");
+                    twoson_facing[member] = true;
+                }
+                const bool animated = definition.script == 606;
+                oracle.seed(sprite.placement,definition,area); oracle.tick(sprite.placement, animated);
                 pixels += oracle.compare(sprite); ++candidates;
-                const unsigned kind = definition.script == 605;
+                const unsigned kind = animated ? 2 : definition.script == 605;
                 if (!long_cases[kind][definition.direction & 7]) {
                     long_cases[kind][definition.direction & 7] = true;
                     // Three periodic direction restorations, with actual child
                     // task allocation/traversal through RUN_ACTIONSCRIPT_FRAME.
-                    for (unsigned tick = 1; tick < 256; ++tick) oracle.tick(sprite.placement);
+                    std::array<bool,2> phases{true, false};
+                    for (unsigned tick = 1; tick < 256; ++tick) {
+                        oracle.tick(sprite.placement, animated);
+                        const unsigned phase = oracle.get(oracle.p.wram_entity_animation_frame);
+                        if (animated && !phases[phase]) {
+                            phases[phase] = true;
+                            SpriteAppearance appearance(resources, definition.sprite);
+                            appearance.select_four(definition.direction, phase, sprite.surface);
+                            const auto &selected = *appearance.displayed();
+                            auto current = sprite;
+                            current.image = resources->acquire(selected.sprite, selected.pose,
+                                                               selected.surface, selected.format);
+                            pixels += oracle.compare(current);
+                        }
+                    }
+                    if (animated)
+                        require(phases[1], "Script606 source animation timeline was not exercised");
                     require(oracle.get(oracle.direction) == definition.direction, "Stationary program changed authored direction");
                     if (kind) {
                         oracle.put(oracle.direction,(definition.direction + 2) & 7);
-                        for (unsigned tick = 0; tick < 96; ++tick) oracle.tick(sprite.placement);
-                        require(oracle.get(oracle.direction) == definition.direction, "Script605 failed to restore authored direction");
+                        for (unsigned tick = 0; tick < 96; ++tick) oracle.tick(sprite.placement, animated);
+                        require(oracle.get(oracle.direction) == definition.direction,
+                                "Stationary direction task failed to restore authored direction");
                     }
                 }
             }
@@ -193,10 +234,14 @@ void run(const eb::GameAssets &assets) {
         }
     }
     require(exterior_pair[0] && exterior_pair[1], "Theater exterior pair was not source-verified");
-    require(candidates > 100 && long_cases[0][4] && long_cases[1][4], "Readiness oracle missed stationary script coverage");
+    require(twoson_benches[0] && twoson_benches[1] && twoson_facing[0] && twoson_facing[1],
+            "Twoson props/people were not source-verified");
+    require(candidates > 100 && long_cases[0][4] && long_cases[1][4] && long_cases[2][4],
+            "Readiness oracle missed stationary script coverage");
     std::cout << "PASS stationary NPC source proof " << assets.title << ": candidates=" << candidates
               << " exact_source_pixels=" << pixels << " source_ticks=" << oracle.ticks
-              << " active_exclusions=" << exclusions << "; fixed-position scripts8/605, theater exterior328/329, no activation\n";
+              << " active_exclusions=" << exclusions
+              << "; fixed-position scripts8/605/606, Twoson benches350/351 and people304/311, no activation\n";
 }
 }
 int main(int argc, char **argv) {

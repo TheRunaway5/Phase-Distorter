@@ -1,4 +1,7 @@
 #include "eb/native/world_scene_presentation.hpp"
+#include "eb/native/world_display_fade.hpp"
+#include "eb/native/battle/frame_display.hpp"
+#include "eb/native/scene_effects.hpp"
 #include "eb/native/battle_background_scene.hpp"
 #include <stdexcept>
 
@@ -12,36 +15,6 @@ PaletteColor argb(std::uint32_t value) {
   return {std::uint8_t((value >> 19) & 31), std::uint8_t((value >> 11) & 31),
           std::uint8_t((value >> 3) & 31)};
 }
-template<std::size_t N>
-std::array<bool, N> layers(unsigned bits) {
-  std::array<bool, N> result{};
-  for (unsigned i = 0; i < N; ++i) result[i] = (bits & (1u << i)) != 0;
-  return result;
-}
-}
-WorldLayerConfigurations::WorldLayerConfigurations(
-    std::span<const std::uint8_t> image, GameVersion version) {
-  if (version != GameVersion::US && version != GameVersion::JP)
-    throw std::invalid_argument("Invalid layer configuration region");
-  const unsigned start = version == GameVersion::US ? 0xaff1 : 0xafd0;
-  if (image.size() < start + 41)
-    throw std::invalid_argument("Truncated layer configuration content");
-  for (unsigned i = 0; i < configurations_.size(); ++i) {
-    auto &c = configurations_[i];
-    const auto main = image[start + i], sub = image[start + 11 + i];
-    const auto window = image[start + 21 + i], math = image[start + 31 + i];
-    if ((main & ~31) || (sub & ~31) || (window & 1))
-      throw std::invalid_argument("Unsupported authored layer configuration");
-    c.main = layers<5>(main); c.sub = layers<5>(sub);
-    c.math = layers<6>(math);
-    c.use_subscreen = (window & 2) != 0;
-    c.clip = ColorWindowPolicy((window >> 6) & 3);
-    c.prevent = ColorWindowPolicy((window >> 4) & 3);
-    c.subtract = (math & 128) != 0; c.half = (math & 64) != 0;
-  }
-}
-const WorldLayerConfiguration &WorldLayerConfigurations::at(unsigned id) const {
-  return configurations_.at(id);
 }
 WorldScenePresentation::WorldScenePresentation(
     ScenePalette &colors, WorldEncounterVisualState &visual,
@@ -52,9 +25,55 @@ WorldScenePresentation::WorldScenePresentation(
 void WorldScenePresentation::bind_encounter_effects(WorldEncounterEffects &effects) {
   if ((effects_ && effects_ != &effects) || !effects.uses(*this) || effects.failed())
     throw std::logic_error("Encounter effects must use this actual scene restoration owner");
+  if (frame_display_) effects.bind_display(*frame_display_);
   effects_ = &effects;
 }
+void WorldScenePresentation::bind_display_fade(WorldDisplayFade &fade) {
+  if (fade_ && fade_ != &fade)
+    throw std::logic_error("World publication already has another display fade owner");
+  fade_ = &fade;
+}
+void WorldScenePresentation::bind_frame_display(battle::FrameDisplay &display) {
+  if (!fade_ || (frame_display_ && frame_display_ != &display))
+    throw std::logic_error("World display transport requires its stable actual fade owner");
+  if (effects_) effects_->bind_display(display);
+  frame_display_ = &display;
+}
 std::shared_ptr<const DirectSceneFrame> WorldScenePresentation::capture(const DirectSceneFrame &source) const {
+  const unsigned brightness = !fade_ ? 15 : fade_->state().brightness & 0x80 ? 0 : fade_->state().brightness & 15;
+  const auto rows = frame_display_ ? std::optional{frame_display_->windows(visual_,
+      fade_->state().brightness & 0x80 ? 0 : frame_display_->displayed_hdma_enable, false)} : std::nullopt;
+  return capture_with(source, brightness, false, rows ? &*rows : nullptr);
+}
+std::shared_ptr<const DirectSceneFrame> WorldScenePresentation::capture_next(const DirectSceneFrame &source) {
+  if (!fade_) return capture(source);
+  const auto fade = fade_->preview_next_frame();
+  const bool forced_blank = fade.state().brightness & 0x80;
+  const auto rows = frame_display_ ? std::optional{frame_display_->windows(visual_,
+      fade.disables_row_streams() || forced_blank ? 0 : frame_display_->hdma_enable, true)} : std::nullopt;
+  auto frame = capture_with(source, fade.intensity(), fade.disables_row_streams(), rows ? &*rows : nullptr);
+  fade_->commit_frame(fade);
+  if (frame_display_)
+    frame_display_->publish_hdma(fade.disables_row_streams(), forced_blank);
+  if (fade.disables_row_streams() && visual_.window_rows_enabled) {
+    visual_.window_rows_enabled = false;
+    ++visual_.window_revision;
+  }
+  if (rows) {
+    bool changed = false;
+    for (unsigned i = 0; i < 2; ++i) {
+      changed |= visual_.window_left[i] != rows->back()[i].left ||
+                 visual_.window_right[i] != rows->back()[i].right;
+      visual_.window_left[i] = rows->back()[i].left;
+      visual_.window_right[i] = rows->back()[i].right;
+    }
+    if (changed) ++visual_.window_revision;
+  }
+  return frame;
+}
+std::shared_ptr<const DirectSceneFrame> WorldScenePresentation::capture_with(
+    const DirectSceneFrame &source, unsigned brightness, bool disable_rows,
+    const EncounterWindowMask *published_rows) const {
   if (effects_ && effects_->failed()) throw std::logic_error("Cannot capture failed encounter effects");
   if (!source.palette_indices.empty() && source.palette_indices.size() != source.atlas.size())
     throw std::invalid_argument("Palette identity atlas has different dimensions");
@@ -64,29 +83,18 @@ std::shared_ptr<const DirectSceneFrame> WorldScenePresentation::capture(const Di
     if (id > 256) throw std::out_of_range("Invalid captured palette identity");
     if (id != 256 && (frame->atlas[i] >> 24)) frame->atlas[i] = palette_argb(colors_[id]);
   }
-  auto &out = frame->effects.emplace();
-  out.main = visual_.visible_layers; out.sub = visual_.subscreen_layers;
-  out.math = visual_.color_math_layers; out.masked = visual_.window_layers;
-  out.invert = visual_.window_invert; out.use_subscreen = visual_.use_subscreen;
-  out.subtract = visual_.subtract; out.half = visual_.half_intensity;
-  out.clip = DirectSceneFrame::WindowPolicy(visual_.clip_colors);
-  out.prevent = DirectSceneFrame::WindowPolicy(visual_.prevent_math);
-  out.fixed = {visual_.fixed_color.red, visual_.fixed_color.green, visual_.fixed_color.blue};
-  out.backdrop = palette_argb(colors_[0]);
-  EncounterWindowMask windows;
-  if (effects_) windows = effects_->windows();
-  else if (visual_.window_pattern) {
-    windows = *visual_.window_pattern;
-    if (!visual_.writes_second_window)
-      for (auto &row : windows) row[1] = {visual_.window_left[1], visual_.window_right[1]};
-  } else for (auto &row : windows)
-    for (unsigned i = 0; i < 2; ++i) row[i] = {visual_.window_left[i], visual_.window_right[i]};
-  for (unsigned y = 0; y < 224; ++y)
-    out.windows[y] = {windows[y][0].left, windows[y][0].right, windows[y][1].left, windows[y][1].right};
+  std::optional<EncounterWindowMask> rows;
+  if (published_rows) rows = *published_rows;
+  else if (effects_) rows = effects_->windows(false, disable_rows);
+  auto visual = visual_;
+  if (disable_rows) visual.window_rows_enabled = false;
+  frame->effects = capture_scene_effects(visual, palette_argb(colors_[0]),
+                                         rows ? &*rows : nullptr);
+  frame->effects->brightness = brightness;
   return frame;
 }
 void WorldScenePresentation::complete_publication() {
-  if (effects_) effects_->complete_publication();
+  if (effects_ && !frame_display_) effects_->complete_publication();
 }
 void WorldScenePresentation::bind_battle_background(BattleBackgroundScene &battle) {
   if (battle_ && battle_ != &battle)
@@ -116,7 +124,8 @@ void WorldScenePresentation::publish_area(const AreaPalettes &area) {
       colors_[128 + p * 16 + i] = i ? argb(area.sprites[p][i]) : packed(area.sprite_zero[p]);
 }
 void WorldScenePresentation::publish_window_range(unsigned first,
-                                                  std::span<const std::uint16_t> values) {
+                                                  std::span<const std::uint16_t> values,
+                                                  dialogue::WindowPaletteUpload) {
   if (first > 32 || values.size() > 32 - first)
     throw std::out_of_range("Window palette publication exceeds its32 colors");
   for (unsigned i = 0; i < values.size(); ++i) colors_[first + i] = packed(values[i]);
@@ -131,10 +140,6 @@ void WorldScenePresentation::restore_battle_palettes() {
   visual_.palette_dirty = true;
 }
 void WorldScenePresentation::restore_selected_layer_configuration() {
-  const auto &c = configurations_.at(selection_.value);
-  visual_.visible_layers = c.main; visual_.subscreen_layers = c.sub;
-  visual_.color_math_layers = c.math; visual_.use_subscreen = c.use_subscreen;
-  visual_.subtract = c.subtract; visual_.half_intensity = c.half;
-  visual_.clip_colors = c.clip; visual_.prevent_math = c.prevent;
+  apply_world_layer_configuration(configurations_, selection_, visual_);
 }
 } // namespace eb::native

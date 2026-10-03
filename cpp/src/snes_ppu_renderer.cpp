@@ -362,7 +362,9 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
         if (!((view.ppu_registers[0x2c] | view.ppu_registers[0x2d]) & (1u << layer)))
             continue;
         const bool scenery = presentation_layer_mask_ & (1 << layer);
-        if (margin && ((outside_native && !scenery) || (outside_world && scenery)))
+        const bool screen_overlay = margin && (presentation_screen_overlay_layer_ & (1u << layer));
+        if (margin && ((outside_native && !scenery && !screen_overlay) ||
+                       (outside_world && scenery && !screen_overlay)))
             continue;
         // The Japanese logo's red field reaches the authored picture edges.
         // Extend those BG edge samples only; repeating tilemaps would duplicate
@@ -374,6 +376,14 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
         int sample_x = margin && outside_native && presentation_jp_title_ && layer < 2
                            ? std::clamp(x, 0, 255)
                            : x + ((margin && scenery) ? presentation_shift_x_ : 0);
+        if (screen_overlay) {
+            // The snapshot iris and lightning contain one screen-sized page.
+            // Stretch that page once; it stays centered even in a narrow room
+            // where the presentation camera shifts or scenery has side borders.
+            const int output_x = x + int(presentation_width_ - 256) / 2;
+            sample_x = output_x * 256 / int(presentation_width_) -
+                       int(view.background_scroll_x[layer]);
+        }
         if (psi) {
             const int scroll = int((view.background_scroll_x[layer] + 512) & 1023) - 512;
             const int anchor = 128 - scroll, numerator = (x - anchor) * 256;

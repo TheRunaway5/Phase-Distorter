@@ -1,5 +1,6 @@
 #pragma once
 
+#include "eb/controller_settings.hpp"
 #include <SDL.h>
 #include <cstdint>
 
@@ -14,9 +15,13 @@ class DesktopInput {
     DesktopInput &operator=(const DesktopInput &) = delete;
     void process_device_event(const SDL_Event &event);
     std::uint16_t buttons() const;
+    ControllerSnapshot controller_snapshot() const;
+    void configure(const ControllerSettings &settings);
 
   private:
     void open_controller(int index);
+    ControllerSnapshot sample_controller(bool include_identity) const;
     SDL_GameController *controller_ = nullptr;
+    ControllerSettings settings_;
 };
 } // namespace eb

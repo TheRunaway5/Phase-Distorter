@@ -9,6 +9,11 @@ void WorldDisplayFade::begin_in(std::uint16_t step, std::uint16_t delay) {
 void WorldDisplayFade::begin_out(std::uint16_t magnitude, std::uint16_t delay) {
   begin_in(std::uint8_t(0u - magnitude), delay);
 }
+void WorldDisplayFade::force_blank(bool stop_fade) noexcept {
+  state_.brightness = 0x80;
+  if (stop_fade) state_.step = 0;
+  ++revision_;
+}
 WorldDisplayFade::Frame WorldDisplayFade::preview_next_frame() const noexcept {
   Frame result;
   result.owner_ = this;

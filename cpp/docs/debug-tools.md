@@ -1,7 +1,7 @@
 # Gameplay debug tools
 
-Open **F1 → Debug**. All switches start off and reset when the game session
-restarts. Health and PSI/PP stay at 999/999, including the rolling battle targets.
+Open **F1 → Debug**. All switches start off when a new game session starts;
+loading a snapshot restores its switches. Health and PSI/PP stay at 999/999, including the rolling battle targets.
 Noclip bypasses terrain and NPC collision. Enemies ignore you suppresses ordinary
 overworld pursuit/contact; story-triggered battles remain available.
 
@@ -12,6 +12,33 @@ blocking fade to black before the instant transition loads the new map and
 positions followers, then fade back in. Both actions wait
 for free movement rather than interrupting dialogue, battle or another transition.
 The controls do not advance story flags. Debug changes can affect saved progress.
+
+## Save state snapshots
+
+In **F1 → Debug → Save state snapshots**, enter a name and click **Save snapshot**.
+The list shows each snapshot's name, creation date and game frame. Select a row
+to **Load selected** or **Delete selected**. Deletion requires **Confirm delete**;
+**Cancel** or Escape keeps the file. **Refresh** rereads the list. Duplicate names
+create separate snapshots. Snapshots remain available after closing the game.
+
+A snapshot captures running game state: processors, memory including SRAM,
+hardware clocks, audio synthesis, native actor resources, pending game/debug
+actions and the current picture. Loading restores that point immediately and
+clears the host's abandoned audio and frame history. Display preferences remain
+at their current values. A damaged file, unsupported format or a snapshot from
+different game content reports an error while the current game keeps running.
+
+Files are stored beneath SDL's application data directory in
+`snapshots/earthbound/` and `snapshots/mother2/`, separately from ordinary `.srm`
+saves. On Linux the default is
+`~/.local/share/ebsrc/EarthBoundCpp/snapshots/`. Snapshot files contain private
+game memory and artwork and stay local; they are not shipped with the project.
+Normal game saving on exit still uses the restored session's current SRAM.
+
+Snapshot format version 1 requires matching game content and a build supporting
+that format. Future changes to machine-state layout may require a new version.
+The panel queues operations for the application between simulation advances;
+it never receives mutable game hardware or file paths from display names.
 
 ## Complete destination picker
 
@@ -85,3 +112,17 @@ Actual SDL/ImGui event tests toggle every switch, edit the party, select a
 searched Sea of Eden destination, and exercise fullscreen hover/hide/click
 behavior. The presentation differential fixture also runs a disabled debug
 controller on one side to check that default gameplay remains unchanged.
+
+`game_session_snapshot_tests` verifies persistent full-state reloads into fresh
+owners, exact continuation, queued audio, observers and atomic rejection of
+invalid archives. `snapshot_store_tests` checks disk persistence, names,
+metadata-only listing, corruption, bounds and isolated deletion. Snapshot GUI
+events and restored cheat controls are included in `debug_panel_tests`.
+Optional `game_session_snapshot_reference` comparisons use imported assets and
+replays for both regions, source/native timing, native actor resources,
+widescreen/direct pictures and PCM at complete and partial-step captures:
+
+```sh
+build/cpp/game_session_snapshot_reference --assets /path/to/game.ebpak \
+  --replay cpp/tests/new_game.input --frames 14500 --require-gameplay
+```

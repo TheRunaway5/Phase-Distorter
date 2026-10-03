@@ -368,6 +368,32 @@ void filter_toggles_and_partial_failures() {
     require(headless.current_picture().pixels[0] == 0xff080808,
             "Step limit before the first frame omitted the filtered partial picture");
 }
+
+void restore_discards_future() {
+    for (bool high : {false, true}) {
+        eb::DisplaySettings settings;
+        settings.frame_limit = high ? 300 : 60;
+        settings.reduce_flashing = true;
+        Canvas future, restored(128, 0xff804020);
+        future.flashing();
+        Pipeline pipeline(Time{}, settings, 60, high ? 300 : 60, true, future.view(90));
+        pipeline.completed_frame(future.view(90));
+        pipeline.simulation_finished(future.view(90), 1, Time{});
+        future.pixels.assign(future.pixels.size(), 0xff102030);
+        pipeline.completed_frame(future.view(91));
+        pipeline.simulation_finished(future.view(91), 1, Time{} + 1ms);
+        const auto now = Time{} + 5s;
+        pipeline.restored_frame(restored.view(12), now);
+        require(copy(pipeline.current_picture()) == restored.pixels &&
+                pipeline.current_picture().width == restored.width,
+                "Restoring retained abandoned borrowed/filter history");
+        require(copy(pipeline.picture(now)) == restored.pixels,
+                "Restoring interpolated an abandoned future endpoint");
+        require(pipeline.simulation_due(now), "Restoring retained old simulation deadlines");
+        pipeline.simulation_finished(restored.view(12), 1, now);
+        if (high) require(!pipeline.simulation_due(now), "Restoring retained simulation debt");
+    }
+}
 } // namespace
 
 int main() {
@@ -381,6 +407,7 @@ int main() {
         interpolation_setting_boundary();
         direct_scene_boundary();
         filter_toggles_and_partial_failures();
+        restore_discards_future();
         std::cout
             << "Presentation pipeline: native/headless identity, independent caps, VRR changes, callback ownership, "
                "DMA frames, filter toggles, scene changes and partial/error captures passed\n";

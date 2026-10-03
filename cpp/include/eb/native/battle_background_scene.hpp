@@ -6,6 +6,9 @@
 #include <stdexcept>
 
 namespace eb::native {
+namespace battle {
+struct PaletteBankState;
+}
 struct BattleBackgroundPair {
   unsigned primary{}, secondary{}, style{};
   bool operator==(const BattleBackgroundPair &) const = default;
@@ -28,14 +31,27 @@ enum class BattlePaletteDependency {
   // The shared-artwork source path publishes a zeroed palette through its
   // unset destination, clearing frame/queue/draw/display state. This is not
   // a write to palette slot0 and requires the corresponding scene owners.
-  ResetSceneAndFrameState
+  ResetSceneAndFrameState,
+  // C2E08E still writes the disabled secondary's retained destination. A cold
+  // destination aliases low WRAM; a prior scene may retain a palette bank.
+  // Palette colors alone cannot identify that destination or its shift policy.
+  InactiveSecondaryDestination
 };
 class BattlePaletteRestorationRequired : public std::runtime_error {
 public:
   explicit BattlePaletteRestorationRequired(BattlePaletteDependency value)
-      : std::runtime_error("Battle palette restoration requires native scene/frame reset"),
+      : std::runtime_error(
+            value == BattlePaletteDependency::ResetSceneAndFrameState
+                ? "Battle palette restoration requires native scene/frame reset"
+                : "Battle brightness requires the inactive secondary destination"),
         dependency(value) {}
   const BattlePaletteDependency dependency;
+};
+struct BattleBackgroundLayerMetadata {
+  std::uint8_t target_layer{}, freeze_palette_scrolling{};
+  // Global palette color identity; absence is the source low-WRAM destination.
+  std::optional<unsigned> palette_base;
+  bool operator==(const BattleBackgroundLayerMetadata &) const = default;
 };
 // Explicit incoming display state for LOAD_BATTLE_BG. Four-bit artwork is
 // generated during loading using the preceding parity/alternate gate. Two-bit
@@ -52,6 +68,14 @@ struct BattleBackgroundStart {
   // palette. Transfer this value from the preceding scene when replacing it;
   // the zero default represents a fresh, explicitly cold scene owner.
   BattleBackgroundPalette retained_secondary_palette;
+  std::optional<BattleBackground> retained_secondary_background;
+  BattleBackgroundLayerMetadata retained_secondary_metadata;
+  // MEMSET16 clears only118 of each119-byte loaded record. The high byte
+  // of compression acceleration survives until a real distortion overwrites it.
+  std::uint8_t primary_compression_acceleration_high{}, secondary_compression_acceleration_high{};
+  BattleDistortionAxis primary_axis{}, secondary_axis{};
+  std::array<std::uint16_t, 224> primary_offsets{}, secondary_offsets{};
+
 };
 struct BattleBackgroundEffects {
   bool darkening{}, opening_letterbox{};
@@ -77,6 +101,7 @@ struct BattleBackgroundSceneFrame {
   bool shared_artwork{}, secondary_main{};
   BattleBackgroundBlend blend{};
   BattleBackgroundEffects effects;
+  unsigned bitdepth = 4;
   // Native background-only scene. Enemy artwork, PSI, UI and the independent
   // swirl controller are composed by their owners. Sampling never advances
   // time.
@@ -84,6 +109,12 @@ struct BattleBackgroundSceneFrame {
   std::shared_ptr<const DirectSceneFrame>
   draw(unsigned width = 256, std::uint64_t frame = 0,
        std::uint64_t identity = 0) const;
+  // Individual source layers with their current offsets and displayed colors.
+  // No half-add or flash is baked in. The compositor supplies the real display
+  // policy once, and may replace BG1 with the published PSI plane.
+  std::shared_ptr<const DirectSceneFrame>
+  draw_layers(const ScenePalette &displayed, unsigned width = 256,
+              std::uint64_t frame = 0, std::uint64_t identity = 0) const;
 };
 class BattleBackgroundScenes;
 class BattleBackgroundScene {
@@ -96,6 +127,13 @@ public:
   }
   bool alternate_distortion() const { return alternate_; }
   void advance(BattleBackgroundSceneTick);
+  // C2DB3F phases. The battle frame interleaves real object, PSI, window,
+  // swirl and palette owners between these phases; all timers remain here.
+  void advance_effects(battle::PaletteBankState *publication = nullptr);
+  std::array<BattleBackgroundUpdate, 2> advance_backgrounds(BattleBackgroundSceneTick,
+                           battle::PaletteBankState *publication = nullptr);
+  void advance_flashes();
+  void advance_letterbox();
   void darken() { effects_.darkening = true; }
   void open_letterbox() { effects_.opening_letterbox = true; }
   void reflect(std::uint16_t duration) { effects_.reflect_duration = duration; }
@@ -112,22 +150,37 @@ public:
   }
   void apply_palette_brightness(std::uint16_t factor);
   BattleBackgroundPalette retained_secondary_palette() const;
+  std::optional<BattleBackground> retained_secondary_background() const;
+  const BattleBackgroundLayerMetadata &layer_metadata(unsigned ordinal) const;
+  bool can_brighten_inactive_secondary() const noexcept;
+
+
   std::optional<BattlePaletteDependency> palette_restoration_dependency() const;
   // Complete ordinary C2DE96: restore both palette bases and the active
   // publication slots, including index0, without ticking any controller.
   // A shared-artwork reset dependency rejects before these mutations.
   void restore_palette(ScenePalette &);
+  void restore_palette(battle::PaletteBankState &);
+  // Complete ordinary C2DE0F, including the inactive secondary working base.
+  // These stage palette writes only; they do not request or complete a
+  // transfer.
+  void halve_palette(ScenePalette &);
+  void halve_palette(battle::PaletteBankState &);
 
 private:
   friend class BattleBackgroundScenes;
   struct Content;
   BattleBackgroundScene(std::shared_ptr<const Content>, BattleBackgroundPair,
                         BattleBackgroundStart);
+  void apply_palette_brightness(std::uint16_t, battle::PaletteBankState *);
   std::shared_ptr<const Content> content_;
   BattleBackgroundPair pair_;
   BattleBackground primary_;
   std::optional<BattleBackground> secondary_;
   BattleBackgroundPalette inactive_secondary_palette_;
+  std::optional<BattleBackground> inactive_secondary_background_;
+  std::array<BattleBackgroundLayerMetadata, 2> layer_metadata_{};
+
   BattleBackgroundBlend blend_{};
   BattleBackgroundEffects effects_;
   bool shared_artwork_{}, alternate_{};
@@ -136,6 +189,9 @@ class BattleBackgroundScenes {
 public:
   BattleBackgroundScenes(std::span<const std::uint8_t>, GameVersion);
   unsigned size() const;
+  GameVersion version() const;
+  const BattleBackgrounds &layers() const;
+
   BattleBackgroundPair selection(unsigned battle) const;
   // Referenced artwork beyond the authored load is supplied by a
   // separate controller. Preparation rejects it until that owner is ported.

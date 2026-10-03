@@ -66,6 +66,12 @@ class GameSession {
     SessionDiagnostics diagnostics(bool include_registers = false) const;
     GameDebug &debug();
 
+    // Persistent, versioned complete machine state. Loading validates the
+    // cartridge and complete archive into a new owner before replacing play.
+    // The current completed-frame observer remains attached after restoration.
+    std::vector<std::uint8_t> save_snapshot() const;
+    void load_snapshot(std::span<const std::uint8_t> snapshot);
+
   private:
     struct State;
     std::unique_ptr<State> state_;

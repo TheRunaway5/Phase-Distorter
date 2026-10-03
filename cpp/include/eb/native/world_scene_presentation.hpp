@@ -3,25 +3,10 @@
 #include "eb/native/story/scene.hpp"
 #include "eb/native/world_encounter_effects.hpp"
 #include "eb/native/world_palettes.hpp"
+#include "eb/native/world_layers.hpp"
 
 namespace eb::native {
 class BattleBackgroundScene;
-struct WorldLayerConfiguration {
-  std::array<bool, 5> main{}, sub{};
-  std::array<bool, 6> math{};
-  bool use_subscreen{}, subtract{}, half{};
-  ColorWindowPolicy clip = ColorWindowPolicy::Never;
-  ColorWindowPolicy prevent = ColorWindowPolicy::Never;
-};
-class WorldLayerConfigurations {
-public:
-  WorldLayerConfigurations(std::span<const std::uint8_t>, GameVersion);
-  const WorldLayerConfiguration &at(unsigned selection) const;
-private:
-  std::array<WorldLayerConfiguration, 10> configurations_{};
-};
-struct WorldLayerSelection { unsigned value{}; };
-
 // Scene-owned publication of actual palette/display writes. Captures consume
 // these owners; map colors and window templates are never competing live
 // palettes. This service does not tick an effect, actor, input or clock.
@@ -32,13 +17,22 @@ public:
   WorldScenePresentation(ScenePalette &, WorldEncounterVisualState &,
                          const WorldLayerConfigurations &, WorldLayerSelection &);
   void bind_encounter_effects(WorldEncounterEffects &);
+  void bind_display_fade(WorldDisplayFade &);
+  void bind_frame_display(battle::FrameDisplay &);
+  const battle::FrameDisplay *frame_display() const noexcept override { return frame_display_; }
+  const WorldDisplayFade *display_fade() const noexcept override { return fade_; }
+  const WorldEncounterVisualState *publication_visual() const noexcept override { return &visual_; }
+  bool uses_visual(const WorldEncounterVisualState &visual) const noexcept override { return &visual_ == &visual; }
   std::shared_ptr<const DirectSceneFrame> capture(const DirectSceneFrame &) const override;
+  std::shared_ptr<const DirectSceneFrame> capture_next(const DirectSceneFrame &) override;
   void complete_publication() override;
+  dialogue::WindowPalettePublication *window_palette_publication() noexcept override { return this; }
   void bind_battle_background(BattleBackgroundScene &);
   void clear_battle_background(const BattleBackgroundScene &) noexcept;
   void publish_area(const AreaPalettes &);
   void publish_scenery(const AreaPalettes &);
-  void publish_window_range(unsigned first, std::span<const std::uint16_t>) override;
+  void publish_window_range(unsigned first, std::span<const std::uint16_t>,
+                            dialogue::WindowPaletteUpload = dialogue::WindowPaletteUpload::Full) override;
   void restore_overworld_layers();
   void restore_battle_palettes() override;
   void restore_selected_layer_configuration() override;
@@ -47,6 +41,11 @@ public:
   const ScenePalette &colors() const noexcept { return colors_; }
   const WorldEncounterVisualState &visual() const noexcept { return visual_; }
 private:
+  std::shared_ptr<const DirectSceneFrame> capture_with(const DirectSceneFrame &, unsigned brightness,
+                                                       bool disable_rows,
+                                                       const EncounterWindowMask * = nullptr) const;
+  WorldDisplayFade *fade_{};
+  battle::FrameDisplay *frame_display_{};
   ScenePalette &colors_;
   WorldEncounterVisualState &visual_;
   const WorldLayerConfigurations &configurations_;

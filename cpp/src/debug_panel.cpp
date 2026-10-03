@@ -26,6 +26,7 @@ struct DebugPanel::Impl {
     bool bar_mouse_down{}, open_confirmation{}, cancel_confirmation{};
     float menu_height = 19.0f;
     GameDebugSettings game_settings;
+    ControllerSettings controller_settings;
     std::optional<GameDebugRequest> game_action;
     std::array<bool,4> party{};
     bool party_editing{};
@@ -34,6 +35,9 @@ struct DebugPanel::Impl {
     std::optional<PanelAction> action, confirmation;
     unsigned confirmation_cache{};
     std::string action_status;
+    std::array<char, 129> snapshot_name{};
+    std::string selected_snapshot, delete_snapshot, snapshot_status;
+    std::optional<SaveStateSnapshotRequest> snapshot_action;
 };
 
 DebugPanel::DebugPanel(SDL_Window* window, SDL_GLContext context): impl_(std::make_unique<Impl>()) {
@@ -87,6 +91,7 @@ bool DebugPanel::process_event(const SDL_Event& event) {
     if (visible() && event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
         if (!event.key.repeat) {
             if (impl_->confirmation) impl_->cancel_confirmation = true;
+            else if (!impl_->delete_snapshot.empty()) impl_->delete_snapshot.clear();
             else set_visible(false);
         }
         return true;
@@ -119,6 +124,7 @@ bool DebugPanel::visible() const { return impl_->visible; }
 void DebugPanel::set_visible(bool visible) {
     // Focus once on opening; stealing focus each frame would break text edits.
     if (visible && !impl_->visible) impl_->focus_next_frame = true;
+    if (!visible) impl_->delete_snapshot.clear();
     impl_->visible = visible;
 }
 
@@ -126,7 +132,21 @@ std::optional<PanelAction> DebugPanel::take_action() { return std::exchange(impl
 void DebugPanel::set_action_status(std::string status) { impl_->action_status = std::move(status); }
 float DebugPanel::menu_height() const { return impl_->menu_height; }
 const GameDebugSettings& DebugPanel::game_settings() const {return impl_->game_settings;}
+void DebugPanel::set_game_settings(GameDebugSettings settings) {
+    impl_->game_settings = settings;
+    impl_->party_editing = false;
+}
+const ControllerSettings& DebugPanel::controller_settings() const { return impl_->controller_settings; }
+void DebugPanel::set_controller_settings(ControllerSettings settings) {
+    for (auto& button : settings.bindings)
+        if (button < -1 || button >= SDL_CONTROLLER_BUTTON_MAX) button = -1;
+    settings.stick_deadzone = std::clamp(settings.stick_deadzone, 0, 32766);
+    impl_->controller_settings = settings;
+}
 std::optional<GameDebugRequest> DebugPanel::take_game_action() {return std::exchange(impl_->game_action,std::nullopt);}
+std::optional<SaveStateSnapshotRequest> DebugPanel::take_snapshot_action() {
+    return std::exchange(impl_->snapshot_action, std::nullopt);
+}
 
 void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnostics) {
     ImGui::SetCurrentContext(impl_->context);
@@ -333,6 +353,143 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     if(!state.status.empty())ImGui::TextWrapped("%s",state.status.c_str());
                     else if(!state.ready)ImGui::TextWrapped("Load a game to use teleport and party controls.");
                     ImGui::TextWrapped("Debug changes can affect saved progress. Cheat switches reset when you restart or switch games.");
+                    ImGui::SeparatorText("Save state snapshots");
+                    ImGui::TextWrapped("Save the current moment and return to it later. Snapshots are kept separately from your in-game save.");
+                    const auto find_snapshot = [&](const std::string& id) {
+                        return std::find_if(diagnostics.snapshots.begin(), diagnostics.snapshots.end(),
+                            [&](const SaveStateSnapshotInfo& snapshot) { return snapshot.id == id; });
+                    };
+                    if (!impl_->selected_snapshot.empty() && find_snapshot(impl_->selected_snapshot) == diagnostics.snapshots.end()) {
+                        impl_->selected_snapshot.clear();
+                        impl_->delete_snapshot.clear();
+                    }
+                    if (!impl_->delete_snapshot.empty() && find_snapshot(impl_->delete_snapshot) == diagnostics.snapshots.end())
+                        impl_->delete_snapshot.clear();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputTextWithHint("##Snapshot name", "Snapshot name", impl_->snapshot_name.data(), impl_->snapshot_name.size());
+                    const bool has_name = std::any_of(impl_->snapshot_name.begin(),
+                        impl_->snapshot_name.begin() + std::char_traits<char>::length(impl_->snapshot_name.data()),
+                        [](unsigned char value) { return !std::isspace(value); });
+                    ImGui::BeginDisabled(!diagnostics.snapshots_available || !has_name);
+                    if (ImGui::Button("Save snapshot"))
+                        impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Save, impl_->snapshot_name.data()};
+                    ImGui::EndDisabled();
+                    if (ImGui::GetContentRegionAvail().x >= 250.0f) ImGui::SameLine();
+                    if (ImGui::Button("Refresh snapshots"))
+                        impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Refresh, {}};
+                    ImGui::TextDisabled("%zu snapshot%s for %s", diagnostics.snapshots.size(),
+                        diagnostics.snapshots.size() == 1 ? "" : "s", diagnostics.game_title.c_str());
+                    if (ImGui::BeginChild("Snapshot list", ImVec2(0, 108), ImGuiChildFlags_Borders)) {
+                        if (diagnostics.snapshots.empty()) ImGui::TextWrapped("No snapshots yet. Enter a name and save your current moment.");
+                        for (const auto& snapshot : diagnostics.snapshots) {
+                            ImGui::PushID(snapshot.id.c_str());
+                            const bool selected = impl_->selected_snapshot == snapshot.id;
+                            const auto row_height = ImGui::GetTextLineHeight() * 2 + 4;
+                            if (ImGui::Selectable("##Snapshot entry", selected, 0, ImVec2(0, row_height))) {
+                                impl_->selected_snapshot = snapshot.id;
+                                impl_->delete_snapshot.clear();
+                            }
+                            // Render labels literally: user names may contain ImGui's
+                            // ## marker, and their IDs must remain stable while renamed.
+                            const auto row = ImGui::GetItemRectMin();
+                            auto* painter = ImGui::GetWindowDrawList();
+                            painter->AddText(row, ImGui::GetColorU32(ImGuiCol_Text), snapshot.name.c_str());
+                            const auto details = snapshot.created_at + "  |  Frame " + std::to_string(snapshot.frames);
+                            painter->AddText(ImVec2(row.x, row.y + ImGui::GetTextLineHeight() + 2),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), details.c_str());
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", snapshot.name.c_str(), details.c_str());
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndChild();
+                    ImGui::BeginDisabled(!diagnostics.snapshots_available || impl_->selected_snapshot.empty());
+                    if (ImGui::Button("Load selected")) {
+                        impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Load, impl_->selected_snapshot};
+                        impl_->delete_snapshot.clear();
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::GetContentRegionAvail().x >= 260.0f) ImGui::SameLine();
+                    ImGui::BeginDisabled(impl_->selected_snapshot.empty());
+                    const bool confirm_delete = ImGui::Button("Delete selected");
+                    if (confirm_delete) impl_->delete_snapshot = impl_->selected_snapshot;
+                    ImGui::EndDisabled();
+                    if (!impl_->delete_snapshot.empty()) {
+                        const auto pending = find_snapshot(impl_->delete_snapshot);
+                        ImGui::TextWrapped("Delete \"%s\"?", pending->name.c_str());
+                        if (ImGui::Button("Confirm delete")) {
+                            impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Delete, impl_->delete_snapshot};
+                            impl_->delete_snapshot.clear();
+                        }
+                        if (ImGui::GetContentRegionAvail().x >= 250.0f) ImGui::SameLine();
+                        if (ImGui::Button("Cancel delete")) impl_->delete_snapshot.clear();
+                        if (confirm_delete) ImGui::SetScrollHereY(1);
+                    }
+                    if (!diagnostics.snapshot_status.empty()) {
+                        ImGui::TextWrapped("%s", diagnostics.snapshot_status.c_str());
+                        // Keep operation feedback reachable even when the Debug
+                        // tab's earlier controls have filled a small window.
+                        if (impl_->snapshot_status != diagnostics.snapshot_status) ImGui::SetScrollHereY(1);
+                    }
+                    impl_->snapshot_status = diagnostics.snapshot_status;
+                    if (!diagnostics.snapshots_available) ImGui::TextWrapped("Start a game to save or load snapshots.");
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Controller")) {
+                    const auto& controller = diagnostics.controller;
+                    if (controller.connected)
+                        ImGui::TextWrapped("Connected: %s", controller.name.c_str());
+                    else
+                        ImGui::TextUnformatted("Controller disconnected");
+                    std::string held;
+                    if (controller.connected) {
+                        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; ++button) {
+                            if (!controller.pressed[button]) continue;
+                            if (!held.empty()) held += ", ";
+                            held += controller_button_name(button, controller.nintendo_layout);
+                        }
+                    }
+                    ImGui::TextWrapped("Buttons held: %s", held.empty() ? "None" : held.c_str());
+                    ImGui::Text("Left stick: %d, %d", controller.connected ? controller.stick_x : 0,
+                        controller.connected ? controller.stick_y : 0);
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::SliderInt("##Controller stick deadzone", &impl_->controller_settings.stick_deadzone, 0, 32766,
+                        "Stick deadzone: %d");
+                    if (ImGui::Button("Restore controller defaults")) impl_->controller_settings = ControllerSettings{};
+                    ImGui::TextWrapped("Choose which controller button sends each SNES button. Changes apply immediately. Pressed inputs stay visible while game controls are paused by this panel.");
+                    if (ImGui::BeginTable("Controller bindings", 3,
+                        ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("SNES", ImGuiTableColumnFlags_WidthFixed, 42);
+                        ImGui::TableSetupColumn("Controller button", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthFixed, 48);
+                        ImGui::TableHeadersRow();
+                        for (std::size_t index = 0; index < snes_button_names.size(); ++index) {
+                            ImGui::PushID(int(index));
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            const bool output_pressed = controller.connected && (controller.game_buttons & (1u << (15 - index)));
+                            if (output_pressed)
+                                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.55f, 1), "%s *", snes_button_names[index]);
+                            else ImGui::TextUnformatted(snes_button_names[index]);
+                            ImGui::TableSetColumnIndex(1);
+                            auto& binding = impl_->controller_settings.bindings[index];
+                            ImGui::SetNextItemWidth(-1);
+                            if (ImGui::BeginCombo("##Controller source", controller_button_name(binding, controller.nintendo_layout))) {
+                                for (int button = -1; button < SDL_CONTROLLER_BUTTON_MAX; ++button) {
+                                    const bool selected = binding == button;
+                                    if (ImGui::Selectable(controller_button_name(button, controller.nintendo_layout), selected)) binding = button;
+                                    if (selected) ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::TableSetColumnIndex(2);
+                            if (controller.connected && binding >= 0 && binding < SDL_CONTROLLER_BUTTON_MAX && controller.pressed[binding])
+                                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.55f, 1), "Pressed");
+                            else ImGui::TextDisabled("-");
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::TextDisabled("* marks a pressed SNES output.");
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
@@ -377,6 +534,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
         }
         ImGui::End();
     }
+    if (!impl_->visible) impl_->delete_snapshot.clear();
     ImGui::Render();
     // main draws the completed game image first and swaps only after this call.
     ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());

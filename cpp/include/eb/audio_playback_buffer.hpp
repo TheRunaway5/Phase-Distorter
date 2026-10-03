@@ -42,6 +42,7 @@ public:
     }
     std::uint64_t underruns() const { return underruns_; }
     std::size_t queued_frames() const { return queued_ / 2; }
+    void clear() noexcept { read_ = queued_ = 0; priming_ = true; }
 private:
     // Only append may allocate. The audio callback performs two bounded copies,
     // with no allocation, deallocation, I/O, or resampling on its real-time thread.

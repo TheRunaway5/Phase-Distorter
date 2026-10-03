@@ -112,6 +112,12 @@ void DeviceAudioQueue::append(std::span<const std::int16_t> samples) {
     SDL_UnlockAudioDevice(device_);
 }
 
+void DeviceAudioQueue::clear() {
+    SDL_LockAudioDevice(device_);
+    buffer_.clear();
+    SDL_UnlockAudioDevice(device_);
+}
+
 void DeviceAudioQueue::consume(void* context, std::uint8_t* stream, int bytes) {
     auto& self = *static_cast<DeviceAudioQueue*>(context);
     self.buffer_.consume({reinterpret_cast<std::int16_t*>(stream), std::size_t(bytes) / sizeof(std::int16_t)});

@@ -1,5 +1,7 @@
 #include "eb/main_cpu_65816.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "eb/snes_bus.hpp"
+#include "eb/overworld_sprite_runtime.hpp"
 #include "eb/game/runtime/native_execution.hpp"
 #include "generated_profile.hpp"
 #include <iomanip>
@@ -13,6 +15,31 @@ bool execute_ported_instruction(MainCpu65816&);
 }
 
 namespace eb {
+namespace {
+PixelBounds preload_artwork(const SnesBus *hardware) {
+    return hardware && hardware->native_sprite_runtime()
+               ? hardware->native_sprite_runtime()->resources()->artwork_bounds() : PixelBounds{};
+}
+}
+void MainCpu65816::snapshot_io(SnapshotArchive &archive) {
+    archive(accumulator, x_index, y_index, stack_pointer, direct_page,
+            status_register, data_bank, program_counter, emulation_mode,
+            is_stopped, is_waiting, instruction_count, cycle_count,
+            native_gameplay_batches_, runtime_, entity_preload_.extra_pixels_,
+            extra_gameplay_budget_enabled_, entity_update_active_, instruction_uses_extra_budget_,
+            instruction_touches_io_, entity_update_entry_stack_, interrupt_nesting_depth_,
+            extra_budget_clock_remainder_, entity_update_master_clocks_, memory_wait_master_clocks_);
+    if (archive.format_version() >= 3)
+        archive(entity_preload_.guarded_world_);
+    else if (archive.loading())
+        entity_preload_.guarded_world_ = false;
+    const unsigned maximum_extension = archive.loading() && entity_preload_.guarded_world_
+        ? RenderDistance(RenderDistance::maximum_width).activation_extension(preload_artwork(hardware_)) : 448;
+    if (archive.loading() && (program_counter > 0xffffff || extra_budget_clock_remainder_ >= 8 ||
+        (runtime_ != MainCpuRuntime::Ported && runtime_ != MainCpuRuntime::Legacy) ||
+        entity_preload_.extra_pixels_ > maximum_extension))
+        throw std::runtime_error("Invalid main CPU snapshot state");
+}
 namespace {
 #include "main_cpu_65816_opcodes.inc"
 // Minimum architectural cycle totals indexed by the compile-time opcode.
@@ -35,6 +62,9 @@ MainCpu65816::MainCpu65816(std::span<std::uint8_t> memory, GameVersion version)
     : game_version(version), flat_test_memory_(memory) {
     if (memory.size() != 0x1000000)
         throw std::invalid_argument("CPU vector memory must have 24-bit address space");
+}
+void MainCpu65816::set_world_preload_width(unsigned width) {
+    entity_preload_.set_world_width(width, preload_artwork(hardware_));
 }
 // Data operations and discarded instruction fetches use the same bus path so
 // open-bus values and register side effects remain visible to subsequent code.
@@ -351,7 +381,8 @@ void MainCpu65816::execute_opcode_semantics(std::uint8_t opcode, std::uint32_t o
     const auto instruction_address = program_counter;
     if (entity_preload_.enabled() && (status_register & 0x30) == 0 &&
         (instruction_address & 0xff0000) == 0xc00000)
-        entity_preload_.adapt(game_version, instruction_address, opcode, length, operand, accumulator);
+        entity_preload_.adapt(game_version, instruction_address, opcode, length, operand, accumulator,
+                             hardware_, direct_page);
     // Preserve instruction-fetch bus reads/open-bus state. These bytes do not
     // select the operation: the generated source site fixes opcode/operand.
     if (hardware_)

@@ -1,5 +1,6 @@
 #include "eb/direct_scene_capture.hpp"
 #include "eb/game_scene_renderer.hpp"
+#include "eb/render_distance.hpp"
 #include "generated_profile.hpp"
 #include <algorithm>
 #include <map>
@@ -8,7 +9,7 @@
 
 namespace eb {
 namespace {
-constexpr unsigned padding = 16;
+constexpr unsigned padding = RenderDistance::edge_padding;
 constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
                                      {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
                                      {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
@@ -115,7 +116,9 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         if (!(regs[0x2c] & (1 << bg)))
             continue;
         const bool world = bg < 2;
-        const unsigned w = world ? plane_width : 256, h = world ? plane_height : 224;
+        const bool screen_overlay = renderer.presentation_screen_overlay_layer_ & (1u << bg);
+        const unsigned w = world ? plane_width : screen_overlay ? frame->width : 256,
+                       h = world ? plane_height : 224;
         std::map<int, std::vector<std::uint32_t>> planes;
         if (world) {
             // Repeated arrangements (especially transparent tiles) are common. Decode
@@ -167,7 +170,9 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         } else {
             for (unsigned y = 0; y < h; ++y)
                 for (unsigned x = 0; x < w; ++x) {
-                    const int native_x = world ? int(x) - int(padding) - margin : int(x);
+                    const int native_x = screen_overlay
+                        ? int(x * 256 / frame->width) - int(view.background_scroll_x[bg])
+                        : int(x);
                     if (world && !inside(native_x))
                         continue;
                     const int native_y = world ? int(y) - int(padding) : int(y);
@@ -183,7 +188,7 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
                 }
         }
         for (const auto &[priority, pixels] : planes)
-            if (!atlas.append(pixels, {0, 0, w, h, world ? -float(padding) : float(margin),
+            if (!atlas.append(pixels, {0, 0, w, h, world ? -float(padding) : screen_overlay ? 0.f : float(margin),
                                        world ? -float(padding) : 0.f, priority, world ? bg + 1 : 0, false}))
                 return {};
     }
@@ -281,7 +286,9 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         DirectSceneFrame::Quad quad{0, 0, w, h, float(output_x), float(object.y), priority, motion, true};
         if (object.stationary_prepared) {
             if (object.x < 0) quad.clip.right = float(margin - shift);
-            else quad.clip.left = float(margin + 256 - shift);
+            else if (object.x + int(w) > 256) quad.clip.left = float(margin + 256 - shift);
+            else if (object.y < 0) quad.clip.bottom = 0.f;
+            else quad.clip.top = 224.f;
         }
         if (visible && !atlas.append(pixels, quad))
             return {};

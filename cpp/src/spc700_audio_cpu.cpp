@@ -1,4 +1,5 @@
 #include "eb/spc700_audio_cpu.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "eb/snes_bus.hpp"
 
 #include <iomanip>
@@ -6,6 +7,19 @@
 #include <stdexcept>
 
 namespace eb {
+void Spc700AudioCpu::snapshot_io(SnapshotArchive &archive) {
+    archive(program_counter, accumulator, x_index, y_index, stack_pointer, status_register,
+            instruction_count, cycle_count, is_stopped, is_sleeping, audio_ram, dsp_registers,
+            control_register_, test_register_, dsp_register_address_, timer_clock_dividers_,
+            timer_target_counters_, timer_target_values_, timer_output_latches_,
+            master_to_audio_clock_balance_);
+    if (archive.loading()) {
+        for (unsigned i = 0; i < 3; ++i) {
+            if (timer_clock_dividers_[i] >= (i == 2 ? 16u : 128u) || timer_output_latches_[i] > 15)
+                throw std::runtime_error("Invalid audio CPU timer snapshot state");
+        }
+    }
+}
 namespace {
 // The IPL is the hardware's fixed boot ROM, also exposed to SPC data reads.
 // Instruction execution at these addresses uses execute_boot_rom_instruction's explicit sites;

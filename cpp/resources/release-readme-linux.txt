@@ -1,6 +1,10 @@
 Phase Distorter @VERSION@ - Linux x86-64
 EarthBound / Mother 2 PC port
 
+Threed/Threek restores the Investigator after Master Belch and keeps the Ghost
+Enthusiast available afterward, using their original sprites and dialogue.
+Existing supported ROM imports and saves continue to work.
+
 Extract this entire ZIP, then open its Phase-Distorter-@VERSION@-linux-x86_64
 folder and run the native Phase Distorter executable directly. Do not run it
 from inside the ZIP. No compiler or shell launcher is needed. From a terminal

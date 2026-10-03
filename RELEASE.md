@@ -3,6 +3,100 @@
 Prepared 2026-09-27. Upload this directory's contents as the root of the fresh
 repository. No remote repository was created or changed.
 
+## Threed / Threek NPC restoration — current packages
+
+Updated 2026-10-03. The Investigator (NPC 563) now appears at his original
+position after Master Belch. His original appearance flag 610 is never set by
+the game; the restored condition uses Belch's flag 71. This post-Belch timing
+follows the likely intent in [Starmen's original hacking research](https://vblank.fangamer.com/mother2/gameinfo/factoids/),
+and is an inference rather than a documented original event. The Ghost Enthusiast
+(NPC 526) remains in town before and after Belch, making his original ghost-pet
+dialogue reachable. Both regions retain the original sprites, facing, positions,
+action scripts, dialogue pointers and all other NPC conditions.
+
+The correction applies to compiled gameplay and native sprite preparation,
+including original timing and sessions restored from snapshots. It changes
+three definition bytes only when consumed; imported assets, ROM authentication,
+snapshot content identity and save flags are unchanged. No reimport or new save
+is needed. The source parity oracles explicitly retain the original SNES data.
+
+The restoration regression passes 442 checks across synthetic fixtures and
+both imported regional packs, including actual compiled NPC selection, event
+combinations, duplicate/type/map/photo gates, ROM mirrors, DMA and restored
+session reads. Seven focused Linux CTests pass. A separate native-only check
+passes 1,103 checks for actual NPC activation and Ghost Enthusiast artwork in
+both regions; his restored sprite produces two drawable parts with 512 verified
+atlas pixels. This is deterministic loading/artwork proof, not a complete
+playthrough. Both Linux and Windows applications are rebuilt from the current
+checkout, and both launchers and release ZIPs include the fix. Extracted archives
+match their manifests and built binaries; each completes 180-frame US/JP
+headless startup checks. Windows validation uses Wine.
+
+The sections below record earlier checkpoints and their validation boundaries.
+
+## Controller mapping and settings — current local Linux checkpoint
+
+Updated 2026-10-02. The SNES Nintendo Switch Online controller now uses its
+printed A/B/X/Y labels correctly. Linux USB/Bluetooth mappings also preserve
+L/R, Select/Start and every D-pad direction. **F1 → Controller** shows the
+connected device and held inputs, remaps all 12 SNES buttons, adjusts stick
+deadzone and restores defaults. Controller preferences persist in
+`display.cfg.controllers` beside the display preferences; `--no-config` disables
+both. Custom `--config` paths use the same `.controllers` suffix.
+
+The input fixture passes 270 virtual-controller checks with packaged native
+SDL2 2.32.10 and host sdl2-compat. All four focused input, preferences, desktop
+support and Settings UI CTests pass. The actual Linux frontend completes a
+180-frame run with Settings visible, and GUI changes persist immediately and
+reload after application restart in an isolated preference directory. Physical
+controller testing remains outstanding. `build/cpp/eb_cpp` and `launchers/linux/bin/eb_cpp` include this
+change; Windows and release ZIPs retain their earlier checkpoints.
+
+## Save state snapshots — current local Linux checkpoint
+
+Updated 2026-10-02. **F1 → Debug → Save state snapshots** now saves named
+snapshots, lists their creation dates and frame numbers, loads them immediately,
+refreshes the list and deletes selected snapshots with confirmation. Files
+persist beneath the application data directory in separate per-game folders.
+They preserve processors, clocks, memory/SRAM, audio synthesis, native actor
+resources, pending debug actions and current artwork. Loading validates the
+format, game content and checksum before replacing the running session, then
+resets host frame history/audio and restores the debug switches.
+
+Session and storage tests pass, including partial steps, fresh-owner reloads,
+corrupt-file rejection without changing play, and bounded allocations. Imported
+US/JP gameplay checks compare complete state, pictures and PCM through 48-frame
+continuations after restart. The real Linux SDL/ImGui application passes saving,
+refreshing, restart/listing, failed-load continuation, successful frame/cheat
+restoration and confirmed deletion in an isolated application data directory.
+The actual Paula rescue scene also passes snapshot restoration at frame 5,322
+with Paula recruited, then exact native state/picture/audio continuation through
+frames 5,370 and 5,418. Both complete-frame and partial-step captures are checked.
+
+The default CTest run reports 204 passes, 31 optional asset checks skipped, and
+the same two previously established failures: `native_sprite_draw_tests` and
+`native_world_runtime_tests`. `build/cpp/eb_cpp` and
+`launchers/linux/bin/eb_cpp` include snapshots and the Paula fix below. Windows
+and release ZIPs remain their earlier checkpoints.
+
+## Paula party-join crash — current local Linux checkpoint
+
+Updated 2026-10-02. The native sprite loader now accepts the source's hidden
+animation initialization marker (`0xffff`) without decoding it as a visible
+frame. It preserves the original frame-reference latch and subsequent visible
+pose selection. The cabin-key rescue dialogue reproduced the crash at frame
+5,323 before the fix; the corrected runtime completes it through frame 6,500,
+with Paula visible and following Ness after the dialogue. Original save data was
+unchanged. The captured animation callback regression passes for both regions,
+including retained artwork and rejection of invalid visible frames.
+
+The rebuilt default CTest suite reports 202 passes, 31 optional asset checks
+skipped, and two failures that also reproduce on the original source snapshot:
+`native_sprite_draw_tests` and `native_world_runtime_tests`.
+
+`build/cpp/eb_cpp` and `launchers/linux/bin/eb_cpp` include this fix. Windows and
+release ZIPs remain their separate checkpoints below.
+
 ## Sprite exhaustion and CRT softness — current local Linux checkpoint
 
 Updated 2026-09-29. The local Linux launcher no longer widens the original engine's

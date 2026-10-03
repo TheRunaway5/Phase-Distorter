@@ -1,6 +1,7 @@
 #pragma once
 
 #include "eb/game_version.hpp"
+#include "eb/pixel_bounds.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -8,6 +9,7 @@
 #include <span>
 #include <vector>
 
+namespace eb { class SnapshotArchive; }
 namespace eb::native {
 
 // File offsets in the user's imported assets. These are content tables, not
@@ -42,16 +44,19 @@ struct SpriteImage {
         int left{}, top{};
         bool upper{}, flip_x{}, flip_y{};
         bool operator==(const ShapePart &) const = default;
+        void snapshot_io(SnapshotArchive &archive);
     };
     struct Layout {
         unsigned canvas_width{}, canvas_height{};
         std::array<std::vector<ShapePart>, 2> parts;
         bool operator==(const Layout &) const = default;
+        void snapshot_io(SnapshotArchive &archive);
     };
     struct Part {
         int left{}, top{};
         bool upper{};
         std::array<std::uint8_t, 256> indices{};
+        void snapshot_io(SnapshotArchive &archive);
     };
     unsigned width{}, height{}, palette{};
     int left{}, top{};
@@ -63,6 +68,7 @@ struct SpriteImage {
     std::shared_ptr<const Layout> layout;
     std::shared_ptr<const std::vector<std::uint8_t>> canvas;
     bool authored_mirror{};
+    void snapshot_io(SnapshotArchive &archive);
 };
 
 class SpriteResources {
@@ -78,6 +84,9 @@ class SpriteResources {
 
     unsigned size() const;
     const SpriteDefinition &definition(unsigned group) const;
+    // Union of imported normal/mirrored piece offsets, before the renderer's
+    // baseline adjustment. Querying this never acquires artwork or actors.
+    PixelBounds artwork_bounds() const;
     // Import metadata lookup for compatibility adapters. The input is the
     // authored frame-table file offset, never a runtime allocation address.
     std::optional<unsigned> group_for_frame_table(std::uint32_t asset_offset) const;
@@ -104,11 +113,13 @@ class SpriteArtwork {
     unsigned tile_columns() const { return layout_->canvas_width / 8; }
     unsigned tile_rows() const { return layout_->canvas_height / 8; }
     std::uint64_t revision() const { return revision_; }
+    static SpriteArtwork from_snapshot(SnapshotArchive &archive);
     // Tiles are row-major in the padded canvas. Validate the whole operation
     // before changing any pixels; a zero-sized valid range is a no-op.
     void apply_tiles(const SpriteImage &target, unsigned first_tile, unsigned tile_count);
     std::shared_ptr<const SpriteImage> snapshot(
         SpriteOrientation orientation = SpriteOrientation::Authored) const;
+    void snapshot_io(SnapshotArchive &archive);
 
   private:
     std::shared_ptr<const SpriteImage::Layout> layout_;

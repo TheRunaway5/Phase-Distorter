@@ -3,10 +3,12 @@
 add_library(eb_native_story STATIC
     src/native/battle/action_resources.cpp
     src/native/battle/names.cpp
+    src/native/battle/grammar.cpp
     src/native/battle/palette_effects.cpp
     src/native/battle/shields.cpp
     src/native/story/battle_dialogue.cpp
     src/native/battle/enemy_resources.cpp
+    src/native/battle/encounter_resources.cpp
     src/native/battle/roster.cpp
     src/native/dialogue/program.cpp
     src/native/dialogue/runtime.cpp
@@ -55,7 +57,16 @@ add_library(eb_native_story STATIC
     src/native/npcs/interaction_queue.cpp)
 target_include_directories(eb_native_story PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 if(TARGET eb_native_engine)
-    target_sources(eb_native_engine PRIVATE src/native/battle/formation.cpp)
+    target_sources(eb_native_engine PRIVATE src/native/battle/formation.cpp
+        src/native/battle/psi_resources.cpp src/native/battle/psi_animation.cpp
+        src/native/battle/psi_scene.cpp src/native/battle/psi_setup.cpp
+        src/native/battle/frame.cpp src/native/battle/frame_display.cpp
+        src/native/battle/background_loader.cpp
+        src/native/battle/startup_graphics.cpp src/native/battle/admission.cpp
+        src/native/battle/target_selection.cpp src/native/battle/turn_scheduler.cpp
+        src/native/world_layers.cpp src/native/world_encounter_effects.cpp
+        src/native/battle/animation_commands.cpp src/native/world_swirl.cpp
+        src/native/scene_effects.cpp src/native/world_display_fade.cpp)
     target_link_libraries(eb_native_engine PUBLIC eb_native_story)
 endif()
 if(TARGET eb_scene)
@@ -64,8 +75,10 @@ if(TARGET eb_scene)
     add_library(eb_native_story_scene STATIC src/native/story/window_layer.cpp)
     target_link_libraries(eb_native_story_scene PUBLIC eb_native_story eb_scene)
     if(TARGET eb_native_engine)
-        target_sources(eb_native_story_scene PRIVATE src/native/story/scene.cpp src/native/npcs/interaction.cpp src/native/story/interaction_calls.cpp src/native/story/party_formation.cpp src/native/story/teddy_party.cpp src/native/story/growth_dialogue.cpp)
+        target_sources(eb_native_story_scene PRIVATE src/native/story/scene.cpp src/native/npcs/interaction.cpp src/native/story/interaction_calls.cpp src/native/story/party_formation.cpp src/native/story/teddy_party.cpp src/native/story/growth_dialogue.cpp src/native/story/battle_publication.cpp src/native/story/battle_display_setup.cpp)
         target_link_libraries(eb_native_story_scene PUBLIC eb_native_engine)
+        target_sources(eb_native_story_scene PRIVATE src/native/story/battle_startup.cpp
+            src/native/story/battle_dead_players.cpp src/native/story/battle_rounds.cpp)
     endif()
 endif()
 if(MINGW)
@@ -219,6 +232,41 @@ if(EB_BUILD_TESTS)
         "$<TARGET_FILE:native_party_teddy_tests>"
         "$<TARGET_FILE:native_npc_interaction_assets>")
     if(TARGET eb_native_engine AND TARGET eb_native_story_scene)
+        foreach(psi_test native_psi_state_tests native_psi_scene_tests native_psi_setup_tests native_psi_transfer_tests native_battle_frame_tests native_battle_vram_tests native_battle_background_loader_tests)
+            add_executable(${psi_test} tests/${psi_test}.cpp)
+            target_link_libraries(${psi_test} PRIVATE eb_native_engine)
+            add_test(NAME ${psi_test} COMMAND ${psi_test})
+        endforeach()
+        target_link_libraries(native_battle_frame_tests PRIVATE eb_native_story_scene)
+        add_executable(native_battle_frame_scene_tests tests/native_battle_frame_scene_tests.cpp)
+        target_link_libraries(native_battle_frame_scene_tests PRIVATE eb_native_story_scene)
+        add_test(NAME native_battle_frame_scene_tests COMMAND native_battle_frame_scene_tests)
+        add_executable(native_battle_display_setup_tests tests/native_battle_display_setup_tests.cpp)
+        target_link_libraries(native_battle_display_setup_tests PRIVATE eb_native_story_scene)
+        add_test(NAME native_battle_display_setup_tests COMMAND native_battle_display_setup_tests)
+        add_executable(native_battle_publication_handoff_tests tests/native_battle_publication_handoff_tests.cpp)
+        target_link_libraries(native_battle_publication_handoff_tests PRIVATE eb_native_world_runtime)
+        add_test(NAME native_battle_publication_handoff_tests COMMAND native_battle_publication_handoff_tests)
+        add_executable(native_battle_startup_reference tests/native_battle_startup_reference.cpp)
+        target_link_libraries(native_battle_startup_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
+        add_test(NAME native_battle_startup_reference COMMAND native_battle_startup_reference)
+        set_tests_properties(native_battle_startup_reference PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(native_battle_frame_reference tests/native_battle_frame_reference.cpp)
+        target_link_libraries(native_battle_frame_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
+        add_test(NAME native_battle_frame_reference COMMAND native_battle_frame_reference)
+        set_tests_properties(native_battle_frame_reference PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(native_psi_reference tests/native_psi_reference.cpp)
+        target_link_libraries(native_psi_reference PRIVATE eb_native_story_scene eb_native_engine eb_core eb_assets)
+        add_test(NAME native_psi_reference COMMAND native_psi_reference)
+        set_tests_properties(native_psi_reference PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(native_psi_setup_reference tests/native_psi_setup_reference.cpp)
+        target_link_libraries(native_psi_setup_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
+        add_test(NAME native_psi_setup_reference COMMAND native_psi_setup_reference)
+        set_tests_properties(native_psi_setup_reference PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME native_psi_linkage COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_native_story_linkage.py" --nm "${CMAKE_NM}"
+            "$<TARGET_FILE:native_psi_state_tests>" "$<TARGET_FILE:native_psi_scene_tests>"
+            "$<TARGET_FILE:native_psi_setup_tests>")
         add_executable(native_battle_palette_scene_tests tests/native_battle_palette_scene_tests.cpp)
         target_link_libraries(native_battle_palette_scene_tests PRIVATE eb_native_engine)
         add_test(NAME native_battle_palette_scene_tests COMMAND native_battle_palette_scene_tests)
@@ -236,6 +284,21 @@ if(EB_BUILD_TESTS)
         add_executable(native_battle_roster_tests tests/native_battle_roster_tests.cpp)
         target_link_libraries(native_battle_roster_tests PRIVATE eb_native_engine)
         add_test(NAME native_battle_roster_tests COMMAND native_battle_roster_tests)
+        foreach(battle_test native_battle_startup_graphics_tests native_battle_admission_tests native_battle_turn_scheduler_tests native_battle_rounds_tests)
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/${battle_test}.cpp")
+                add_executable(${battle_test} tests/${battle_test}.cpp)
+                target_link_libraries(${battle_test} PRIVATE eb_native_world_runtime)
+                add_test(NAME ${battle_test} COMMAND ${battle_test})
+            endif()
+        endforeach()
+        foreach(battle_reference native_encounter_turns_reference native_battle_turn_scheduler_reference native_battle_sprite_bus_reference)
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/${battle_reference}.cpp")
+                add_executable(${battle_reference} tests/${battle_reference}.cpp)
+                target_link_libraries(${battle_reference} PRIVATE eb_native_world_runtime eb_core eb_assets eb_dsp)
+                add_test(NAME ${battle_reference} COMMAND ${battle_reference})
+                set_tests_properties(${battle_reference} PROPERTIES SKIP_RETURN_CODE 77)
+            endif()
+        endforeach()
         add_test(NAME native_battle_roster_linkage COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_native_story_linkage.py" --nm "${CMAKE_NM}"
             "$<TARGET_FILE:native_battle_roster_tests>")

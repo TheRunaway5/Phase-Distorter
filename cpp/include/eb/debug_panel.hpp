@@ -1,12 +1,15 @@
 #pragma once
 
 #include <SDL.h>
+#include "eb/controller_settings.hpp"
 #include "eb/game_debug.hpp"
+#include "eb/snapshot_types.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace eb {
 struct DisplaySettings;
@@ -35,6 +38,10 @@ struct DebugDiagnostics {
     GameDebugSnapshot game_debug;
     std::array<AssetCacheInfo, 2> cache;
     std::string custom_asset_status;
+    std::vector<SaveStateSnapshotInfo> snapshots;
+    std::string snapshot_status;
+    bool snapshots_available = false;
+    ControllerSnapshot controller;
 };
 
 // The SDL window and current OpenGL context must outlive this object.
@@ -56,7 +63,11 @@ public:
     std::optional<PanelAction> take_action();
     void set_action_status(std::string status);
     const GameDebugSettings& game_settings() const;
+    void set_game_settings(GameDebugSettings settings);
+    const ControllerSettings& controller_settings() const;
+    void set_controller_settings(ControllerSettings settings);
     std::optional<GameDebugRequest> take_game_action();
+    std::optional<SaveStateSnapshotRequest> take_snapshot_action();
     // Logical SDL height of the top bar. Windowed mode reserves this strip;
     // fullscreen reveals it as an overlay only while the pointer is at the top.
     float menu_height() const;

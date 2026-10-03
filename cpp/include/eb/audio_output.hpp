@@ -41,6 +41,7 @@ class DeviceAudioQueue {
     DeviceAudioQueue(DeviceAudioQueue &&) = delete;
     DeviceAudioQueue &operator=(DeviceAudioQueue &&) = delete;
     void append(std::span<const std::int16_t> samples);
+    void clear();
 
   private:
     std::uint32_t device_{};

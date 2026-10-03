@@ -49,6 +49,16 @@ std::vector<std::uint8_t> assets(eb::GameVersion version) {
         result[at + 3] = 0xf8;
         result[at + 4] = offset >= 70 && offset % 10 == 0 ? 0 : 0x80;
     }
+    // OverlaySprites imports every authored clip eagerly. Supply the four
+    // finite loops even though these draw checks use the separate script below.
+    for (const unsigned offset : {162u, 110u, 174u, 194u}) {
+        const unsigned start = overlay_maps + offset;
+        const unsigned clip[] = {1, overlay_maps & 0xffff, 2, 3, 3, start & 0xffff};
+        for (unsigned i = 0; i < std::size(clip); ++i) {
+            result[start + i * 2] = clip[i];
+            result[start + i * 2 + 1] = clip[i] >> 8;
+        }
+    }
     const unsigned script[] = {1, overlay_maps & 0xffff, 2, 3, 3, 0x1200};
     for (unsigned i = 0; i < std::size(script); ++i) {
         result[0x41200 + i * 2] = script[i]; result[0x41201 + i * 2] = script[i] >> 8;

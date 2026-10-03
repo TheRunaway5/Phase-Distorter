@@ -3,20 +3,6 @@
 #include <utility>
 
 namespace eb::native {
-WorldSwirlData import_world_swirl_data(std::span<const std::uint8_t> content) {
-  // Both regional content catalogs place the seven authored definitions here.
-  constexpr unsigned table = 0xedd41;
-  if (content.size() < table + 28)
-    throw std::invalid_argument("Truncated native swirl definitions");
-  WorldSwirlData data;
-  for (unsigned i = 0; i < data.definitions.size(); ++i) {
-    const auto at = table + i * 4;
-    data.definitions[i] = {content[at], content[at + 1], content[at + 2]};
-    if (unsigned(content[at + 1]) + content[at + 2] > 126)
-      throw std::invalid_argument("Swirl definition escapes its clip catalog");
-  }
-  return data;
-}
 WorldEncounter::WorldEncounter(
     const WorldSwirlData &data, const WorldEncounterState &encounter,
     WorldSwirlState &swirl, ScenePalette &colors, const PaletteColor &backup,
@@ -38,32 +24,7 @@ bool WorldEncounter::uses(
 }
 void WorldEncounter::configure(unsigned id, std::uint16_t options,
                                std::uint8_t padding) {
-  const auto &definition = data_.definitions.at(id);
-  swirl_.invert = (options & 2) != 0;
-  swirl_.reverse = (options & 1) != 0;
-  swirl_.masked_layers.fill((options & 4) == 0);
-  swirl_.masked_layers[5] = (options & 4) != 0;
-  swirl_.update_in = 1;
-  swirl_.interval = definition.interval;
-  swirl_.frames_left = definition.frame_count;
-  swirl_.frame = std::uint8_t(definition.first_frame +
-                             (swirl_.reverse ? definition.frame_count : 0));
-  swirl_.oval = id == 0;
-  swirl_.oval_state.next_step = 0;
-  swirl_.padding = padding;
-  swirl_.restore_after = true;
-  if (options & 0x80) {
-    swirl_.next = std::uint8_t(id);
-    swirl_.interval = 4;
-    swirl_.repeat_speed = 0;
-    swirl_.repeats_until_speedup = 8;
-  } else {
-    // The repeat counters deliberately retain their prior values.
-    swirl_.next = 0;
-  }
-  visual_.window_left.fill(255);
-  visual_.window_right.fill(0);
-  ++visual_.window_revision;
+  configure_world_swirl(data_, swirl_, visual_, id, options, padding);
 }
 void WorldEncounter::configure_swirl(unsigned id, std::uint16_t options,
                                      std::uint8_t padding) {

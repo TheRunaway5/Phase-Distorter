@@ -185,7 +185,8 @@ void character_fields(IO &io, State &s, Layout l) {
   io.value(s.boosted_vitality);
   io.value(s.boosted_iq);
   io.value(s.boosted_luck);
-  io.values(s.reserved_92_94);
+  io.values(s.reserved_92_93);
+  io.value(v.battle_selection);
 }
 template <class IO, class State> void state_fields(IO &io, State &s, Layout l) {
   game_fields(io, s.game, l);

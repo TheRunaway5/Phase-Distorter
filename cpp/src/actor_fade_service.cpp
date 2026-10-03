@@ -1,4 +1,5 @@
 #include "eb/actor_fade_service.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/native/frame_fade.hpp"
 #include "eb/snes_bus.hpp"
@@ -109,5 +110,10 @@ bool ActorFadeService::try_execute(MainCpu65816 &cpu, SnesBus &bus) {
         return true;
     }
     return false;
+}
+void ActorFadeService::snapshot_io(SnapshotArchive &archive) {
+    archive(owner_, actor_entry_stack_, script_fade_stack_, last_actor_fade_frame_, actor_fade_ticks_);
+    if (archive.loading() && owner_ != FadeClockOwner::HardwareFrame && owner_ != FadeClockOwner::ActorPass)
+        throw std::runtime_error("Invalid snapshot actor fade clock");
 }
 } // namespace eb

@@ -5,6 +5,7 @@
 #include <memory>
 
 namespace eb {
+class SnapshotArchive;
 class MainCpu65816;
 class SnesBus;
 class OverworldSpriteRuntime;
@@ -29,6 +30,7 @@ public:
   bool try_execute(MainCpu65816 &cpu, SnesBus &bus,
                    OverworldSpriteRuntime &runtime);
   NativeSpriteEffectDiagnostics diagnostics() const;
+  void snapshot_io(SnapshotArchive &archive);
 
 private:
   struct State;

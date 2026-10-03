@@ -1,4 +1,5 @@
 #include "eb/native/sprite_effects.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -193,6 +194,36 @@ void SpriteEffectCanvas::copy_phase(unsigned phase) {
 std::shared_ptr<const SpriteImage>
 SpriteEffectCanvas::snapshot(SpriteOrientation orientation) const {
   return artwork_.snapshot(orientation);
+}
+SpriteEffectCanvas::SpriteEffectCanvas(RestoreTag, SpriteImage target)
+    : target_(std::move(target)), artwork_(target_) {}
+void SpriteEffectCanvas::snapshot_fields(SnapshotArchive &archive) {
+  archive(width_, height_, display_width_, top_, source_, pixels_, artwork_);
+  if (archive.loading()) {
+    dimension(width_);
+    dimension(height_);
+    dimension(display_width_);
+    const auto size = std::size_t(width_) * height_;
+    if (display_width_ > width_ || top_ != (height_ & 15) ||
+        target_.layout->canvas_width != ((display_width_ + 15) & ~15u) ||
+        target_.layout->canvas_height != ((height_ + 15) & ~15u) ||
+        !source_ || source_->size() != size || pixels_.size() != size ||
+        std::any_of(source_->begin(), source_->end(), [](auto value) { return value > 15; }) ||
+        std::any_of(pixels_.begin(), pixels_.end(), [](auto value) { return value > 15; }))
+      throw std::runtime_error("Invalid snapshot native sprite effect canvas");
+  }
+}
+void SpriteEffectCanvas::snapshot_io(SnapshotArchive &archive) {
+  archive(target_);
+  snapshot_fields(archive);
+}
+SpriteEffectCanvas SpriteEffectCanvas::from_snapshot(SnapshotArchive &archive) {
+  if (!archive.loading()) throw std::logic_error("Sprite effect restore requires an input archive");
+  SpriteImage target;
+  archive(target);
+  SpriteEffectCanvas restored(RestoreTag{}, std::move(target));
+  restored.snapshot_fields(archive);
+  return restored;
 }
 
 unsigned SpriteDissolveSequence::next(std::uint16_t random) {

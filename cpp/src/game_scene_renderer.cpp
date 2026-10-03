@@ -1,11 +1,13 @@
 #include "eb/game_scene_renderer.hpp"
 #include "eb/overworld_sprite_bridge.hpp"
 #include "eb/overworld_sprite_runtime.hpp"
+#include "eb/render_distance.hpp"
 #include "eb/native/overlay_sprites.hpp"
 #include "eb/native/custom_sprites.hpp"
 #include "generated_profile.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 
 #include "snes_ppu_constants.hpp"
@@ -105,6 +107,7 @@ void GameSceneRenderer::resize_presentation_width(const SceneReadView &view, uns
         return;
     presentation_width_ = width;
     presentation_boundary_frame_ = UINT64_MAX;
+    presentation_camera_ = {};
     presentation_framebuffer_.assign(width == 256 ? 0 : width * 224, 0xff000000);
     if (width > 256)
         for (unsigned y = 0; y < 224; ++y)
@@ -443,6 +446,19 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
         presentation_battle_scene_ = false;
     }
     presentation_psi_display_layer_ = 0;
+    presentation_screen_overlay_layer_ = 0;
+    if (!presentation_battle_scene_)
+        for (unsigned slot = 0; slot < 30; ++slot) {
+            const unsigned event = ram_word(source.wram_entity_script_ids + slot * 2);
+            const unsigned phase = ram_word(source.wram_entity_script_variable0 + slot * 2);
+            // EVENT_452 is also Photo Man's snapshot iris. C47B77 uploads
+            // one 32x28 BG3 page for it and the Carpainter strike sequences.
+            if ((event == source.lightning_scripts.franklin_badge_reflection && phase == 1) ||
+                ((event == source.lightning_scripts.strike_event_705 ||
+                  event == source.lightning_scripts.strike_event_706) &&
+                 (phase == 2 || phase == 0 || phase == 10)))
+                presentation_screen_overlay_layer_ = 4;
+        }
     // Static full-screen art/text has no authored offscreen continuation.
     // In particular SHOW_TITLE_SCREEN's BG1 map ($58) must not repeat the
     // copyright line. Only identified scenery/animation layers extend.
@@ -523,6 +539,7 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
         presentation_shift_x_ = 0;
         presentation_clip_left_ = -384;
         presentation_clip_right_ = 640;
+        presentation_camera_ = {};
     }
     if (presentation_world_map_ && presentation_objects_frame_ != view.completed_frames) {
         if (presentation_objects_uploaded_) {
@@ -591,33 +608,48 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
 // the native camera is centered near an edge. Shift only its rendered scenery;
 // narrow runs receive black margins instead of exposing neighboring map data.
 void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view) {
-    if (presentation_boundary_frame_ == view.completed_frames)
-        return;
-    presentation_boundary_frame_ = view.completed_frames;
-    presentation_shift_x_ = 0;
-    presentation_clip_left_ = -384;
-    presentation_clip_right_ = 640;
+    const auto reset = [&] {
+        presentation_shift_x_ = 0;
+        presentation_clip_left_ = -384;
+        presentation_clip_right_ = 640;
+        presentation_camera_ = {};
+        presentation_boundary_frame_ = view.completed_frames;
+    };
     // Window effects use authored screen coordinates, including scanline-varying
     // apertures in the title demo. Moving the world independently would move
     // its subject out of the opening. Keep the source framing for both layer
     // masks and color windows; map sampling still handles out-of-area tiles.
     const auto &regs = view.ppu_registers;
-    if (regs[0x30] & 0xf0)
+    if (presentation_width_ == 256 || (regs[0] & 0x80) || !(regs[0] & 15) || (regs[0x30] & 0xf0)) {
+        reset();
         return;
+    }
     const unsigned masked_layers = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
     for (unsigned layer = 0; layer < 5; ++layer) {
         const unsigned selection = (regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
-        if ((masked_layers & (1u << layer)) && (selection & 0x0a))
+        if ((masked_layers & (1u << layer)) && (selection & 0x0a)) {
+            reset();
             return;
+        }
     }
+    // Window eligibility can change mid-frame. Honor the authored aperture
+    // immediately, but advance ordinary camera history only once per frame.
+    if (presentation_boundary_frame_ == view.completed_frames)
+        return;
+    const auto previous_frame = presentation_boundary_frame_;
+    presentation_boundary_frame_ = view.completed_frames;
+    presentation_clip_left_ = -384;
+    presentation_clip_right_ = 640;
     // The original camera itself is not clamped. This optional display policy
     // derives a horizontal region from the very same sector IDs that LOAD_MAP
     // uses to hide unrelated maps. Anchor at the native viewport center and
     // hold the result throughout the frame, avoiding scanline-shaped warping.
     const int camera = presentation_world_x_[0];
     const int center_x = camera + 128, center_y = presentation_world_y_[0] + 112;
-    if (center_x < 0 || center_x >= 8192 || center_y < 0 || center_y >= 10240)
+    if (center_x < 0 || center_x >= 8192 || center_y < 0 || center_y >= 10240) {
+        reset();
         return;
+    }
     const unsigned row = unsigned(center_y) / 128,
                    address = view.source_profile.wram_loaded_map_tile_combination;
     const unsigned combo = view.work_ram[address] | (view.work_ram[address + 1] << 8);
@@ -628,22 +660,65 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
                 3) == combo;
     };
     int left = center_x / 256, right = left + 1;
-    if (!valid(left))
+    if (!valid(left)) {
+        reset();
         return;
+    }
     while (valid(left - 1))
         --left;
     while (valid(right))
         ++right;
     left *= 256;
     right *= 256;
+    auto &history = presentation_camera_;
+    const bool fresh = !history.valid || history.combination != combo ||
+                       previous_frame == UINT64_MAX || view.completed_frames != previous_frame + 1 ||
+                       std::abs(camera - history.x) > 64 ||
+                       std::abs(presentation_world_y_[0] - history.y) > 64 ||
+                       left >= history.right || right <= history.left;
+    if (fresh) {
+        history = {true, combo, camera, presentation_world_y_[0], left, right, left, right, 0};
+    } else if (left == history.left && right == history.right) {
+        history.pending_frames = 0;
+    } else {
+        // A sector seam is only a coarse map-storage boundary. Require eight
+        // consecutive logical frames in its new span before reframing, so a
+        // player straddling the seam cannot keep reversing the camera target.
+        if (left != history.pending_left || right != history.pending_right) {
+            history.pending_left = left;
+            history.pending_right = right;
+            history.pending_frames = 0;
+        }
+        if (++history.pending_frames >= 8) {
+            history.left = left;
+            history.right = right;
+            history.pending_frames = 0;
+        }
+    }
+    history.x = camera;
+    history.y = presentation_world_y_[0];
     const int width = int(presentation_width_), margin = (width - 256) / 2;
-    const int available = right - left;
+    const int available = history.right - history.left;
     // origin is the displayed world's left edge. The derived shift converts
     // back to native coordinates for tile/sprite sampling; clip bounds remain
     // in centered output coordinates, so HUD placement never follows the shift.
-    const int origin = available >= width ? std::clamp(camera - margin, left, right - width)
-                                          : left - (width - available) / 2;
-    presentation_shift_x_ = origin + margin - camera;
+    const int target_origin = available >= width
+                                  ? std::clamp(camera - margin, history.left, history.right - width)
+                                  : history.left - (width - available) / 2;
+    const int target_shift = target_origin + margin - camera;
+    if (fresh) {
+        presentation_shift_x_ = target_shift;
+    } else {
+        // Ease the correction, not the native camera. Native walking/scrolling
+        // is still visible on its original frame. Integer steps taper to one
+        // pixel near the target and settle exactly without overshooting.
+        const int distance = target_shift - presentation_shift_x_;
+        const int step = std::min(4, (std::abs(distance) + 7) / 8);
+        presentation_shift_x_ += distance < 0 ? -step : step;
+    }
+    const int origin = camera - margin + presentation_shift_x_;
+    // Clip against the current authored span while its camera target settles;
+    // easing must never expose a neighboring map's artwork.
     presentation_clip_left_ = left - origin - margin;
     presentation_clip_right_ = right - origin - margin;
 }
@@ -883,7 +958,7 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
                     objects[x] = world_objects[x];
         }
     }
-    if (presentation_psi_display_layer_ || presentation_shift_x_ ||
+    if (presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
         (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
         for (unsigned x = 0; x < presentation_width_; ++x)
             output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
@@ -1169,17 +1244,22 @@ void GameSceneRenderer::tag_native_actor_draw(const SceneReadView &view, std::si
     }
     const auto actor = view.native_sprites->snapshot(byte_slot);
     const bool ordinary = actor && !view.native_sprites->custom_descriptor(byte_slot);
+    const bool custom = view.native_sprites->custom_descriptor(byte_slot);
     const auto identity = stationary ? (std::uint64_t{1} << 61) | stationary->identity :
-                          ordinary ? (std::uint64_t{1} << 63) | actor->id : 0;
-    const int anchor_x = std::int16_t(word(source.wram_entity_screen_coordinates.x + byte_slot)),
-              anchor_y = std::int16_t(word(source.wram_entity_screen_coordinates.y + byte_slot)) - 1;
+                          ordinary ? (std::uint64_t{1} << 63) | actor->id :
+                          custom ? (std::uint64_t{1} << 32) |
+                              (word(source.wram_entity_script_ids + byte_slot) << 8) | byte_slot : 0;
+    const int anchor_x = std::int16_t(word((custom ? source.wram_entity_world_coordinates.x :
+                                          source.wram_entity_screen_coordinates.x) + byte_slot)),
+              anchor_y = std::int16_t(word((custom ? source.wram_entity_world_coordinates.y :
+                                          source.wram_entity_screen_coordinates.y) + byte_slot)) - 1;
     for (auto it = queued.begin() + mark; it != queued.end(); ++it) {
         it->actor_order = order;
         // An overlay and body share one motion anchor, independent of which
         // effect was submitted first or whether it has a vertical offset.
         // Authored stationary NPC identity also spans preparation/activation.
         for (auto &object : it->objects)
-            if (ordinary && object.native_owned && (object.host_image || object.fragment_pixels)) {
+            if ((ordinary || custom) && object.native_owned && (object.host_image || object.fragment_pixels)) {
                 object.identity = identity;
                 if (object.fragment_pixels) {
                     object.anchor_x = anchor_x;
@@ -1189,7 +1269,7 @@ void GameSceneRenderer::tag_native_actor_draw(const SceneReadView &view, std::si
     }
 }
 void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) {
-    if (!native_stationary_sprites_ || !view.native_sprites || presentation_width_ <= 256) {
+    if (!native_stationary_sprites_ || !view.native_sprites) {
         native_stationary_preparation_.clear_resources();
         return;
     }
@@ -1222,16 +1302,16 @@ void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) 
     // The resulting commands travel with that frame's ordinary draw snapshot.
     const int camera_x = std::int16_t(word(source.wram_background_scroll.layer1_x)),
               camera_y = std::int16_t(word(source.wram_background_scroll.layer1_y));
-    const int margin = int(presentation_width_ - 256) / 2;
-    // A valid native center can be up to128px from an authored sector edge.
-    // Boundary recentering may therefore expose another margin+128px beyond
-    // the centered view. Prepare that bounded band without using last frame's
-    // camera shift; final rasterization still decides displayed visibility.
-    const int overscan = margin + 128;
+    const RenderDistance distance(presentation_width_);
+    const auto bounds = distance.content_bounds();
+    auto artwork = view.native_sprites->resources()->artwork_bounds();
+    // Source overworld pieces are drawn one pixel above their world anchor.
+    --artwork.top; --artwork.bottom;
+    const auto placements = distance.placement_bounds(artwork);
     const native::NpcVisibility visibility{combination, view.work_ram.subspan(flags, 128), active,
                                            word(objects_only) != 0, false};
-    const native::NpcRectangle footprint{camera_x - margin - overscan - 64, camera_y - 64,
-        camera_x + 256 + margin + overscan + 64, camera_y + 288};
+    const native::NpcRectangle footprint{camera_x + placements.left, camera_y + placements.top,
+        camera_x + placements.right, camera_y + placements.bottom};
     // Acquire shared artwork before stationary commands select their poses.
     // Moving NPC definitions participate only here: no pose/actor is invented.
     native_stationary_sprites_->prepare_resources(footprint, visibility, native_stationary_preparation_);
@@ -1254,8 +1334,9 @@ void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) 
             const int left = x + part.left, top = y + part.top - 1;
             // Canonical pixels are clipped by both rasterizers; partial edge
             // parts remain intact until actual source activation takes over.
-            if (left >= 0 && left + 16 <= 256) continue;
-            if (left >= 256 + margin + overscan || left + 16 <= -margin - overscan || top >= 224 || top + 16 <= 0)
+            if (left >= 0 && left + 16 <= 256 && top >= 0 && top + 16 <= 224) continue;
+            if (left >= bounds.right || left + 16 <= bounds.left ||
+                top >= bounds.bottom || top + 16 <= bounds.top)
                 continue;
             const unsigned level = candidate.surface & (part.upper ? 2 : 1) ? 0x20 : 0x30;
             PresentationObject object{left, top, 0, std::uint8_t(level | (candidate.palette << 1)),
@@ -1306,10 +1387,19 @@ void GameSceneRenderer::capture_entity_draw(const SceneReadView &view, unsigned 
 
 void GameSceneRenderer::capture_sprite_emit(const SceneReadView &view, std::uint32_t map_address, int x,
                                             int y, unsigned first_oam, unsigned oam_limit) {
-    if (!sprite_build_id_ || first_oam > 128 || oam_limit > 128 || first_oam >= oam_limit)
+    if (!sprite_build_id_ || first_oam > 128 || oam_limit > 128 || first_oam > oam_limit)
         return;
     auto &build = sprite_builds_[sprite_build_id_ - 1];
     ++sprite_snapshot_counts_.emit_calls;
+    const auto outside_native_picture = [&](const PresentationObject &object) {
+        constexpr unsigned sizes[8][2][2] = {
+            {{8, 8}, {16, 16}}, {{8, 8}, {32, 32}}, {{8, 8}, {64, 64}},
+            {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
+            {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
+        const auto &size = sizes[view.ppu_registers[1] >> 5][object.large];
+        return object.x >= 256 || object.x + int(size[0]) <= 0 ||
+               object.y >= 224 || object.y + int(size[1]) <= 0;
+    };
     if (view.native_sprites) {
         build.native_frame = true;
         const auto found = std::find_if(build.queued.begin(), build.queued.end(), [&](const auto &draw) {
@@ -1319,12 +1409,15 @@ void GameSceneRenderer::capture_sprite_emit(const SceneReadView &view, std::uint
         std::vector<PresentationObject> emitted;
         unsigned index = first_oam;
         for (const auto &object : source_sprite_parts(view, map_address, x, y)) {
-            if (object.x < -256 || object.x >= 256 || object.y < -32 || object.y >= 224)
+            const bool hardware_part = object.x >= -256 && object.x < 256 &&
+                                       object.y >= -32 && object.y < 224;
+            // Keep authored offscreen fragments in the host frame even when
+            // C08CD5 omits them. Only actually emitted parts own OAM ordinals.
+            if (hardware_part && index >= oam_limit && !outside_native_picture(object))
                 continue;
-            if (index >= oam_limit)
-                break;
             emitted.push_back(object);
-            build.oam[index++] = object;
+            if (hardware_part && index < oam_limit)
+                build.oam[index++] = object;
         }
         if (found != build.queued.end()) {
             found->objects = std::move(emitted);
@@ -1376,14 +1469,14 @@ void GameSceneRenderer::capture_sprite_emit(const SceneReadView &view, std::uint
     for (const auto &object : objects) {
         if (build.objects.size() >= 3840)
             break;
+        const bool hardware_part = object.x >= -256 && object.x < 256 &&
+                                   object.y >= -32 && object.y < 224;
+        if (hardware_part && index >= oam_limit && !outside_native_picture(object))
+            continue;
         build.objects.push_back(object);
-        if (object.x >= -256 && object.x < 256 && object.y >= -32 && object.y < 224) {
-            if (index >= oam_limit)
-                break;
+        if (hardware_part && index < oam_limit) {
             build.oam[index++] = object;
             sprite_snapshot_counts_.host_parts += bool(object.host_image);
-            if (index == oam_limit)
-                break;
         }
     }
 }
@@ -1409,9 +1502,11 @@ void GameSceneRenderer::seal_sprite_frame(const SceneReadView &view) {
             seen[slot / 2] = true;
             // Far-edge graphical continuation uses persistent actor hiding.
             // Processor V belongs to C0A0E3's call gate, not bank-word bit14.
+            const auto callback = word(source.wram_entity_draw_callback + slot);
             if ((word(source.wram_entity_spritemap_pointers.high + slot) & 0x8000) ||
                 (word(source.wram_entity_animation_frame + slot) & 0x8000) ||
-                word(source.wram_entity_draw_callback + slot) != source.entity_draw_callbacks.screen_space)
+                (callback != source.entity_draw_callbacks.screen_space &&
+                 callback != source.entity_draw_callbacks.world_space))
                 continue;
             const int x = std::int16_t(word(source.wram_entity_screen_coordinates.x + slot));
             const int y = std::int16_t(word(source.wram_entity_screen_coordinates.y + slot));
@@ -1428,6 +1523,20 @@ void GameSceneRenderer::seal_sprite_frame(const SceneReadView &view) {
                 const unsigned owner = (priority & 0x3f) * 2;
                 if (owner >= 60) continue;
                 priority = word(source.wram_entity_draw_priority + owner);
+            }
+            if (callback == source.entity_draw_callbacks.world_space) {
+                if (priority >= 4 || !view.native_sprites->custom_descriptor(slot))
+                    continue;
+                const auto mark = native_actor_draw_mark();
+                const unsigned table = ((word(source.wram_entity_spritemap_pointers.high + slot) & 255) << 16) |
+                                       word(source.wram_entity_spritemap_pointers.low + slot);
+                // Use the same immutable imported custom frame as the actual
+                // callback. Its artwork is independent of source VRAM slots.
+                queue_native_custom(view, table, word(source.wram_entity_animation_frame + slot),
+                    std::int16_t(word(source.wram_entity_world_coordinates.x + slot)),
+                    std::int16_t(word(source.wram_entity_world_coordinates.y + slot)), priority);
+                tag_native_actor_draw(view, mark, slot, raw_priority);
+                continue;
             }
             const auto actor = view.native_sprites->snapshot(slot);
             if (actor && actor->image && priority < 4) {

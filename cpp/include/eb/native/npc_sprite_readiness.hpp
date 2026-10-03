@@ -20,6 +20,7 @@ struct NpcSpriteReadinessStats {
 // the same shared image after logical creation.
 class NpcSpriteReadiness {
 public:
+  void snapshot_io(SnapshotArchive &archive);
   NpcSpriteReadiness(std::span<const std::uint8_t> assets, GameVersion version,
                      std::shared_ptr<SpriteResources> resources,
                      NpcSpriteReadinessLimits limits = {});

@@ -315,7 +315,7 @@ void helpers(const eb::GameAssets &assets) {
   // original repeated subtraction without making a broad unbounded workload.
   for (unsigned initial : {0u, 1u}) {
     state = {};
-    colors.palettes = {};
+    colors.staged = {};
     state.speed = 1;
     state.banks[2].frames_left = 1;
     state.banks[2].steps[21] = 0xffff;
@@ -332,7 +332,7 @@ void helpers(const eb::GameAssets &assets) {
   // selected resource's colors1..15, then later reverses those same banks.
   // Exercise that helper sequence without claiming the wider PSI caller.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   colors.upload_mode = 3;
   for (unsigned bank = 0; bank < 4; ++bank)
     for (unsigned c = 0; c < 16; ++c)
@@ -369,7 +369,7 @@ void helpers(const eb::GameAssets &assets) {
   // processed delta. The bad original execution is retained as a bounded
   // non-return witness; it is never substituted with successful completion.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   state.banks[0].frames_left = 2;
   state.banks[0].deltas[0] = 0xffff;
   s.seed(colors, state);
@@ -379,7 +379,7 @@ void helpers(const eb::GameAssets &assets) {
   compare("safe zero speed");
   Source stuck(assets);
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   state.banks[0].frames_left = 1;
   state.banks[0].steps[3] = 1;
   state.banks[0].deltas[3] = 1;
@@ -417,9 +417,8 @@ void sequence(Source &s, PaletteEffects &effects, unsigned bank, unsigned phase,
     s.call(s.p.target, bank * 16 + c, r, g, b);
     effects.target(bank * 16 + c, r, g, b);
   }
-  // Whole setup state is covered independently above. Here the source NMI
-  // may already have consumed its upload byte while the native late-palette
-  // publication deliberately retains the shared pending upload intent.
+  // Setup changes staging only. The real NMI and the shared native palette
+  // publication consume the same upload intent at the later display boundary.
 }
 void visible(const eb::GameAssets &assets) {
   BattleCombatants catalog(assets.image, assets.version);
@@ -437,6 +436,22 @@ void visible(const eb::GameAssets &assets) {
     s.put(s.p.group, group);
     s.call(s.p.selector);
     require(!scene.resources().empty(), "Pixel case has no resource");
+    // Seed the actual normal staging banks from independently imported raw
+    // palette content, including color0 and bit15; binding is not an
+    // initializer.
+    const auto resource_layout = battle_combatant_layout(assets.version);
+    for (unsigned bank = 0; bank < scene.resources().size(); ++bank)
+      for (unsigned color = 0; color < 16; ++color) {
+        const auto at = resource_layout.palettes +
+                        scene.resources()[bank].palette_id * 32 + color * 2;
+        colors.staged_palette(8 + bank)[color] = std::uint16_t(
+            assets.image.at(at) | unsigned(assets.image.at(at + 1)) << 8);
+      }
+    for (unsigned bank = 0; bank < 4; ++bank)
+      for (unsigned color = 0; color < 16; ++color)
+        require(colors.staged_palette(8 + bank)[color] ==
+                    s.word(0x300 + bank * 32 + color * 2),
+                "Native normal palette initialization differs from original");
     // Initial alternate colors are explicit live entry-state input. Normal
     // banks were loaded by the actual original group graphics initializer.
     for (unsigned b = 0; b < 4; ++b)
@@ -462,10 +477,10 @@ void visible(const eb::GameAssets &assets) {
     for (unsigned phase = 0; phase < 3; ++phase) {
       for (unsigned b = 0; b < scene.resources().size(); ++b)
         sequence(s, effects, b, phase, scene.resources()[b]);
-      s.compare(colors, state, "visible setup", phase == 0);
+      s.compare(colors, state, "visible setup");
       if (phase)
-        require(s.bus->work_ram[0x30] == 0 && colors.upload_mode == 16,
-                "Source consumed/native retained publication boundary changed");
+        require(s.bus->work_ram[0x30] == 0 && colors.upload_mode == 0,
+                "Completed publication retained palette upload intent");
       for (unsigned tick = 0; tick < (phase == 0 ? 10u : 20u); ++tick) {
         std::vector<BattleCombatantPresentation> actors;
         for (unsigned b = 0; b < scene.resources().size(); ++b) {
@@ -507,6 +522,11 @@ void visible(const eb::GameAssets &assets) {
         ++totals.advances;
         s.compare(colors, state, "visible advance");
         const auto effects_before = state;
+        // Source NMI transports both palettes and OAM. Commit the native shared
+        // palette owner at that same boundary before recapturing object colors.
+        s.transfer();
+        require(colors.publish_pending() && colors.upload_mode == 0,
+                "Native palette owner failed to consume the real upload");
         const auto mode = colors.upload_mode;
         scene.publish_palettes();
         require(actors == timers && state == effects_before &&
@@ -518,12 +538,9 @@ void visible(const eb::GameAssets &assets) {
         require(eb::rasterize_direct_scene({prior.draw(), {}}) == earlier,
                 "Earlier object snapshot changed after live palette update");
         totals.immutable_pixels += earlier.size();
-        // Palette upload mode16 comes from the actual active helper. Original
-        // NMI now uploads palettes and OAM; there is no direct palette_ram/OAM
-        // copy.
-        s.transfer();
-        require(colors.upload_mode == mode,
-                "Native publication intent was acknowledged by the fixture");
+        require(
+            colors.upload_mode == 0 && s.bus->work_ram[0x30] == 0,
+            "Source/native palette publication did not both consume intent");
         const auto actual = s.pixels();
         visible_nonblack += std::count_if(
             actual.begin(), actual.end(),

@@ -2,6 +2,27 @@
 #include <stdexcept>
 
 namespace eb::native::battle {
+PackedPalette& PaletteBankState::palette(unsigned bank) {
+    if (bank >= 4) throw std::out_of_range("Invalid alternate palette bank");
+    return staged[12 + bank];
+}
+const PackedPalette& PaletteBankState::palette(unsigned bank) const {
+    if (bank >= 4) throw std::out_of_range("Invalid alternate palette bank");
+    return staged[12 + bank];
+}
+bool PaletteBankState::publish_pending() {
+    if (!upload_mode) return false;
+    if (upload_mode != 8 && upload_mode != 16 && upload_mode != 24)
+        throw std::domain_error("Unsupported palette DMA parameter alias");
+    const unsigned first = upload_mode == 16 ? 8 : 0;
+    const unsigned end = upload_mode == 8 ? 8 : 16;
+    upload_mode = 0;
+    for (unsigned bank = first; bank < end; ++bank)
+        for (unsigned color = 0; color < 16; ++color)
+            displayed[bank][color] = std::uint16_t(staged[bank][color] & 0x7fff);
+    return true;
+}
+
 PaletteEffects::PaletteEffects(PaletteBankState& palettes, PaletteEffectState& state)
     : palettes_(palettes), state_(state) {}
 

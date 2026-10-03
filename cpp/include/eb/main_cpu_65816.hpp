@@ -8,6 +8,7 @@
 
 namespace eb {
 class SnesBus;
+class SnapshotArchive;
 struct SourceProfile;
 namespace game::runtime {
 class Instruction;
@@ -59,8 +60,10 @@ class MainCpu65816 {
     // Desktop policy: give the overworld entity pass extra compute capacity.
     // Hardware fixtures and original-timing comparisons retain native clocks.
     void set_gameplay_timing(bool enabled);
-    // Opt-in desktop loading policy; 256 keeps the original source bounds.
+    // Unguarded compatibility fixture; 256 keeps the original source bounds.
     void set_entity_preload_width(unsigned width) { entity_preload_.set_width(width); }
+    // Guarded desktop loading using viewport and imported artwork bounds.
+    void set_world_preload_width(unsigned width);
     void set_runtime(MainCpuRuntime runtime) { runtime_ = runtime; }
     MainCpuRuntime runtime() const { return runtime_; }
     // Read-only verification of timing state that affects future source steps.
@@ -74,6 +77,7 @@ class MainCpu65816 {
     std::uint64_t native_gameplay_batches() const { return native_gameplay_batches_; }
     void service_interrupt(bool nmi);
     std::string describe_registers() const;
+    void snapshot_io(SnapshotArchive &archive);
     // Generated sites supply fixed opcode/operand/length values. Sharing the
     // semantic helper keeps register and flag behavior consistent across both
     // game translations without interpreting instruction bytes at runtime.

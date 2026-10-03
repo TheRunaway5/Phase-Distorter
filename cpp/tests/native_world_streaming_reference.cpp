@@ -161,7 +161,7 @@ std::vector<Event> trace(WorldStreaming &streaming,ActorWorld &world,WorldEnemie
 }
 void run(const eb::GameAssets &assets) {
     auto sprites=std::make_shared<SpriteResources>(assets.image,sprite_catalog_layout(assets.version));
-    auto catalog=std::make_shared<NpcCatalog>(assets.image,npc_catalog_layout(assets.version));
+    auto catalog=std::make_shared<NpcCatalog>(assets.image,npc_catalog_layout(assets.version,false));
     auto program=std::make_shared<CompiledActionProgram>(import_action_scripts(assets.image,assets.version),assets.version);
     auto data=std::make_shared<EnemySpawnData>(import_enemy_spawn_data(assets.image,assets.version));
     WorldMap map(assets.image,world_map_layout(assets.version));WorldCollision collision(assets.image,world_collision_layout(assets.version));

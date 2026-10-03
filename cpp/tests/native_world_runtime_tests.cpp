@@ -10,6 +10,7 @@
 #include "eb/native/world_party_following.hpp"
 #include "eb/native/world_runtime.hpp"
 #include "eb/native/world_scene_presentation.hpp"
+#include "eb/native/story/battle_publication.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include "native_interaction_test_assets.hpp"
 #include "native_world_movement_fixture.hpp"
@@ -389,14 +390,17 @@ void main_frame_publication(eb::GameVersion version) {
   check(visual.window_right[1] == 200 && f.runtime->frame()->effects && f.runtime->completed_frames() == 1,
         "Logical publication did not commit the actual terminal window interval");
   const auto snapshot = f.runtime->frame();
+  const auto published_revision = visual.window_revision;
+  check(published_revision == revision + 1,
+        "Actual terminal window publication did not advance its revision once");
   for (unsigned i = 0; i < 4; ++i) {
     (void)eb::rasterize_direct_scene({snapshot,{}});
-    check(swirl == once && visual.window_revision == revision, "Display sampling advanced encounter effects");
+    check(swirl == once && visual.window_revision == published_revision, "Display sampling advanced encounter effects");
   }
   finish(*main); main.reset();
   auto other = f.runtime->begin(story::TickKind::WorldFrame);
   frame(*other);
-  check(swirl == once && visual.window_revision == revision, "Ordinary world wait invented a MAIN effect call");
+  check(swirl == once && visual.window_revision == published_revision, "Ordinary world wait invented a MAIN effect call");
   other->complete_frame({0,0}); finish(*other); other.reset();
   f.runtime.reset(); // borrowed publication/effect owners outlive Runtime
 }
@@ -1988,6 +1992,15 @@ void native_walking(eb::GameVersion version, bool transition,
       playback.clear_flags();
       playback.install(sequence);
     }
+    const auto before_input = f.input;
+    const auto before_polls = f.clock.input_polls;
+    operation->complete_publication();
+    check(f.clock.frame_counter == 0 && f.clock.new_frame_started == 1 &&
+              f.clock.input_polls == before_polls && f.input == before_input &&
+              position.demo_frames == countdown && phone.timer == 6 &&
+              scheduler.tasks() == scheduled && f.actors.ticks() == 1 &&
+              operation->frame_requirement() == story::FrameRequirement::InputOnly,
+          "Actual scheduler publication consumed playback/input or replayed world work");
     operation->complete_frame({0x80, 0x40});
     finish(*operation);
     check(f.clock.frame_counter == 0 && f.runtime->completed_frames() == 1 &&
@@ -2311,12 +2324,13 @@ void frame_boundary_failure(eb::GameVersion version) {
     unsigned calls{};
     Boundary(story::Scene &s, story::TickState &c, story::InputState &i)
         : scene(s), clock(c), input(i), initial(i) {}
-    void validate_frame() const override {
+    void validate_publication() const override {
       if (reject_before)
         throw std::logic_error("Pending frame prerequisite");
     }
-    std::array<std::uint16_t, 2>
-    read_after_publication(std::array<std::uint16_t, 2>) override {
+    void validate_input() const override { validate_publication(); }
+    std::array<std::uint16_t, 2> read_input(std::array<std::uint16_t, 2> raw) override { return raw; }
+    void after_publication() override {
       ++calls;
       check(scene.completed_frames() == 1 && scene.frame() &&
                 clock.frame_counter == 0 && input == initial,
@@ -2348,6 +2362,110 @@ void frame_boundary_failure(eb::GameVersion version) {
   check(scene.completed_frames() == 1 && boundary.calls == 1 &&
             f.actors.ticks() == 0,
         "Frame callback failure replayed an actor/display phase");
+}
+BattleBackgroundScene battle_background() {
+  std::vector<std::uint8_t> bytes(0x110000);
+  const auto layout=battle_background_layout(eb::GameVersion::US);
+  for(unsigned i=0;i<327;++i) bytes[layout.configurations+i*17+2]=4;
+  for(unsigned i=0;i<103;++i) {
+    pointer(bytes,layout.graphics+i*4,0x1000);
+    pointer(bytes,layout.arrangements+i*4,0x1100);
+  }
+  for(unsigned i=0;i<114;++i) pointer(bytes,layout.palettes+i*4,0x1200);
+  unsigned at=0x1000;zero_run(bytes,at,32);at=0x1100;zero_run(bytes,at,2048);
+  return BattleBackgroundScenes(bytes,eb::GameVersion::US).prepare(BattleBackgroundPair{0,0,0});
+}
+BattleCombatantScene battle_objects() {
+  std::vector<std::uint8_t> bytes(84);
+  BattleCombatantLayout layout{0,16,48,56,64,68,4,0,2,1,1,1,1};
+  pointer(bytes,0,80);bytes[4]=1;put(bytes,48,1);pointer(bytes,56,64);
+  bytes[64]=1;bytes[67]=255;
+  bytes[80]=0xe5;bytes[81]=0xff;bytes[82]=0xff;bytes[83]=0xff;
+  return BattleCombatants(bytes,layout).prepare(0);
+}
+void battle_publication_admission(eb::GameVersion version) {
+  Fixture f(version),foreign(version);f.start();foreign.start();
+  auto background=battle_background();battle::PaletteBankState colors;
+  auto objects=battle_objects();battle::PsiScratch scratch;battle::PsiDisplayState display;
+  eb::DirectSceneFrame::Effects policy;policy.main.fill(true);
+  story::BattlePublication publication(colors,scratch,display,background,objects,f.windows,policy);
+  const auto old=foreign.runtime->frame();
+  rejects([&]{foreign.runtime->bind_battle_publication(publication);},
+          "Runtime admitted another window host's battle publisher");
+  check(foreign.runtime->frame()==old && !foreign.runtime->failed(),
+        "Wrong-host battle admission invalidated the old world capture");
+  f.runtime->bind_battle_publication(publication);
+  f.runtime->bind_battle_publication(publication);
+  rejects([&]{f.runtime->frame();},"New battle publisher exposed stale world capture");
+  f.runtime->refresh_world_capture();
+  display.queue_frame(0);scratch.bytes[0]=3;
+  auto operation=f.runtime->begin(story::TickKind::Frame);frame(*operation);
+  rejects([&]{f.runtime->bind_battle_publication(publication);},"Active runtime admitted publisher rebinding");
+  operation->complete_publication();
+  check(display.pending().empty() && display.tilemap[0]==0x3003 && f.clock.input_polls==0,
+        "Fresh runtime battle publisher failed its actual transfer boundary");
+  operation->complete_frame({0,0});finish(*operation);
+  check(f.clock.input_polls==1 && f.runtime->completed_frames()==1,
+        "Runtime battle admission lost its pending input continuation");
+  f.runtime.reset();foreign.runtime.reset();
+  {
+    Fixture world(version);world.start();
+    std::vector<std::uint8_t> bytes(0xb100);
+    const unsigned at=version==eb::GameVersion::US?0xaff1:0xafd0;
+    for(unsigned i=0;i<10;++i) bytes[at+i]=23;
+    WorldLayerConfigurations configs(bytes,version);WorldLayerSelection selected;
+    ScenePalette palette{};WorldEncounterVisualState visual;
+    WorldScenePresentation presentation(palette,visual,configs,selected);
+    world.runtime->bind_presentation(presentation);world.runtime->refresh_world_capture();
+    const auto retained=world.runtime->frame();
+    // Ending the independent window-palette lease does not replace the actual
+    // Scene publisher or authorize a partial world-to-battle handoff.
+    world.windows.clear_palette_publication(presentation);
+    battle::PaletteBankState unused_colors;auto unused_objects=battle_objects();
+    story::BattlePublication candidate(unused_colors,scratch,display,background,unused_objects,world.windows,policy);
+    rejects([&]{world.runtime->bind_battle_publication(candidate);},
+            "Runtime silently replaced its existing world publisher");
+    check(world.runtime->frame()==retained && world.runtime->completed_frames()==0 && !world.runtime->failed(),
+          "Rejected battle handoff mutated the active world publication");
+    world.runtime.reset();
+  }
+}
+void raw_frame_forwarding(eb::GameVersion version) {
+  Fixture f(version); f.start();
+  const auto random=f.random;
+  const auto input=f.input;
+  auto operation=f.runtime->begin(story::TickKind::Frame);
+  frame(*operation);
+  check(operation->frame_requirement()==story::FrameRequirement::NmiPublication,
+        "Runtime hid the native publication requirement");
+  operation->complete_publication();
+  const auto published=f.runtime->frame();
+  check(f.runtime->completed_frames()==1 && f.clock.new_frame_started==1 &&
+        f.clock.input_polls==0 && f.input==input && f.random==random && f.actors.ticks()==0 &&
+        operation->frame_requirement()==story::FrameRequirement::InputOnly,
+        "Runtime publication forwarded an input or gameplay tick");
+  operation->complete_frame({0x80,0}); finish(*operation);
+  check(f.runtime->completed_frames()==1 && f.runtime->frame()==published &&
+        f.clock.new_frame_started==0 && f.clock.input_polls==1 && f.input.held[0]==0x80,
+        "Runtime WAIT republished its already completed NMI");
+  f.clock.interrupt_mask=0x10;
+  auto blocked=f.runtime->begin(story::TickKind::Frame); frame(*blocked);
+  rejects([&]{blocked->complete_publication();},"Runtime fabricated an unsupported IRQ-only interrupt boundary");
+  check(!f.runtime->failed() && f.runtime->completed_frames()==1,
+        "Retryable NMI admission rejection poisoned runtime");
+  f.clock.new_frame_started=1;
+  blocked->complete_frame({0,0}); finish(*blocked);
+  check(f.runtime->completed_frames()==1 && f.clock.input_polls==2,
+        "IRQ-only pending WAIT lost its actual input continuation");
+  f.clock.interrupt_mask=0;
+  auto vblank=f.runtime->begin(story::TickKind::Frame); frame(*vblank);
+  check(vblank->frame_requirement()==story::FrameRequirement::VBlank,
+        "Runtime did not expose physical VBlank requirement");
+  const auto source_clock=f.clock.frame_counter;
+  vblank->complete_frame({0,0}); finish(*vblank);
+  check(f.runtime->completed_frames()==2 && f.clock.frame_counter==source_clock &&
+        f.clock.input_polls==3 && f.actors.ticks()==0 && f.random==random,
+        "Physical VBlank fabricated a source NMI or actor tick");
 }
 void maintenance_controller_lifetime(eb::GameVersion version) {
   Fixture f(version);
@@ -2403,6 +2521,8 @@ int main() {
       nested_maintenance_services(version);
       maintenance_controller_lifetime(version);
       frame_boundary_failure(version);
+      raw_frame_forwarding(version);
+      battle_publication_admission(version);
       world_control_scene_boundaries(version);
       native_walking(version, false);
       for (unsigned mode = 1; mode <= 8; ++mode)

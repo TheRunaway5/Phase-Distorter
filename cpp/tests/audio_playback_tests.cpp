@@ -59,5 +59,16 @@ int main() {
     burst.append(std::span(sequence).subspan(11000));
     while (burst.queued_frames()) collect();
     require(replay == sequence, "Catch-up burst lost or reordered wrapped PCM");
+    burst.append(sequence);
+    burst.clear();
+    require(!burst.queued_frames(), "Snapshot load retained abandoned audio");
+    burst.consume(output);
+    require(std::all_of(output.begin(), output.end(), [](auto v){ return v == 0; }),
+            "Snapshot load played abandoned audio after clearing");
+    std::vector<std::int16_t> restored_audio(6000, 777);
+    burst.append(restored_audio);
+    burst.consume(output);
+    require(std::all_of(output.begin(), output.end(), [](auto v){ return v == 777; }),
+            "Restored audio did not prime and resume independently");
     std::cout << "Audio: jitter absorption, ordered PCM and underrun recovery passed\n";
 }

@@ -12,6 +12,7 @@
 #include <functional>
 
 namespace eb::native {
+namespace story { class BattlePublication; }
 class WorldPartyFollowing;
 struct WorldPartyFollowingState;
 class WorldEnemyMovement;
@@ -47,6 +48,8 @@ public:
     const std::optional<WorldAutomaticService> &automatic_request() const;
     void respond_maintenance();
     const std::optional<dialogue::ConversationEvent> &dialogue_event() const;
+    story::FrameRequirement frame_requirement() const;
+    void complete_publication();
     void complete_frame(std::array<std::uint16_t, 2> raw);
     void respond_actor(std::uint16_t value = 0, unsigned parameter_bytes = 0);
     void respond_battle();
@@ -85,6 +88,7 @@ public:
   WorldRuntime &operator=(const WorldRuntime &) = delete;
 
   std::unique_ptr<Operation> begin(story::TickKind);
+  std::unique_ptr<Operation> begin_publication();
   // MAIN_LOOP's actual frame prefix: actors, screen, encounter effects, then
   // the frame/input boundary. Post-frame interactions are separate work.
   std::unique_ptr<Operation> begin_main_frame();
@@ -93,6 +97,18 @@ public:
   std::unique_ptr<Operation> begin_nested(dialogue::Conversation &,
                                           Operation &parent);
   void bind_interactions(npcs::Interactions &);
+  // Initial battle-scene admission only. Existing world publication must not
+  // be replaced without the separate encounter handoff lifecycle.
+  void bind_battle_publication(story::BattlePublication &);
+  // Explicit idle loading/return phases; callers establish the actual display
+  // state while forced blank before routing any subsequent publication.
+  void enter_battle_publication(WorldScenePresentation &expected,
+      story::BattlePublication &next, const WorldDisplayFade &, battle::Frame &,
+      battle::AnimationCommands * = nullptr);
+  void return_world_publication(story::BattlePublication &expected,
+      WorldScenePresentation &next, const WorldDisplayFade &);
+  void bind_battle_animations(battle::AnimationCommands &);
+  void bind_battle_frame(battle::Frame &);
   void bind_inventory(party::Inventory &);
   void bind_maintenance(WorldControl &, WorldMaintenanceState &,
                         party::ItemTransformationState &,
@@ -139,6 +155,9 @@ public:
                               const WorldPartyFollowingState &) const noexcept;
   // Startup must pass this before mutating borrowed state for a restored game.
   void require_idle() const;
+  // Read-only identity/lifecycle view for helpers whose execution still runs
+  // through this runtime's admitted publication operations.
+  const story::Scene &scene() const noexcept;
 
   // LOAD_MAP_AT_SECTOR's ordinary area content phase: select destination
   // sector, resolve flags, and reset both authored animation sequences.

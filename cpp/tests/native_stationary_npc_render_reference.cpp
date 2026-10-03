@@ -4,6 +4,8 @@
 #include "eb/main_cpu_65816.hpp"
 #include "eb/native/npc_catalog.hpp"
 #include "eb/native/sprite_appearance.hpp"
+#include "eb/native/world_collision.hpp"
+#include "eb/native/world_map.hpp"
 #include "eb/overworld_sprite_runtime.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
@@ -15,7 +17,36 @@
 #include <stdexcept>
 
 namespace {
+unsigned prop_edge_failures{};
 void require(bool good, const char *message) { if (!good) throw std::runtime_error(message); }
+eb::native::NpcRectangle imported_artwork_bounds(const eb::GameAssets &assets) {
+    // Read both authored shape records directly, independently of the new
+    // production bounds getter. No pixel decoding or pose acquisition occurs.
+    const auto layout = eb::native::sprite_catalog_layout(assets.version);
+    const auto pointer = [&](unsigned at) {
+        const unsigned value = assets.image.at(at) | unsigned(assets.image.at(at + 1)) << 8 |
+                               unsigned(assets.image.at(at + 2)) << 16;
+        require(value >= 0xc00000 && value < 0xf00000, "Invalid authored shape pointer");
+        return value - 0xc00000;
+    };
+    eb::native::NpcRectangle bounds{};
+    std::vector<bool> seen(layout.shape_count);
+    for (unsigned group = 0; group < layout.group_count; ++group) {
+        const unsigned shape = assets.image.at(pointer(layout.groups + group * 4) + 2);
+        require(shape < seen.size(), "Invalid authored shape ID");
+        if (seen[shape]) continue;
+        seen[shape] = true;
+        const unsigned at = pointer(layout.shapes + shape * 4), parts = assets.image.at(at);
+        require(parts && parts <= 64, "Invalid authored shape piece count");
+        for (unsigned part = 0; part < parts * 2; ++part) {
+            const unsigned piece = at + 2 + part * 5;
+            const int x = std::int8_t(assets.image.at(piece + 3)), y = std::int8_t(assets.image.at(piece)) - 1;
+            bounds.left = std::min(bounds.left, x); bounds.top = std::min(bounds.top, y);
+            bounds.right = std::max(bounds.right, x + 16); bounds.bottom = std::max(bounds.bottom, y + 16);
+        }
+    }
+    return bounds;
+}
 struct Fixture {
     const eb::GameAssets &assets;
     const eb::SourceProfile &profile;
@@ -23,11 +54,12 @@ struct Fixture {
     eb::GameSceneRenderer renderer;
     std::shared_ptr<eb::native::StationaryNpcSprites> ready;
     eb::native::NpcCatalog catalog;
+    const eb::native::NpcRectangle artwork;
     unsigned npc_ids, enabled, photograph, flags, objects_only;
     std::uint64_t frames{};
     Fixture(const eb::GameAssets &content) : assets(content), profile(eb::source_profile(content.version)),
         bus(std::make_unique<eb::SnesBus>(content.image, content.version)),
-        catalog(content.image, eb::native::npc_catalog_layout(content.version)) {
+        catalog(content.image, eb::native::npc_catalog_layout(content.version)), artwork(imported_artwork_bounds(content)) {
         const bool jp = content.version == eb::GameVersion::JP;
         npc_ids = jp ? 0x3098 : 0x2c9a; enabled = jp ? 0x4dde : 0x4a58;
         photograph = jp ? 0xb6b8 : 0xb4ef; flags = jp ? 0x9eb3 : 0x9c08;
@@ -47,6 +79,12 @@ struct Fixture {
         renderer.set_presentation_width(view(), 522);
     }
     void put(unsigned at, unsigned value) { bus->work_ram[at] = value; bus->work_ram[at + 1] = value >> 8; }
+    eb::native::NpcRectangle footprint(int camera_x, int camera_y, unsigned width = 0) const {
+        const int margin = int((width ? width : renderer.presentation_width()) - 256) / 2;
+        const int horizontal = margin * 2 + 128 + 64;
+        return {camera_x - horizontal - artwork.right + 1, camera_y - 64 - artwork.bottom + 1,
+                camera_x + 256 + horizontal - artwork.left, camera_y + 288 - artwork.top};
+    }
     eb::SceneReadView view() const {
         auto value = bus->scene_read_view(); value.object_scene = &renderer; value.completed_frames = frames;
         return value;
@@ -93,8 +131,9 @@ struct Fixture {
         return slot;
     }
     std::vector<eb::PpuPixel> row(unsigned y) const {
-        std::vector<eb::PpuPixel> pixels(522);
-        require(renderer.try_native_sprite_pixels(view(), y, pixels, -133).has_value(), "No native frame");
+        const auto width = renderer.presentation_width();
+        std::vector<eb::PpuPixel> pixels(width);
+        require(renderer.try_native_sprite_pixels(view(), y, pixels, -int(width - 256) / 2).has_value(), "No native frame");
         return pixels;
     }
     std::shared_ptr<const eb::DirectSceneFrame> direct() {
@@ -159,10 +198,10 @@ struct AuthoredActorServices {
                 !f.bus->native_sprite_runtime()->snapshot(0)->image,
                 "Source creation did not retain an unselected native resource");
     }
-    std::shared_ptr<const eb::native::SpriteImage> select(unsigned direction) {
+    std::shared_ptr<const eb::native::SpriteImage> select(unsigned direction, unsigned surface = 0) {
         f.put((jp ? 0x2ef4 : 0x2af6), direction);
         f.put((jp ? 0x2c90 : 0x2892), 0);
-        f.put(f.profile.wram_entity_surface_flags, 0); cpu.y_index = 0;
+        f.put(f.profile.wram_entity_surface_flags, surface); cpu.y_index = 0;
         call(jp ? 0xc0a4a3 : 0xc0a4c4);
         return f.bus->native_sprite_runtime()->snapshot(0)->image;
     }
@@ -185,10 +224,29 @@ void test_resource_readiness(const eb::GameAssets &assets) {
         f.bus->work_ram[f.flags + bit / 8] |= 1u << (bit & 7);
     }
     const int camera_x = int(moving->x) - 336, camera_y = int(moving->y) - 112;
-    const eb::native::NpcRectangle footprint{camera_x - 458, camera_y - 64, camera_x + 714, camera_y + 288};
+    const auto footprint = f.footprint(camera_x, camera_y, 522);
     const eb::native::NpcVisibility visibility{moving->tileset,
         std::span(f.bus->work_ram).subspan(f.flags, 128), {}};
     f.put(f.profile.wram_loaded_map_tile_combination, moving->tileset);
+    for (const unsigned width : {256u, 258u, 398u, 522u, 800u, 1024u})
+        for (const bool right : {false, true}) {
+            const int margin = int(width - 256) / 2;
+            f.renderer.set_presentation_width(f.view(), width);
+            f.put(f.profile.wram_background_scroll.layer1_x,
+                  int(moving->x) - (right ? 256 + margin + 32 : -margin - 32));
+            f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+            f.frame();
+            const auto *ready = f.renderer.npc_sprite_readiness();
+            require(ready && std::find(ready->groups().begin(), ready->groups().end(), definition.sprite) !=
+                                ready->groups().end() && f.renderer.native_sprite_part_count() == 0,
+                    "Viewport readiness omitted offscreen moving NPC artwork or invented a live actor");
+            const auto queries = f.renderer.npc_sprite_resource_queries();
+            f.frame();
+            require(f.renderer.npc_sprite_resource_queries() == queries &&
+                        f.renderer.npc_sprite_resource_failures() == 0,
+                    "Stable viewport repeated NPC resource work or exceeded its bounds");
+        }
+    f.renderer.set_presentation_width(f.view(), 522);
     f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
     f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
     // Source-active identities suppress every eligible stationary neighbour;
@@ -204,12 +262,17 @@ void test_resource_readiness(const eb::GameAssets &assets) {
             "Offscreen moving NPC did not prepare its declared sprite group");
     require(f.renderer.native_sprite_part_count() == 0 && f.renderer.stationary_sprite_part_count() == 0,
             "Resource preparation fabricated moving NPC draw commands");
-    f.put(f.profile.wram_background_scroll.layer1_x, int(moving->x) + 80); f.frame();
+    const int left_camera = int(moving->x) + 80;
+    std::vector<eb::native::NpcId> left_active;
+    for (const auto &sprite : f.ready->prepare(f.footprint(left_camera, camera_y), visibility, cache))
+        left_active.push_back(sprite.placement.npc);
+    f.active(left_active);
+    f.put(f.profile.wram_background_scroll.layer1_x, left_camera); f.frame();
     leases = f.renderer.npc_sprite_readiness();
     require(leases && std::find(leases->groups().begin(), leases->groups().end(), definition.sprite) != leases->groups().end() &&
             f.renderer.native_sprite_part_count() == 0 && f.renderer.stationary_sprite_part_count() == 0,
             "Left-edge resource preparation omitted moving art or fabricated a preview");
-    f.put(f.profile.wram_background_scroll.layer1_x, camera_x); f.frame();
+    f.active(active); f.put(f.profile.wram_background_scroll.layer1_x, camera_x); f.frame();
     leases = f.renderer.npc_sprite_readiness();
     const auto queries = f.renderer.npc_sprite_resource_queries();
     const auto prepared = std::vector(leases->images().begin(), leases->images().end());
@@ -262,7 +325,7 @@ void test_resource_readiness(const eb::GameAssets &assets) {
     require(!f.renderer.npc_sprite_readiness(), "Invalid map identity retained resource leases");
     f.put(f.profile.wram_loaded_map_tile_combination, moving->tileset); f.frame();
     f.renderer.set_presentation_width(f.view(), 256); f.frame();
-    require(!f.renderer.npc_sprite_readiness(), "Native-width rendering retained offscreen-only leases");
+    require(f.renderer.npc_sprite_readiness(), "Native-width rendering lost offscreen NPC readiness");
     f.renderer.set_presentation_width(f.view(), 522); f.frame();
     require(f.renderer.npc_sprite_readiness(), "Widened rendering failed to restore resource leases");
 
@@ -288,7 +351,7 @@ void test_resource_readiness(const eb::GameAssets &assets) {
     require(invalid && cache.resource_failures() == 1 && cache.resources()->stats() == previous,
             "Invalid resource query was hidden as ordinary resource exhaustion");
     std::cout << assets.title << ": resource-only readiness PASS moving_npc=" << npc
-              << " images=" << prepared.size() << " edges=2 repeated_frames=120 native_first_pose=1\n";
+              << " images=" << prepared.size() << " widths=6 edges=2 repeated_frames=120 native_first_pose=1\n";
 }
 
 void test_enemy_resource_readiness(const eb::GameAssets &assets) {
@@ -318,16 +381,21 @@ void test_enemy_resource_readiness(const eb::GameAssets &assets) {
     f.put(f.profile.wram_loaded_map_tile_combination, tileset);
     std::vector<std::shared_ptr<const eb::native::SpriteImage>> prepared;
     unsigned prepared_group = 0;
-    for (bool right : {false, true}) {
-        const int camera_x = int(cell_x * 64) - (right ? 336 : -80),
+    for (const unsigned width : {256u, 258u, 398u, 522u, 800u, 1024u})
+      for (bool right : {false, true}) {
+        f.renderer.set_presentation_width(f.view(), width);
+        const int margin = int(width - 256) / 2;
+        // Put the real encounter sector beyond the displayed edge but inside
+        // the readiness pad, including native width and the smallest extension.
+        const int camera_x = int(cell_x * 64) - (right ? 256 + margin + 32 : -margin - 32),
                   camera_y = int(cell_y * 64) - 112;
         f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
         f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
         f.frame();
         const auto *adapter = f.renderer.enemy_sprite_preparation();
         const auto *ready = adapter->resources();
-        const auto expected = catalog.query({camera_x - 458, camera_y - 64, camera_x + 714, camera_y + 288},
-                                            {tileset, flags});
+        const auto footprint = f.footprint(camera_x, camera_y);
+        const auto expected = catalog.query({footprint.left, footprint.top, footprint.right, footprint.bottom}, {tileset, flags});
         require(ready && !ready->leases().images.empty() &&
                 std::equal(ready->groups().begin(), ready->groups().end(), expected.begin(), expected.end()),
                 "Renderer encounter footprint/gates differ from imported candidate groups");
@@ -387,7 +455,7 @@ void test_enemy_resource_readiness(const eb::GameAssets &assets) {
     require(!f.renderer.enemy_sprite_preparation()->resources(), "Invalid map retained enemy readiness");
     f.put(f.profile.wram_loaded_map_tile_combination, tileset); f.frame();
     f.renderer.set_presentation_width(f.view(), 256); f.frame();
-    require(!f.renderer.enemy_sprite_preparation()->resources(), "Native width retained enemy overscan resources");
+    require(f.renderer.enemy_sprite_preparation()->resources(), "Native width lost offscreen enemy readiness");
     f.renderer.set_presentation_width(f.view(), 522); f.frame();
     require(f.renderer.enemy_sprite_preparation()->resources(), "Restored width lost enemy readiness");
     f.put(f.profile.wram_battle_mode_flag, 1); f.frame();
@@ -404,7 +472,312 @@ void test_enemy_resource_readiness(const eb::GameAssets &assets) {
     require(limited->queries() == attempts && limited->failures() == 1,
             "Rejected enemy footprint repeated expensive allocation work");
     std::cout << assets.title << ": enemy resource-only renderer PASS cell=" << cell_x << ',' << cell_y
-              << " images=" << prepared.size() << " edges=2 repeated_frames=240 native_first_pose=1\n";
+              << " images=" << prepared.size() << " widths=6 edges=2 repeated_frames=1440 native_first_pose=1\n";
+}
+
+void test_stationary_vertical_overscan(const eb::GameAssets &assets) {
+    Fixture f(assets);
+    constexpr eb::native::NpcId npc = 328;
+    const auto placement = f.ready->placement(npc);
+    require(placement && placement->tileset == 2, "Missing authored stationary vertical-edge fixture");
+    const auto flags = std::span(f.bus->work_ram).subspan(f.flags, 128);
+    eb::native::StationaryNpcPreparation cache;
+    const auto target = f.ready->prepare({int(placement->x) - 1, int(placement->y) - 1,
+                                          int(placement->x) + 1, int(placement->y) + 1},
+                                         {placement->tileset, flags, {}}, cache);
+    require(target.size() == 1 && target.front().placement.npc == npc && !(target.front().surface & 8),
+            "Vertical-edge fixture did not select one dry authored stationary pose");
+    const auto &image = *target.front().image;
+    int top = 0, bottom = 0;
+    for (const auto &part : image.parts) {
+        top = std::min(top, int(part.top));
+        bottom = std::max(bottom, int(part.top) + 16);
+    }
+    unsigned cases = 0, quads = 0;
+    for (const unsigned width : {256u, 258u, 398u, 522u, 800u, 1024u})
+        for (const bool lower : {false, true}) {
+            const int x = 128, y = lower ? 233 - top : -7 - bottom;
+            const int camera_x = int(placement->x) - x, camera_y = int(placement->y) - y;
+            const auto bounds = f.footprint(camera_x, camera_y, width);
+            const auto candidates = f.ready->prepare(bounds, {placement->tileset, flags, {}}, cache);
+            std::vector<eb::native::NpcId> active;
+            for (const auto &candidate : candidates)
+                if (candidate.placement.npc != npc) active.push_back(candidate.placement.npc);
+            f.active(active);
+            f.renderer.set_presentation_width(f.view(), width);
+            f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+            f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+            f.frame();
+            require(f.renderer.stationary_sprite_part_count() == image.parts.size() &&
+                        f.renderer.native_sprite_part_count() == 0,
+                    "Dormant stationary artwork was not prepared beyond the vertical edge");
+            const auto before = f.bus->work_ram;
+            const auto picture = f.direct();
+            require(f.bus->work_ram == before, "Vertical-edge scene capture changed authoritative actor state");
+            const auto identity = (std::uint64_t{1} << 61) | placement->identity;
+            const auto found = std::find_if(picture->motions.begin(), picture->motions.end(),
+                [&](const auto &motion) { return motion.identity == identity; });
+            require(found != picture->motions.end(), "Vertical pre-rendered stationary actor has no motion identity");
+            const unsigned motion = unsigned(found - picture->motions.begin());
+            unsigned target_quads = 0;
+            for (const auto &quad : picture->quads) {
+                if (!quad.object || quad.motion != motion) continue;
+                require(lower ? quad.y >= 224 && quad.clip.top == 224.f
+                              : quad.y + quad.height <= 0 && quad.clip.bottom == 0.f,
+                        "Prepared vertical quad lacks its offscreen position or canonical exclusion clip");
+                require(!std::isfinite(quad.clip.left) && !std::isfinite(quad.clip.right),
+                        "Vertically prepared canonical-X artwork acquired a horizontal exclusion clip");
+                require(std::any_of(image.parts.begin(), image.parts.end(), [&](const auto &part) {
+                    return quad.x - found->x == part.left && quad.y - found->y == part.top;
+                }), "Vertical quad differs from the imported stationary pose geometry");
+                ++target_quads;
+            }
+            require(target_quads > 0, "Vertical readiness retained no actual imported sprite artwork");
+            const auto pixels = eb::rasterize_direct_scene({picture, {}}, 1);
+            require(std::all_of(pixels.begin(), pixels.end(), [](auto pixel) { return pixel == 0xff000000; }),
+                    "Wholly offscreen stationary readiness changed displayed pixels");
+            quads += target_quads;
+            ++cases;
+        }
+    std::cout << assets.title << ": stationary vertical overscan PASS widths=6 edges=2 cases=" << cases
+              << " imported_quads=" << quads << '\n';
+}
+
+void test_authored_prop_edges(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    const WorldMap maps(assets.image, world_map_layout(assets.version));
+    const WorldCollision collision(assets.image, world_collision_layout(assets.version));
+    struct Target { NpcId npc; const char *name; unsigned sprite, script, tileset; };
+    // Actual Twoson exterior props and facing people, plus a previously covered
+    // stationary person. The named source STREET_SIGN is a tall street post.
+    const Target targets[]{{350, "east bench", 198, 8, 2}, {351, "west bench", 198, 8, 2},
+        {368, "street sign post", 204, 8, 2}, {304, "facing person", 55, 606, 2},
+        {311, "facing person", 78, 606, 2}, {328, "stationary person control", 149, 605, 2},
+        {572, "Threed streetlight", 201, 8, 3}};
+    unsigned cases = 0, imported_pixels = 0, display_pixels = 0;
+    const auto failures_before = prop_edge_failures;
+    for (const auto &target : targets)
+        for (const unsigned width : {398u, 522u, 800u, 1024u})
+            for (const bool right : {false, true}) {
+                Fixture f(assets);
+                f.renderer.set_presentation_width(f.view(), width);
+                std::optional<NpcPlacement> place;
+                for (unsigned y = 0; y < 40; ++y)
+                    for (unsigned x = 0; x < 32; ++x)
+                        for (const auto &candidate : f.catalog.cell(x, y))
+                            if (candidate.npc == target.npc) place = candidate;
+                const auto &definition = f.catalog.definition(target.npc);
+                require(place && place->tileset == target.tileset && definition.sprite == target.sprite &&
+                            definition.script == target.script,
+                        "Authored prop edge fixture differs from the actual regional catalog");
+                const auto flags = std::span(f.bus->work_ram).subspan(f.flags, 128);
+                f.put(f.profile.wram_loaded_map_tile_combination, place->tileset);
+                const auto area = maps.prepare(place->tileset, flags);
+                const auto resources = f.bus->native_sprite_runtime()->resources();
+                const auto &sprite = resources->definition(definition.sprite);
+                const auto origin = collision.origin({std::uint16_t(place->x), std::uint16_t(place->y)}, sprite.shape);
+                const auto left = collision.edge(area, origin, sprite.shape, CollisionEdge::Left);
+                const auto surface = collision.edge(area, origin, sprite.shape, CollisionEdge::Right, left);
+                require(!(surface & 8), "Authored prop fixture requires an unsupported dormant water overlay");
+                SpriteAppearance appearance(resources, definition.sprite);
+                appearance.select_four(definition.direction, 0, surface);
+                const auto &selection = *appearance.displayed();
+                const auto image = resources->acquire(selection.sprite, selection.pose, selection.surface, selection.format);
+                const int margin = int(width - 256) / 2, y = 112;
+                const int start = right ? 256 + margin + 24 : -margin - 24;
+                const int stop = right ? 320 : -65;
+                unsigned sampled = 0, missing = 0, first_missing = 0;
+                const auto compare = [&](int x) {
+                    unsigned absent = 0, visible = 0;
+                    for (const auto &part : image->parts)
+                        for (unsigned sy = 0; sy < 16; ++sy) {
+                            const auto pixels = f.row(unsigned(y + part.top - 1) + sy);
+                            for (unsigned sx = 0; sx < 16; ++sx) {
+                                const int native_x = x + part.left + int(sx);
+                                if (native_x < -margin || native_x >= 256 + margin ||
+                                    (native_x >= 0 && native_x < 256)) continue;
+                                const unsigned value = part.indices[sy * 16 + sx];
+                                if (!value) continue;
+                                ++visible;
+                                absent += pixels[native_x + margin].palette_index != 128 + sprite.palette * 16 + value;
+                            }
+                        }
+                    return std::pair{absent, visible};
+                };
+                const auto compare_display = [&](int x) {
+                    const auto picture = f.direct();
+                    const auto pixels = eb::rasterize_direct_scene({picture, {}}, 1);
+                    // The real display can recenter at an authored map edge.
+                    // Its BG motion records the completed-frame shift, so the
+                    // expected body follows that same physical viewport.
+                    require(picture->motions.size() >= 3, "Prop edge capture has no world camera motion");
+                    const int camera_x = int(place->x) - x;
+                    const int shift = -camera_x - int(picture->motions[1].x);
+                    unsigned absent = 0, visible = 0;
+                    for (const auto &part : image->parts)
+                        for (unsigned sy = 0; sy < 16; ++sy)
+                            for (unsigned sx = 0; sx < 16; ++sx) {
+                                const int dx = x + part.left + int(sx) + margin - shift,
+                                          dy = y + part.top - 1 + int(sy);
+                                if (dx < 0 || dx >= int(width) || dy < 0 || dy >= 224) continue;
+                                const unsigned value = part.indices[sy * 16 + sx];
+                                if (!value) continue;
+                                const unsigned color = f.view().palette(128 + sprite.palette * 16 + value);
+                                const auto channel = [](unsigned v) { return (v << 3) | (v >> 2); };
+                                const std::uint32_t expected_color = 0xff000000 |
+                                    channel(color & 31) << 16 | channel((color >> 5) & 31) << 8 |
+                                    channel((color >> 10) & 31);
+                                ++visible;
+                                absent += pixels[std::size_t(dy) * width + unsigned(dx)] != expected_color;
+                            }
+                    return std::pair{absent, visible};
+                };
+                std::vector<NpcId> active;
+                for (int x = start;; x += right ? -1 : 1) {
+                    const int camera_x = int(place->x) - x, camera_y = int(place->y) - y;
+                    const auto candidates = f.catalog.query(f.footprint(camera_x, camera_y), {place->tileset, flags, {}});
+                    active.clear();
+                    for (const auto &candidate : candidates)
+                        if (candidate.placement.npc != target.npc && f.ready->supports(candidate.placement.npc))
+                            active.push_back(candidate.placement.npc);
+                    f.active(active);
+                    f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+                    f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+                    f.frame();
+                    const auto [absent, visible] = compare(x);
+                    if (absent && !missing) first_missing = std::uint16_t(x);
+                    sampled += visible; missing += absent;
+                    if (x == stop) break;
+                }
+                require(sampled > 0, "Prop edge path did not expose actual imported artwork");
+                const auto [dormant_display_missing, dormant_display_visible] = compare_display(stop);
+                // Actual source CREATE starts with an unselected native lease.
+                // The separate action oracle proves the declared script sets
+                // its first pose before yielding. Here the real native loader
+                // must select the identical held imported image for its draw.
+                AuthoredActorServices services(f);
+                services.create(definition.sprite, definition.script, place->x, place->y);
+                active.insert(active.begin(), target.npc); f.active(active);
+                f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
+                f.put(assets.version == eb::GameVersion::JP ? 0x2ef4 : 0x2af6, definition.direction);
+                f.frame();
+                require(f.renderer.native_sprite_part_count() == 0 && f.renderer.stationary_sprite_part_count() == 0,
+                        "Unselected source CREATE fabricated a draw pose");
+                const auto selected = services.select(definition.direction, surface);
+                require(selected == image, "Actual native first-pose loader changed prepared prop artwork");
+                f.put(f.profile.wram_entity_screen_coordinates.x, stop);
+                f.put(f.profile.wram_entity_screen_coordinates.y, y);
+                f.put(f.profile.wram_entity_draw_callback, f.profile.entity_draw_callbacks.screen_space);
+                f.put(f.profile.wram_entity_draw_priority, 1);
+                f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
+                f.put(f.profile.wram_entity_animation_frame, 0); f.frame();
+                const auto [selected_missing, selected_visible] = compare(stop);
+                const auto [selected_display_missing, selected_display_visible] = compare_display(stop);
+                require(selected_visible > 0,
+                        "Prop source-pose handoff was outside the displayed margin");
+                require(dormant_display_visible > 0 && selected_display_visible > 0,
+                        "Prop source-pose handoff was outside the actual recentered viewport");
+                const auto picture = f.direct();
+                const auto identity = (std::uint64_t{1} << 61) | place->identity;
+                const bool authored_identity = std::any_of(picture->motions.begin(), picture->motions.end(),
+                    [&](const auto &motion) { return motion.identity == identity; });
+                if (missing || selected_missing || dormant_display_missing || selected_display_missing || !authored_identity) {
+                    ++prop_edge_failures;
+                    std::cerr << assets.title << ": authored prop edge MISSING npc=" << target.npc << " " << target.name
+                              << " width=" << width << " edge=" << (right ? "right" : "left")
+                              << " missing_pixels=" << missing << '/' << sampled
+                              << " first_native_x=" << std::int16_t(first_missing)
+                              << " selected_pose=" << selected_missing << '/' << selected_visible
+                              << " display(dormant/selected)=" << dormant_display_missing << '/' << selected_display_missing
+                              << " authored_identity=" << authored_identity << '\n';
+                }
+                ++cases; imported_pixels += sampled + selected_visible;
+                display_pixels += dormant_display_visible + selected_display_visible;
+            }
+    if (prop_edge_failures == failures_before)
+        std::cout << assets.title << ": authored prop edge renderer PASS targets=7 widths=4 edges=2 cases=" << cases
+                  << " imported_pixels=" << imported_pixels << " display_pixels=" << display_pixels
+                  << " actual_CREATE_first_pose=1\n";
+}
+
+void test_tall_prop_bottom_edge(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0, expected_pixels = 0, missing_pixels = 0;
+    for (const unsigned width : {256u, 398u, 522u, 1024u}) {
+        Fixture f(assets);
+        f.renderer.set_presentation_width(f.view(), width);
+        const auto place = f.ready->placement(1150);
+        require(place && place->tileset == 18 && f.catalog.definition(1150).sprite == 41 &&
+                    f.catalog.definition(1150).script == 8,
+                "Tall prop fixture differs from authored Dungeon Man placement");
+        f.put(f.profile.wram_loaded_map_tile_combination, place->tileset);
+        const auto flags = std::span(f.bus->work_ram).subspan(f.flags, 128);
+        StationaryNpcPreparation preparation;
+        const auto poses = f.ready->prepare({int(place->x), int(place->y), int(place->x) + 1, int(place->y) + 1},
+            {place->tileset, flags, {}}, preparation);
+        require(poses.size() == 1 && !(poses.front().surface & 8),
+                "Tall prop has no source-ready dry first pose");
+        const auto &pose = poses.front();
+        const int margin = int(width - 256) / 2, x = -1;
+        bool bottom_quad = false;
+        unsigned width_missing = 0, width_pixels = 0;
+        // Shape16 has an opaque pixel at -73 from its anchor. At y296 it is
+        // already visible on row223; the old 64px anchor query drops it.
+        for (int y = 305; y >= 280; --y) {
+            const int camera_x = int(place->x) - x, camera_y = int(place->y) - y;
+            std::vector<NpcId> active;
+            for (const auto &candidate : f.catalog.query(f.footprint(camera_x, camera_y), {place->tileset, flags, {}}))
+                if (candidate.placement.npc != 1150 && f.ready->supports(candidate.placement.npc))
+                    active.push_back(candidate.placement.npc);
+            f.active(active);
+            f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+            f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+            const auto video = f.bus->video_ram;
+            const auto palette = f.bus->palette_ram;
+            const auto objects = f.bus->object_attributes;
+            const auto registers = std::vector(f.bus->ppu_registers().begin(), f.bus->ppu_registers().end());
+            f.frame();
+            require(video == f.bus->video_ram && palette == f.bus->palette_ram && objects == f.bus->object_attributes &&
+                        std::equal(registers.begin(), registers.end(), f.bus->ppu_registers().begin()),
+                    "Tall prop readiness mutated authoritative graphics hardware");
+            for (const auto &part : pose.image->parts)
+                for (unsigned sy = 0; sy < 16; ++sy) {
+                    const int yy = y + part.top - 1 + int(sy);
+                    if (yy < 0 || yy >= 224) continue;
+                    const auto pixels = f.row(unsigned(yy));
+                    for (unsigned sx = 0; sx < 16; ++sx) {
+                        const int xx = x + part.left + int(sx);
+                        if (xx < -margin || xx >= 0 || !part.indices[sy * 16 + sx]) continue;
+                        ++width_pixels;
+                        width_missing += pixels[xx + margin].palette_index !=
+                            128 + pose.palette * 16 + part.indices[sy * 16 + sx];
+                    }
+                }
+            if (y == 296) {
+                const auto picture = f.direct();
+                const auto identity = (std::uint64_t{1} << 61) | place->identity;
+                const auto found = std::find_if(picture->motions.begin(), picture->motions.end(),
+                    [&](const auto &motion) { return motion.identity == identity; });
+                if (found != picture->motions.end()) {
+                    const auto motion = unsigned(found - picture->motions.begin());
+                    bottom_quad = std::any_of(picture->quads.begin(), picture->quads.end(), [&](const auto &quad) {
+                        return quad.object && quad.motion == motion && quad.y == 223 && quad.height == 16;
+                    });
+                }
+            }
+        }
+        require(width == 256 || width_pixels > 0, "Tall prop path exposed no actual margin pixels");
+        if (width_missing || !bottom_quad) {
+            ++prop_edge_failures;
+            std::cerr << assets.title << ": Dungeon Man bottom edge MISSING width=" << width
+                      << " missing_pixels=" << width_missing << '/' << width_pixels
+                      << " anchor296_row223_quad=" << bottom_quad << '\n';
+        }
+        ++cases; expected_pixels += width_pixels; missing_pixels += width_missing;
+    }
+    if (!missing_pixels)
+        std::cout << assets.title << ": tall prop bottom path cases=" << cases
+                  << " imported_pixels=" << expected_pixels << '\n';
 }
 
 void test(const eb::GameAssets &assets) {
@@ -423,8 +796,8 @@ void test(const eb::GameAssets &assets) {
             f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
             eb::native::StationaryNpcPreparation preparation;
             std::vector<eb::native::NpcId> active;
-            const auto candidates = f.ready->prepare({camera_x - 458, camera_y - 64,
-                camera_x + 714, camera_y + 288}, {2, std::span(f.bus->work_ram).subspan(f.flags, 128), {}}, preparation);
+            const auto candidates = f.ready->prepare(f.footprint(camera_x, camera_y),
+                {2, std::span(f.bus->work_ram).subspan(f.flags, 128), {}}, preparation);
             std::optional<eb::native::StationaryNpcSprite> expected;
             for (const auto &candidate : candidates)
                 if (candidate.placement.npc == npc) expected = candidate;
@@ -618,6 +991,10 @@ int main(int argc, char **argv) {
         for (int i = 1; i < argc; ++i) {
             const auto assets = eb::load_game_assets(argv[i], eb::asset_profiles());
             test(assets); test_resource_readiness(assets); test_enemy_resource_readiness(assets);
+            test_stationary_vertical_overscan(assets);
+            test_authored_prop_edges(assets);
+            test_tall_prop_bottom_edge(assets);
         }
+        require(!prop_edge_failures, "Authored props/facing NPCs popped in across the actual renderer edge paths");
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

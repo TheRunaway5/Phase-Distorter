@@ -131,8 +131,8 @@ void run(eb::GameVersion version) {
               latest.game.pet_name[5] == 0xcd &&
               latest.game.party_order[0] == 4 && latest.game.party_count == 4 &&
               latest.event_flags == selected.state.event_flags &&
-              latest.characters[5].reserved_92_94 ==
-                  selected.state.characters[5].reserved_92_94,
+              latest.characters[5].reserved_92_93 ==
+                  selected.state.characters[5].reserved_92_93,
           "Party capture used a stale owner or lost unowned fields");
   session.save_current(latest, 987654321);
   require(session.archive().load(0).game.elapsed_timer == 987654321 &&

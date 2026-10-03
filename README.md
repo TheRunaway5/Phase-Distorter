@@ -205,7 +205,12 @@ pack supplied. Invalid imports leave an existing valid pack intact.
 | Fullscreen | F11 | — |
 | Close Settings / quit | Escape | — |
 
-Controller mappings follow button position, so printed button labels may vary.
+Controller defaults follow button position. On the SNES Nintendo Switch Online
+controller, A, B, X, Y, L, R, Select, Start and the D-pad match their SNES buttons.
+Open **Settings (F1) → Controller** to see the connected controller and live
+button inputs, remap any SNES button, adjust the left-stick deadzone, or restore
+defaults. Changes apply immediately and are saved beside the display preferences
+in a `.controllers` file; `--no-config` disables saving both sets of preferences.
 Closing the window also exits the game. Once a game is loaded, the top bar offers
 **Settings (F1)** and **Fullscreen (F11)**. In windowed mode the picture fits below
 the bar. In fullscreen the bar hides until the pointer reaches the top edge, then
@@ -242,6 +247,12 @@ free movement is available, so close dialogue or finish the current battle.
 These are debug actions and can affect saved progress; entering an area does
 not complete its story events. Cheat switches reset when restarting or switching
 games. See [debug tool details](cpp/docs/debug-tools.md).
+
+**F1 → Debug → Save state snapshots** saves the current moment under a name.
+Select a snapshot to load it or delete it with confirmation; **Refresh snapshots**
+rereads the list. The list shows names, creation dates and frame numbers and
+survives restarts. Loading also restores its cheat switches. Snapshots are kept
+separately for EarthBound and Mother 2 and require matching game content.
 
 Widescreen renders additional scenery while preserving the original game
 camera, movement and collision. NPCs and enemies load in an offscreen band
@@ -487,6 +498,7 @@ prints the selected save path when running.
 | `earthbound.ebpak` / `mother2.ebpak` | Imported assets for each game |
 | `earthbound.srm` / `mother2.srm` | Separate battery-backed game saves |
 | `display.cfg` | Display preferences and last selected game |
+| `snapshots/earthbound/` / `snapshots/mother2/` | Named save-state snapshots |
 
 Use the game's normal save mechanism, then exit Phase Distorter normally to
 write its battery RAM to disk. These are game saves, not emulator save states.

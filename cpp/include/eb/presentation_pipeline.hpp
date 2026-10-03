@@ -30,6 +30,9 @@ public:
     // Rebase native pacing after a blocking host-device reopen. Its setup time
     // is not missed native presentation work; high-rate clock debt is retained.
     void reset_native_deadline(Time now);
+    // A restored producer replaces every borrowed canvas. Discard motion and
+    // filter history and rebase both clocks before exposing the restored frame.
+    void restored_frame(PresentationFrame frame, Time now);
 
     // Call at every completed hardware frame, including each frame crossed by
     // one DMA operation. High-rate endpoints are copied before this returns.

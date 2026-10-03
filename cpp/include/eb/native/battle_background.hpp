@@ -56,11 +56,13 @@ struct BattleBackgroundTick {
   std::uint16_t horizontal_effect{}, vertical_effect{};
   // A distortion-only second track targets the first artwork and reads its
   // current scroll, without acquiring its palette or advancing its scrolling.
-  struct Scroll { std::uint16_t horizontal{}, vertical{}; };
+  struct Scroll {
+    std::uint16_t horizontal{}, vertical{};
+  };
   std::optional<Scroll> shared_scroll;
 };
 struct BattleBackgroundUpdate {
-  bool palette{}, offsets{};
+  bool palette{}, offsets{}, distortion_installed{};
 };
 enum class BattleDistortionAxis { None, Horizontal, Vertical };
 struct BattleBackgroundArtwork {
@@ -88,6 +90,9 @@ struct BattleBackgroundFrame {
 class BattleBackgrounds;
 struct BattleBackgroundPalette {
   std::array<PaletteColor, 16> base{}, backup{};
+  // RGB5 omits each word's top bit. Retain those complementary bits when an
+  // inactive secondary palette moves between scene owners.
+  std::uint16_t base_high_bits{}, backup_high_bits{};
   bool operator==(const BattleBackgroundPalette &) const = default;
 };
 class BattleBackground {
@@ -95,16 +100,27 @@ public:
   const BattleBackgroundState &state() const { return state_; }
   const BattleBackgroundDefinition &definition() const { return definition_; }
   BattleBackgroundFrame snapshot() const { return frame_; }
-  BattleBackgroundUpdate advance(BattleBackgroundTick);
+  BattleBackgroundUpdate advance(BattleBackgroundTick, std::span<std::uint16_t> publication = {});
   // Authored C2DF2E operation: RGB5 channels scale from the immutable backup,
   // while cycling reads the updated base colors. Cycling entries publish on
   // their next palette tick, except the explicit black/white/restore commands.
-  void apply_palette_brightness(std::uint16_t factor, unsigned first, unsigned last);
+  void apply_palette_brightness(std::uint16_t factor, unsigned first,
+                                unsigned last, std::span<std::uint16_t> publication = {});
   void set_initial_scroll(std::uint16_t horizontal, std::uint16_t vertical);
-  BattleBackgroundPalette palette_state() const { return {cycle_palette_, original_palette_}; }
+  void set_initial_raster(BattleDistortionAxis,
+                          const std::array<std::uint16_t, 224> &);
+  BattleBackgroundPalette palette_state() const;
+  // Raw working words retain authored bit15 for exact staged restoration.
+  // RGB frame colors are a projection; this is the sole mutable base owner.
+  const std::array<std::uint16_t, 16> &packed_palette_base() const {
+    return cycle_palette_;
+  }
   // Restore every base and displayed color without advancing palette cycles,
   // scroll or distortion. Scene publication is a separate owner operation.
   void restore_palette();
+  // C2DE0F halves the current working base, including index0, and publishes
+  // that base immediately. Backups and animation counters are unchanged.
+  void halve_palette();
 
 private:
   friend class BattleBackgrounds;
@@ -117,7 +133,7 @@ private:
   BattleBackgroundDefinition definition_;
   BattleBackgroundState state_;
   BattleBackgroundFrame frame_;
-  std::array<PaletteColor, 16> original_palette_{}, cycle_palette_{};
+  std::array<std::uint16_t, 16> original_palette_{}, cycle_palette_{};
 };
 // Asset-only import. Preparation shares immutable arranged artwork, while each
 // layer owns its clocks, palette and published distortion offsets. Pair color
@@ -128,6 +144,10 @@ public:
   unsigned size() const;
   const BattleBackgroundDefinition &definition(unsigned id) const;
   BattleBackground prepare(unsigned id) const;
+  // Exact decoded streams retain their output extents for shared loader scratch.
+  std::span<const std::uint8_t> graphics(unsigned layer) const;
+  std::span<const std::uint8_t> arrangement(unsigned layer) const;
+  const std::array<std::uint16_t, 16> &palette(unsigned layer) const;
 
 private:
   std::shared_ptr<const BattleBackground::Content> content_;

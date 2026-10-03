@@ -62,9 +62,15 @@ class PartyFormation {
     std::unique_ptr<Operation> begin();
     std::unique_ptr<TailOperation> begin_tail(WorldPartyService);
     bool uses(const WorldParty &updater) const noexcept { return &updater_ == &updater; }
+    bool uses(const party::State& party) const noexcept { return &party_ == &party; }
     bool uses(const npcs::Interactions &interactions) const noexcept { return &interactions_ == &interactions; }
     bool bound_to(const party::State &, const ActorWorld &, const npcs::Interactions &,
                   const TickState &) const noexcept;
+    bool bound_to(const party::State& party, const ActorWorld& actors,
+                  const dialogue::WindowHost& windows, const TickState& clock) const noexcept {
+        return &party_ == &party && &actors_ == &actors && &clock_ == &clock &&
+            &interactions_.windows() == &windows && &interactions_.actors() == &actors;
+    }
   private:
     void check() const;
     void publish_leader();

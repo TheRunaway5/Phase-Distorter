@@ -1,5 +1,6 @@
 #include "eb/native/npc_sprite_readiness.hpp"
 #include "eb/native/sprite_image_leases.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -44,5 +45,19 @@ void NpcSpriteReadiness::prepare(NpcRectangle footprint,
   groups_.swap(groups);
   images_.swap(leases.images);
   stats_ = next;
+}
+void NpcSpriteReadiness::snapshot_io(SnapshotArchive &archive) {
+  archive(limits_.images, limits_.image_bytes, stats_.npcs, stats_.groups,
+          stats_.images, stats_.image_bytes, groups_);
+  if (archive.loading()) {
+    if (!std::is_sorted(groups_.begin(), groups_.end()) ||
+        std::adjacent_find(groups_.begin(), groups_.end()) != groups_.end())
+      throw std::runtime_error("Invalid snapshot NPC readiness groups");
+    auto leases = lease_sprite_images(*resources_, groups_, {limits_.images, limits_.image_bytes});
+    if (stats_.groups != groups_.size() || stats_.images != leases.images.size() ||
+        stats_.image_bytes != leases.image_bytes)
+      throw std::runtime_error("Invalid snapshot NPC readiness statistics");
+    images_ = std::move(leases.images);
+  }
 }
 } // namespace eb::native

@@ -1,4 +1,5 @@
 #include "eb/overworld_sprite_allocation.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -99,5 +100,42 @@ void OverworldSpriteAllocation::select_eight(ResourceId id, unsigned direction,
                                              std::uint16_t animation_byte_offset,
                                              std::uint16_t surface_flags) {
     state_->actors.at(id)->appearance.select_eight(direction, animation_byte_offset, surface_flags);
+}
+void OverworldSpriteAllocation::snapshot_lease_io(SnapshotArchive &archive, CreationLease &lease) {
+    bool present = bool(lease);
+    archive(present);
+    if (archive.loading()) {
+        if (!present) { lease.state_.reset(); return; }
+        lease = prepare(0);
+    }
+    if (!present) return;
+    archive(lease.state_->appearance);
+    if (archive.loading())
+        lease.state_->creation = native::actor_creation_metadata(*state_->resources, state_->creation,
+                                                                  lease.state_->appearance.geometry_sprite());
+}
+void OverworldSpriteAllocation::snapshot_io(SnapshotArchive &archive) {
+    archive(state_->next_id);
+    auto count = archive.count(state_->actors.size());
+    archive(count);
+    archive.check_count(count);
+    if (archive.loading()) {
+        if (!state_->next_id) throw std::runtime_error("Invalid snapshot sprite resource sequence");
+        state_->actors.clear();
+        for (std::uint32_t i = 0; i < count; ++i) {
+            ResourceId id{};
+            archive(id);
+            if (!id || id >= state_->next_id || state_->actors.contains(id))
+                throw std::runtime_error("Invalid snapshot sprite resource identity");
+            auto actor = std::make_unique<CreationLease::State>(state_->identity, state_->resources,
+                                                               state_->creation, 0);
+            archive(actor->appearance);
+            actor->creation = native::actor_creation_metadata(*state_->resources, state_->creation,
+                                                               actor->appearance.geometry_sprite());
+            state_->actors.emplace(id, std::move(actor));
+        }
+    } else {
+        for (auto &[id, actor] : state_->actors) archive(id, actor->appearance);
+    }
 }
 } // namespace eb

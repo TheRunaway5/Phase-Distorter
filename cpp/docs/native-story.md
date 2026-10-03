@@ -1143,47 +1143,209 @@ flags keep their word values until the original operation writes them.
 
 Shield operations expose their real pending conversation for the scene to drive;
 a request cannot be acknowledged as finished while that child is running. This
-ports those helpers and their dialogue integration, not the full battle turn
-scheduler, enemy AI, menu selection (`C23E8A`) or complete encounter startup.
+ports those helpers and their dialogue integration. Encounter startup and turn
+scheduling are described below and in [native-battle-encounters.md](native-battle-encounters.md);
+menu execution (`C23E8A`) and the action executor remain separate migration work.
 
-## Enemy palette effects
+## Enemy palette effects and display publication
 
-`native/battle/palette_effects` implements the complete `C2FAD8`, `C2FADE`,
-`C2FB35` and `C2FD99` helpers used by PSI animation, knockouts and revival.
-`PaletteBankState` retains the four alternate enemy palettes (source banks
-12–15); normal enemy colors remain in the imported resources (banks 8–11).
-The caller supplies the actual initial palette words and retains one shared
-`PaletteEffectState` across operations. The module does not start an encounter
-or advance a clock.
+`native/battle/palette_effects` implements `C2FAD8`, `C2FADE`, `C2FB35`
+and `C2FD99`. One stable `PaletteBankState` owns all sixteen staging banks
+and their separately displayed colors. Effects use physical banks 12–15;
+normal enemy colors occupy banks 8–11. Binding a renderer never initializes
+these values: the actual loader supplies them.
 
-Colors, steps, deltas, counters, duration and shared speed preserve the source
-word arithmetic. Equal target channels retain their old step word. Reversal
-negates all channel deltas and clears counters, including color zero, while
-advancement skips that transparent color. A counter wraps before the unsigned
-threshold comparison, and packed color additions retain carries and bit 15.
-An active bank stages palette upload mode 16 even when its colors do not change.
-That byte is a publication request, not an immediate display update.
+Steps, deltas, counters, duration and shared speed preserve source word
+arithmetic. Equal target channels retain their old step. Reversal negates all
+channel deltas and clears counters, including color zero; advancement skips
+that transparent color. Counters wrap before the unsigned threshold comparison,
+and packed staging additions retain carries and bit 15. Advancing an active
+nonzero delta at zero speed rejects before mutation because the source would
+never return; its terminating zero-speed cases remain supported.
 
-Zero speed is valid to set. Advancing an active nonzero delta at zero speed
-would never return in the original; the native module rejects that operation
-before changing any bank. Inactive banks and active banks with no processed
-deltas retain the source's terminating behavior at zero speed.
+Every writer shares one upload byte. Modes 8, 16 and 24 replace the lower 128,
+upper 128 or all 256 displayed colors, then clear that byte. Mode zero leaves
+colors alone. The displayed copy discards bit 15 like CGRAM; staging preserves
+it. Unsupported DMA-table aliases reject before mutation. Requests are not
+combined: an enemy ramp's later mode 16 can replace PSI's mode 24 and leave
+newly staged background/PSI colors undisplayed.
 
-The combatant scene can borrow the same stable palette owner. Its ordinary
-publication selects sprite commands and advances their visual timers once;
-an explicit `publish_palettes()` then captures later palette changes onto those
-commands without rerunning sprite selection. Retained snapshots own their
-colors and remain unchanged during subsequent effects or repeated rendering.
-Unbound scenes retain their existing explicit alternate-palette interface;
-bound scenes reject a competing palette writer.
+Bound combatant captures read displayed banks 8–15. Their draw commands retain
+physical palette identities for composition at the actual boundary. Unbound
+scenes retain the explicit alternate-palette interface and literal colors.
+Ordinary publication selects rows and advances visual timers once;
+`publish_palettes()` captures later displayed colors without selecting objects
+again. Every retained frame owns its colors and commands.
 
-Combatant quads identify the actor layer for scene composition. Normal banks
-8–11 are ineligible for color math; alternate banks 12–15 are eligible, matching
-the source object-palette rule. Captured colors remain literal and immutable.
-Connecting battle colors to the scene-wide palette owner and proving composed
-window/color effects remain part of the complete battle-frame work.
+The original sprite loader selects OBJ priority 2. Native combatant draw data
+therefore uses Mode1 priority 7; battle composition maps it to Mode0 priority 8.
+This corrects the prior priority-10 default, which object-only comparisons could
+not distinguish. Normal banks 8–11 bypass color math; alternate banks 12–15
+participate. Both rules apply when sprites overlap PSI and background planes.
 
-The complete battle frame still needs PSI animation, meter blinking and the
-remaining ordered scene publication. Porting these four helpers and their
-combatant rendering connection does not complete `C2DB3F`, `KO_TARGET`,
-`REVIVE_TARGET`, battle startup or the turn scheduler.
+## PSI resources, advancement and scene composition
+
+`native/battle/psi_resources` imports all 34 authored configurations, palettes
+and frame streams, the four graphics streams, and the enemy/miscellaneous
+swirl colors. It retains actual decompressed extents. Graphics streams are
+shorter than the 4,096 bytes consumed by setup: native scratch must retain the
+remaining bytes from previous work. Animation 20's decoded arrangement is
+65,536 bytes even though its declared frame count consumes less. The imported
+adjacent bytes for dispatcher ID 34 are diagnostic data, not a fabricated 35th
+animation. No original text, graphics or palettes are embedded in these modules.
+
+`native/battle/psi_animation` implements the state changes of `C2E6B6` and
+the `C2EACF` activity query. Frame and palette counters preserve byte wrapping;
+frame locations preserve 16-bit bank wrapping. The final frame queues a real
+zero tilemap and restores the retained background palette. That same call still
+runs its palette cycle. Enemy targeting and reversal countdowns continue after
+the frame animation ends. Activity tests only the PSI frame countdown and swirl
+update byte, independent of remaining enemy palette ramps.
+
+A stable `PsiScratch` and `PsiDisplayState` separate ordered tile-transfer
+requests from visible state. Frame requests enqueue low tile bytes followed by
+high descriptor bytes; publication reads live scratch at that boundary. Clear
+requests retain their position in the queue. Sampling cannot drain it, latch
+scroll, advance effects or consume input. `TransferOperation` implements the
+shared COPY admission protocol: its raw 16-bit byte credit, 32 physical queue
+records, held producer record, budget waits, and forced-blank decision. A
+publication receipt is required before resuming. The two frame-plane copies
+admit separately; terminal clear finishes before palette restoration. A
+callback can replace live shared COPY parameters during a wait. Setup uses
+this same transport after its original byte-only drain, including the valid
+case of a pending descriptor with zero raw byte credit.
+
+`native/battle/psi_scene` captures the actual published artwork, descriptors,
+scroll and colors. It composes independent background planes with the caller's
+actual layer/window/color-math policy. Two-bit backgrounds use PSI on BG2;
+four-bit backgrounds use it on BG1, replacing the old secondary background
+plane. A terminal zero tilemap still refers to tile zero, which can contain
+visible pixels; animation inactivity never implicitly hides the plane.
+
+Background palette ownership retains raw base and backup words, with RGB
+projections for drawing. Retained secondary-palette handoffs carry complementary
+high-bit masks so switching to an inactive secondary cannot discard bit 15. `halve_palette` implements `C2DE0F` on every current
+base color in both layers, including an inactive secondary; backups remain
+unchanged. Restoration implements ordinary `C2DE96` and retains raw bit 15.
+The pre-existing shared-artwork scene-reset dependency remains explicit.
+
+`native/story/battle_publication` connects these display owners to Scene's
+actual publication boundary. It constructs a valid frame from prospective
+palette, graphics and map transfers, selected combatant commands and the actual
+window host before committing the transfers. Failed captures retain pending
+transfers for retry. This rollback applies to the battle display, palette,
+OAM, scroll and fade owners. Scene drains the existing WindowHost copy queue
+before capture; a subsequent capture rejection does not undo those window
+copies. Read-only captures use already published state. The live
+visual-policy constructor shares the animation dispatcher's owners and the
+actual display fade; each publication advances the fade once, and reaching
+black disables the complete HDMA mirror when the battle frame display is bound.
+`battle/frame_display` retains the pending OAM selection and simultaneous four-BG
+scroll snapshot. UPDATE_SCREEN can replace that selection before NMI; no queued
+selection preserves the previously displayed objects and scroll. Palette DMA
+can still recolor those retained objects. Background, letterbox and alternating
+window channels share the actual enable state; table updates alone never
+re-enable disabled streams. Oval and clip channels retain independent row
+programs, so a later channel can override an earlier channel.
+
+Window themes carry their original mode-8 request; animated window colors
+carry mode 24. Both share the battle palette owner, so later requests can
+replace them. Mode0 composition places text on BG1 with priorities 7/10;
+Mode1 retains raised BG3 text. A publisher bound to another window host rejects,
+and failed publisher construction leaves existing owner bindings intact.
+
+`native/battle/psi_setup` implements `SHOW_PSI_ANIMATION` using imported
+resources and the shared scratch, palette, roster, target, combatant height,
+background, display fade and frame owners. Graphics retain the original scratch
+tails; four-bit expansion preserves its zero high planes. Ordered graphics
+uploads drain existing work before each chunk of at most 0x1200 bytes, reread
+work queued by callbacks, and use immediate transport when the actual display
+is forced blank. The operation cannot acknowledge an upload or input wait
+without the corresponding owner's completion receipt. The one explicit frame
+wait precedes live target selection, palette setup, background halving and
+normal-to-alternate enemy palette copies. Single, row and all-enemy modes retain
+source eligibility, scroll and height rules.
+
+`native/battle/animation_commands` implements `C3F981` and `C3FAC9`, including
+the Tiny Lil Ghost exception, target-side selection, fixed-color swirls, wobble,
+shake and no-op selectors. The shared `world_swirl` helper owns the common swirl
+setup. `CC_1C_13` consumes both literal bytes and subtracts one with word
+wrapping. Prompt mode zero skips the call without changing the working register;
+otherwise Scene runs the animation operation inside the current conversation,
+including a conversation called from a suspended actor action. Completion
+writes a full-width boolean into the dialogue window focused at that time.
+Dispatcher ID 34 remains an explicit malformed-resource boundary because the
+source has only 34 configurations.
+
+Scene now separates publication from input polling. Upload-only boundaries can
+publish graphics, advance fade and run the real frame callback without polling
+input. The explicit wait can consume an already pending interrupt without
+publishing another frame. With NMI and IRQ disabled, it waits for the host's
+physical VBlank then polls input without draining DMA or advancing the NMI
+clock. The raw frame-ready byte preserves byte wrapping. An idle WorldRuntime
+can bind its real battle publisher; an existing overworld publisher cannot be
+silently replaced. IRQ-only timing without a pending interrupt remains an
+unsupported domain until a native horizontal/vertical IRQ owner exists.
+
+`native/battle/frame` coordinates the ordered `C2DB3F` body over the actual
+background, roster, PSI, meter, swirl, palette and display owners. Its prefix
+updates effects and combatant timers, queues OAM with pre-generation scroll,
+then advances the background generators. PSI can suspend for real publication
+without replaying that prefix. The tail applies red then green flashes, HP/PP
+window blinking, swirl restoration, enemy palette ramps and letterbox opening.
+It has no separate clock or input loop. Scene's existing BattleHelper dispatch
+runs this body after its tick's wait; `begin_battle_frame` supplies the complete
+C43568 wait-and-body operation. WorldRuntime can bind the same coordinator.
+
+Battle UI publication samples all 32 retained tilemap rows, with the original
+one-pixel raster registration and wrapping scroll. `WindowHost` retains rows
+29–31 through explicit artwork-cell restoration; its cold default is
+transparent. The visible frame and existing row-28 tail accessors stay intact.
+`world_layers` now holds the shared imported layer policy below the Scene
+adapter, avoiding an engine-to-adapter dependency cycle.
+
+The native frame still rejects the known shared-artwork palette-reset path.
+Active brightness effects on a two-bit scene with no secondary use the actual
+retained background controller and its palette destination when a preceding
+scene established them. A cold destination still needs the native owners of
+its low-WRAM aliases. This `InactiveSecondaryDestination` frontier rejects
+before frame mutation; it is not treated as an empty palette.
+
+`native/battle/background_loader` implements `LOAD_BATTLE_BG` in its actual
+forced-blank startup domain. The imported graphics and arrangements retain
+their exact decompressed extents. Fixed source transfers read the shared scratch
+buffer, preserving prior tails, and publish into the same full64KiB VRAM owner
+used by PSI. Existing queued copies remain pending and read live scratch at
+NMI. Mode, tilemap/graphics bases, scroll resets, layer selection, palette words,
+letterbox descriptors, initial generators and HDMA installations follow the
+regional source. The no-secondary path disables only its target while retaining
+the preceding controller, palette destination and state. Initialization also
+preserves the final byte that the original word-sized119-byte clear leaves
+untouched. Extended Giygas prayer graphics have an explicit publication context;
+unsupported artwork dependencies remain typed admission failures.
+
+`native/story/battle_display_setup` supplies the two distinct blank helpers.
+`C08726` resets HDMA and, in US only, stops the fade; `C08744` retains both.
+They require the actual idle Scene, fade, frame display and clock owners, clear
+the pending byte, and finish after a real NMI publication. Publication does not
+poll input or advance actors. World publication can bind the same fade and global
+HDMA owner, so its successful NMI capture commits brightness and hardware-mask
+changes once. Failed capture preserves those publication states.
+
+WorldRuntime can exchange its admitted world and battle publishers under actual
+forced blank. The transition validates the expected owner, common windows,
+visual state, fade, global display and battle services before replacing palette
+routing. It does not copy palettes, publish a frame or consume a queue. The last
+immutable frame stays available until the next actual NMI publication. Return
+to world uses the same checked lifecycle.
+
+Native `battle/Startup` now drives ordinary encounter startup through the actual
+opening dialogue close. `DeadPlayers`, `TurnScheduler` and `Rounds` perform the
+pre-command knockout/party work, real meter and focus operations, AI/escape
+selection and actor dispatch. See [native-battle-encounters.md](native-battle-encounters.md)
+for their owner contracts and source-reference scope. Command-menu execution,
+action execution, post-action recovery, outcomes/world return, full cutscene
+integration and a playable native desktop session remain completion work. Native setup preserves
+authored waits; it does not recreate incidental CPU-bound decompression delays
+from the original hardware. No original dialogue or animation content is
+embedded by this port; those resources continue to come from the user's pack.

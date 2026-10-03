@@ -2,10 +2,12 @@
 
 #include "eb/game_version.hpp"
 #include "eb/presentation_frame.hpp"
+#include "eb/snapshot_types.hpp"
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace eb {
 struct LaunchOptions;
@@ -29,7 +31,10 @@ class DesktopDisplay {
                      GameVersion game, const std::string &custom_assets);
     bool poll_events(std::uint16_t &physical_buttons);
     void update_debug(GameDebug &debug);
+    void adopt_debug(const GameDebug &debug);
     std::optional<GameVersion> take_game_request();
+    std::optional<SaveStateSnapshotRequest> take_snapshot_action();
+    void set_snapshot_state(std::vector<SaveStateSnapshotInfo> snapshots, std::string status, bool available);
 
     unsigned render_width() const;
     bool fullscreen() const;

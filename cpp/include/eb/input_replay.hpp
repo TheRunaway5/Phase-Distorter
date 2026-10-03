@@ -22,10 +22,13 @@ class InputReplay {
   public:
     explicit InputReplay(std::vector<InputChange> changes, std::uint16_t initial_buttons = 0);
     std::uint16_t buttons_for_frame(std::uint64_t frame, std::uint16_t physical_buttons = 0);
+    // Reposition after a save-state load, including a jump before the first event.
+    void seek(std::uint64_t frame);
 
   private:
     std::vector<InputChange> changes_;
     std::size_t next_change_{};
     std::uint16_t held_buttons_{};
+    std::uint16_t initial_buttons_{};
 };
 } // namespace eb

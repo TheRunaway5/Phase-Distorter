@@ -1,4 +1,5 @@
 #include "eb/native/npc_catalog.hpp"
+#include "eb/threed_npc_restoration.hpp"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -28,12 +29,12 @@ bool flag_is_set(std::span<const std::uint8_t> flags, unsigned id) {
 }
 } // namespace
 
-NpcCatalogLayout npc_catalog_layout(GameVersion version) {
+NpcCatalogLayout npc_catalog_layout(GameVersion version, bool restore_threed_npcs) {
     // Source sprite_placement_pointer_table.asm, sprite_placement_table.asm,
     // npc_config.asm and independently linked regional content layouts.
     return version == GameVersion::JP
-               ? NpcCatalogLayout{0x0f6223, 0x0f6c23, 0x0f89c1, 0x0f89c1, 0x17a800, 1584, 795}
-               : NpcCatalogLayout{0x0f61e7, 0x0f6be7, 0x0f8985, 0x0f8985, 0x17a800, 1584, 799};
+               ? NpcCatalogLayout{0x0f6223, 0x0f6c23, 0x0f89c1, 0x0f89c1, 0x17a800, 1584, 795, restore_threed_npcs}
+               : NpcCatalogLayout{0x0f61e7, 0x0f6be7, 0x0f8985, 0x0f8985, 0x17a800, 1584, 799, restore_threed_npcs};
 }
 
 struct NpcCatalog::State {
@@ -61,8 +62,14 @@ NpcCatalog::NpcCatalog(std::span<const std::uint8_t> assets, NpcCatalogLayout la
         const auto record = content.slice(at, 17);
         if (record[0] < 1 || record[0] > 3 || record[3] > 7 || record[8] > 2)
             throw std::runtime_error("Unsupported NPC definition");
+        const auto byte = [&](unsigned field) {
+            return layout.restore_threed_npcs
+                       ? restored_threed_npc_byte(layout.definitions, unsigned(at) + field, record[field])
+                       : record[field];
+        };
         state_->definitions.push_back({NpcType(record[0]), content.word(at + 1), record[3],
-                                       content.word(at + 4), content.word(at + 6), NpcAppearance(record[8])});
+                                       content.word(at + 4), unsigned(byte(6)) | unsigned(byte(7)) << 8,
+                                       NpcAppearance(byte(8))});
     }
     std::uint32_t next_identity = 1;
     for (unsigned y = 0; y < rows; ++y)

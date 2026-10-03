@@ -1,5 +1,6 @@
 #include "eb/overworld_sprite_bridge.hpp"
 #include "eb/native/sprite_appearance.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <array>
 #include <algorithm>
 #include <map>
@@ -65,6 +66,15 @@ struct OverworldSpriteBridge::State {
         unsigned first_tile{}, tile_count{}, source{}, destination{}, bytes{}, mode{};
         std::uint64_t job{};
         bool final{};
+        void snapshot_io(SnapshotArchive &archive) {
+            archive(generation, target, first_tile, tile_count, source, destination, bytes, mode, job, final);
+            if (archive.loading() &&
+                (!target || !generation || source > 0xffffff || destination > 0xffff ||
+                 (mode != 0 && mode != 3) || bytes != tile_count * 32 ||
+                 first_tile > target->canvas->size() / 64 ||
+                 tile_count > target->canvas->size() / 64 - first_tile))
+                throw std::runtime_error("Invalid snapshot host sprite patch");
+        }
     };
     struct Loader {
         unsigned stack{}, rows{}, columns{}, padding{}, next_row{};
@@ -72,6 +82,11 @@ struct OverworldSpriteBridge::State {
         std::uint64_t generation{};
         std::uint64_t job{};
         std::shared_ptr<const native::SpriteImage> target;
+        void snapshot_io(SnapshotArchive &archive) {
+            archive(stack, rows, columns, padding, next_row, eight, generation, job, target);
+            if (archive.loading() && (stack > 0xffff || next_row > rows || padding > 1))
+                throw std::runtime_error("Invalid snapshot host sprite loader");
+        }
     };
     struct Row {
         unsigned stack{}, first_tile{}, bytes{}, consumed{}, destination{};
@@ -79,10 +94,20 @@ struct OverworldSpriteBridge::State {
         std::uint64_t job{};
         bool last{};
         std::shared_ptr<const native::SpriteImage> target;
+        void snapshot_io(SnapshotArchive &archive) {
+            archive(stack, first_tile, bytes, consumed, destination, generation, job, last, target);
+            if (archive.loading() && (stack > 0xffff || destination > 0xffff || consumed > bytes))
+                throw std::runtime_error("Invalid snapshot host sprite row");
+        }
     };
     struct Copy {
         unsigned stack{};
         std::optional<Patch> patch;
+        void snapshot_io(SnapshotArchive &archive) {
+            archive(stack, patch);
+            if (archive.loading() && stack > 0xffff)
+                throw std::runtime_error("Invalid snapshot host sprite copy");
+        }
     };
     Layout layout;
     std::shared_ptr<native::SpriteResources> resources;
@@ -435,5 +460,65 @@ HostSpriteDiagnostics OverworldSpriteBridge::diagnostics() const {
     for (const auto &actor : state_->actors)
         result.live_poses += actor.pose.has_value();
     return result;
+}
+void HostSpritePose::snapshot_io(SnapshotArchive &archive) {
+    archive(image, generation, palette, group, frame, format, surface);
+    if (archive.loading() &&
+        (!image || !generation || palette > 7 || format < native::SpriteFrameFormat::FourDirection ||
+         format > native::SpriteFrameFormat::EightDirection || surface < native::SpriteSurface::Normal ||
+         surface > native::SpriteSurface::Deep))
+        throw std::runtime_error("Invalid snapshot host sprite pose");
+}
+void OverworldSpriteBridge::snapshot_io(SnapshotArchive &archive) {
+    auto &state = *state_;
+    archive(state.next_job, state.artwork_revision, state.next_generation);
+    if (archive.loading() && !state.next_generation)
+        throw std::runtime_error("Invalid snapshot host sprite generation sequence");
+    for (auto &actor : state.actors) {
+        archive(actor.pose, actor.geometry, actor.generation, actor.custom);
+        if (archive.loading()) {
+            if (actor.generation >= state.next_generation)
+                throw std::runtime_error("Invalid snapshot host sprite actor generation");
+            if (actor.geometry) (void)state.resources->definition(*actor.geometry);
+            if (actor.pose) {
+                if (!actor.geometry || actor.pose->generation != actor.generation)
+                    throw std::runtime_error("Invalid snapshot host sprite pose owner");
+                const auto imported = state.resources->acquire(actor.pose->group, actor.pose->frame,
+                                                                 actor.pose->surface, actor.pose->format);
+                if (*imported->layout != *actor.pose->image->layout)
+                    throw std::runtime_error("Invalid snapshot host sprite pose geometry");
+            }
+        }
+    }
+    archive.sequence(state.creations, [](SnapshotArchive &io, State::Creation &creation) {
+        io(creation.stack, creation.sprite);
+        if (io.loading() && (creation.stack > 0xffff || creation.sprite > 0xffff))
+            throw std::runtime_error("Invalid snapshot host sprite creation");
+    });
+    archive(state.loaders, state.rows, state.copies, state.queued, state.transferring);
+    auto count = archive.count(state.artwork.size());
+    archive(count);
+    archive.check_count(count);
+    if (archive.loading()) {
+        state.artwork.clear();
+        for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint64_t generation{};
+            archive(generation);
+            auto artwork = native::SpriteArtwork::from_snapshot(archive);
+            if (!generation || generation >= state.next_generation ||
+                !state.artwork.emplace(generation, std::move(artwork)).second)
+                throw std::runtime_error("Invalid snapshot host sprite artwork generation");
+        }
+    } else {
+        for (auto &[generation, artwork] : state.artwork) archive(generation, artwork);
+    }
+    archive(state.invalidated);
+    if (archive.loading())
+        for (const auto &[generation, job] : state.invalidated)
+            if (!generation || generation >= state.next_generation || job > state.next_job)
+                throw std::runtime_error("Invalid snapshot host sprite invalidation");
+    auto &c = state.counts;
+    archive(c.selections, c.unsupported, c.creations, c.releases, c.resets,
+            c.queued_patches, c.committed_patches);
 }
 } // namespace eb

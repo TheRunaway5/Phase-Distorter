@@ -8,8 +8,10 @@
 #include <span>
 
 namespace eb {
+class SnapshotArchive;
 class MainCpu65816;
 class SnesBus;
+struct SourceTaskContentProof;
 
 struct NativeSpriteRuntimeDiagnostics {
     std::uint64_t creations{}, releases{}, resets{}, selections{};
@@ -41,6 +43,8 @@ class OverworldSpriteRuntime {
     // than treat neutral ordinary transport metadata as a descriptor.
     bool custom_descriptor(unsigned byte_slot) const;
     NativeSpriteRuntimeDiagnostics diagnostics() const;
+    SourceTaskContentProof source_task_content_proof() const;
+    void snapshot_io(SnapshotArchive &archive);
 
     // Native effect services share imported content and publish an immutable
     // image with the actor's retained geometry. A normal pose clears the effect.

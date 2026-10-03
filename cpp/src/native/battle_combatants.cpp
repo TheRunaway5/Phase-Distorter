@@ -38,6 +38,13 @@ struct BattleCombatants::Content {
   };
   std::vector<std::shared_ptr<const BattleCombatantArtwork>> pictures;
   std::vector<BattleCombatantPalette> palettes;
+  std::optional<unsigned> zero_sprite_height, zero_sprite_shape;
+  std::optional<std::vector<std::uint8_t>> zero_planar;
+  std::optional<std::uint32_t> zero_live_source;
+  std::vector<unsigned> shapes;
+  std::vector<std::array<std::uint16_t, 16>> packed_palettes;
+  std::array<std::uint16_t, 32> allocation_offsets{};
+  std::array<std::uint16_t, 48> tile_arrangements{};
   std::vector<Enemy> enemies;
   std::vector<std::vector<unsigned>> groups;
 };
@@ -47,7 +54,8 @@ BattleCombatantLayout battle_combatant_layout(GameVersion version) {
   const bool jp = version == GameVersion::JP;
   return {0xe62ee,        0xe6514,        jp ? 0x15a440u : 0x159589u,
           0x10c60d,       0x10d52d,       0x10dfb4,
-          jp ? 77u : 94u, jp ? 11u : 28u, jp ? 36u : 53u};
+          jp ? 77u : 94u, jp ? 11u : 28u, jp ? 36u : 53u,
+          110, 32, 231, 484, jp ? 0x3f3b6u : 0x3f871u, jp ? 0x3f3f6u : 0x3f8b1u};
 }
 BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
                                    GameVersion version)
@@ -63,6 +71,34 @@ BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
     throw std::invalid_argument("Invalid battle combatant catalog layout");
   const Reader r{bytes};
   auto c = std::make_shared<Content>();
+  // OPTIMIZED_MULT(FFFF,5) carries into ADC: FFFC, then four INX
+  // instructions wrap to0 before the long-indexed shape read.
+  const auto zero_shape_at = std::size_t(l.pictures);
+  if (zero_shape_at < bytes.size()) {
+    const unsigned shape = r.byte(zero_shape_at);
+    c->zero_sprite_shape = shape;
+    c->zero_sprite_height = shape == 1 || shape == 2 ? 4
+                           : shape >= 3 && shape <= 5 ? 8
+                           : shape == 6 ? 16 : 0;
+  }
+  for (unsigned i = 0; i < 32; ++i) {
+    c->allocation_offsets[i] = std::uint16_t(l.allocation_offsets ? r.word(l.allocation_offsets + i * 2) : (i / 4 * 0x800 + i % 4 * 0x80));
+  }
+  for (unsigned i = 0; i < 48; ++i) {
+    c->tile_arrangements[i] = std::uint16_t(l.tile_arrangements ? r.word(l.tile_arrangements + i * 2) : (i / 4 * 0x40 + i % 4 * 4));
+  }
+  // Sprite0 uses a wrapped16-bit table index. Preserve a valid imported alias
+  // if present; ordinary custom catalogs need not provide that adjacent data.
+  if (c->zero_sprite_shape) {
+    const auto at = (std::size_t(l.pictures) & ~std::size_t(0xffff)) | ((l.pictures + 0xfffc) & 0xffff);
+    if (at + 2 < bytes.size()) {
+      const auto pointer = std::uint32_t(r.word(at) | r.byte(at + 2) << 16);
+      if (pointer >= 0xc00000 && pointer < 0xf00000) {
+        try { c->zero_planar = decompress_content(bytes, pointer - 0xc00000, 65536); }
+        catch (const std::runtime_error &) { c->zero_live_source = pointer; }
+      } else c->zero_live_source = pointer;
+    }
+  }
   std::map<std::pair<unsigned, unsigned>,
            std::shared_ptr<const BattleCombatantArtwork>>
       images;
@@ -71,6 +107,7 @@ BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
     const unsigned shape = r.byte(at + 4), pointer = r.pointer(at);
     if (shape < 1 || shape > 6)
       throw std::runtime_error("Invalid battle combatant shape");
+    c->shapes.push_back(shape);
     const auto key = std::pair{pointer, shape};
     auto found = images.find(key);
     if (found == images.end()) {
@@ -86,6 +123,7 @@ BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
       image->left = -int(image->width) / 2;
       image->top = rows == 4 ? -96 : -int(image->height);
       image->indices.resize(image->width * image->height);
+      image->planar = decoded;
       for (unsigned y = 0; y < image->height; ++y)
         for (unsigned x = 0; x < image->width; ++x) {
           const unsigned block = (y / 32) * columns + x / 32;
@@ -105,8 +143,10 @@ BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
   }
   for (unsigned i = 0; i < l.palette_count; ++i) {
     auto &palette = c->palettes.emplace_back();
+    auto &raw = c->packed_palettes.emplace_back();
     for (unsigned j = 0; j < 16; ++j) {
       unsigned v = r.word(std::size_t(l.palettes) + i * 32 + j * 2);
+      raw[j] = std::uint16_t(v);
       palette[j] = {std::uint8_t(v & 31), std::uint8_t((v >> 5) & 31),
                     std::uint8_t((v >> 10) & 31)};
     }
@@ -149,6 +189,42 @@ BattleCombatants::BattleCombatants(std::span<const std::uint8_t> bytes,
   content_ = std::move(c);
 }
 unsigned BattleCombatants::size() const { return content_->groups.size(); }
+unsigned BattleCombatants::height(unsigned sprite) const {
+  if (!sprite) {
+    if (!content_->zero_sprite_height)
+      throw std::out_of_range("Sprite-zero height requires its imported alias");
+    return *content_->zero_sprite_height;
+  }
+  return content_->pictures.at(sprite - 1)->height / 8;
+}
+unsigned BattleCombatants::shape(unsigned sprite) const {
+  if (!sprite) {
+    if (!content_->zero_sprite_shape) throw std::out_of_range("Sprite-zero shape requires its imported alias");
+    return *content_->zero_sprite_shape;
+  }
+  return content_->shapes.at(sprite - 1);
+}
+unsigned BattleCombatants::width(unsigned sprite) const {
+  const auto value = shape(sprite);
+  return value == 1 || value == 3 ? 4 : value == 2 || value == 4 ? 8 : value == 5 || value == 6 ? 16 : 0;
+}
+std::span<const std::uint8_t> BattleCombatants::planar(unsigned sprite) const {
+  if (!sprite) {
+    if (!content_->zero_planar) throw std::logic_error("Sprite-zero loading requires its actual non-content decompression source");
+    return *content_->zero_planar;
+  }
+  return content_->pictures.at(sprite - 1)->planar;
+}
+std::optional<std::uint32_t> BattleCombatants::live_planar_source(unsigned sprite) const {
+  if (!sprite) return content_->zero_live_source;
+  (void)content_->pictures.at(sprite - 1);
+  return {};
+}
+const std::array<std::uint16_t, 16> &BattleCombatants::packed_palette(unsigned palette) const {
+  return content_->packed_palettes.at(palette);
+}
+unsigned BattleCombatants::allocation_offset(unsigned block) const { return content_->allocation_offsets.at(block); }
+unsigned BattleCombatants::tile_arrangement(unsigned block) const { return content_->tile_arrangements.at(block); }
 std::shared_ptr<const BattleCombatantArtwork>
 BattleCombatants::artwork(unsigned sprite) const {
   if (!sprite)
@@ -180,14 +256,17 @@ void BattleCombatantScene::bind_palette_state(
   palette_state_ = &state;
 }
 std::array<std::optional<BattleCombatantPalette>, 4>
-BattleCombatantScene::capture_alternate_palettes() const {
+BattleCombatantScene::capture_palettes(unsigned first_bank) const {
   if (!palette_state_)
-    return alternate_;
+    return first_bank == 12
+               ? alternate_
+               : std::array<std::optional<BattleCombatantPalette>, 4>{};
   std::array<std::optional<BattleCombatantPalette>, 4> captured;
   for (unsigned bank = 0; bank < captured.size(); ++bank) {
     BattleCombatantPalette colors;
     for (unsigned color = 0; color < colors.size(); ++color) {
-      const auto packed = palette_state_->palette(bank)[color];
+      const auto packed =
+          palette_state_->displayed_palette(first_bank + bank)[color];
       colors[color] = {std::uint8_t(packed & 31),
                        std::uint8_t((packed >> 5) & 31),
                        std::uint8_t((packed >> 10) & 31)};
@@ -224,7 +303,8 @@ void BattleCombatantScene::publish(std::span<BattleCombatantPresentation> input,
   }
   BattleCombatantFrame frame;
   frame.resources_ = resources_;
-  frame.alternate_ = capture_alternate_palettes();
+  frame.normal_ = capture_palettes(8);
+  frame.alternate_ = capture_palettes(12);
   std::array<BattleCombatantPresentation *, 32> ordered{};
   for (auto &v : next)
     ordered[v.slot] = &v;
@@ -258,7 +338,8 @@ void BattleCombatantScene::publish(std::span<BattleCombatantPresentation> input,
   }
 }
 void BattleCombatantScene::publish_palettes() {
-  frame_.alternate_ = capture_alternate_palettes();
+  frame_.normal_ = capture_palettes(8);
+  frame_.alternate_ = capture_palettes(12);
 }
 std::shared_ptr<const DirectSceneFrame>
 BattleCombatantFrame::draw(unsigned width, std::uint64_t frame,
@@ -281,14 +362,23 @@ BattleCombatantFrame::draw(unsigned width, std::uint64_t frame,
       unsigned top = out->atlas_height;
       out->atlas_height += image.height;
       out->atlas.resize(std::size_t(out->atlas_width) * out->atlas_height);
+      if (normal_[0])
+        out->palette_indices.resize(out->atlas.size(), 256);
       const auto &palette =
-          command.alternate ? *alternate_[command.resource] : resource.palette;
+          command.alternate
+              ? *alternate_[command.resource]
+              : normal_[command.resource].value_or(resource.palette);
       for (unsigned y = 0; y < image.height; ++y)
         for (unsigned x = 0; x < image.width; ++x) {
           const auto index = image.indices[y * image.width + x];
-          if (index)
-            out->atlas[(top + y) * out->atlas_width + x] =
-                palette_argb(palette[index]);
+          if (index) {
+            const auto at = (top + y) * out->atlas_width + x;
+            out->atlas[at] = palette_argb(palette[index]);
+            if (normal_[0])
+              out->palette_indices[at] = std::uint16_t(
+                  ((command.alternate ? 12 : 8) + command.resource) * 16 +
+                  index);
+          }
         }
       found = atlas_rows.emplace(key, top).first;
     }
@@ -304,7 +394,7 @@ BattleCombatantFrame::draw(unsigned width, std::uint64_t frame,
         if (left < -256 || left > 255 || top < -32 || top > 223)
           continue;
         out->quads.push_back({x, found->second + y, 32, 32,
-                              float(left + margin), float(top), 10, motion,
+                              float(left + margin), float(top), 7, motion,
                               true});
         out->quads.back().layer = DirectSceneFrame::Layer::Actors;
         // Normal banks8..11 are OBJ palettes0..3, which bypass color math;

@@ -64,6 +64,9 @@ class SubstitutionResources {
     std::span<const std::uint8_t> raw_item_name(unsigned id) const;
     // Shares the imported item table with names; no mutable inventory lives here.
     ItemProperties item_properties(unsigned id) const;
+    std::uint16_t item_cost(unsigned id) const;
+    std::uint8_t npc_flags(unsigned id) const { return npc_flags_.at(id); }
+    std::uint8_t npc_enemy(unsigned id) const { return npc_enemies_.at(id); }
     std::span<const std::uint8_t> teleport_name(unsigned id) const;
     std::span<const std::uint8_t> enemy_name(unsigned id) const;
     // US C3E75D uses the raw enemy table byte and four authored THETHE bytes.
@@ -88,7 +91,7 @@ class SubstitutionResources {
     explicit SubstitutionResources(GameVersion version) : version_(version) {}
     GameVersion version_;
     std::array<StatDescriptor, 96> stats_{};
-    std::array<std::uint8_t, 19> npc_enemies_{};
+    std::array<std::uint8_t, 19> npc_enemies_{}, npc_flags_{};
     std::array<PsiNameSelection, 54> abilities_{};
     std::vector<std::uint8_t> item_table_;
     std::array<unsigned, 254> item_text_lengths_{};

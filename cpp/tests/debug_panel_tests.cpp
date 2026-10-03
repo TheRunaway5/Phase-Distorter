@@ -9,6 +9,7 @@
 #include <SDL_opengl.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -352,6 +353,13 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         const auto cheats=panel.game_settings();
         require(cheats.infinite_hp && cheats.infinite_pp && cheats.noclip && cheats.enemies_ignore,
                 "Debug checkboxes did not enable all four gameplay tools");
+        panel.set_game_settings({});
+        draw(); draw();
+        const auto restored = panel.game_settings();
+        require(!restored.infinite_hp && !restored.infinite_pp && !restored.noclip && !restored.enemies_ignore,
+            "Snapshot restoration did not replace the Debug GUI cheat settings");
+        panel.set_game_settings(cheats);
+        draw(); draw();
         require(!panel.take_game_action(),"Toggling a cheat emitted an unrelated party/teleport command");
         click(window,panel,draw,80,300);
         auto command=panel.take_game_action();
@@ -382,6 +390,208 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(command && command->kind==eb::GameDebugRequest::Kind::Teleport && command->destination==1149,
                 "Searching for an endgame area did not select its teleport destination");
         stats.game_debug={};
+    }
+    {
+        eb::DebugPanel panel(window, context);
+        panel.set_visible(true);
+        stats.snapshots_available = true;
+        auto draw = [&] { background(); panel.draw(settings, stats); };
+        draw(); draw();
+        auto* layout = ImGui::FindWindowByName("EarthBound control panel###EBControlPanel");
+        require(layout, "Missing snapshots settings window");
+        auto* tabbar = ImGui::GetCurrentContext()->TabBars.GetByKey(layout->GetID("Control panel tabs"));
+        require(tabbar, "Missing snapshots tab bar");
+        const ImGuiTabItem* debug_tab = nullptr;
+        for (auto& tab : tabbar->Tabs)
+            if (std::string(ImGui::TabBarGetTabName(tabbar, &tab)) == "Debug") debug_tab = &tab;
+        require(debug_tab, "Missing snapshots Debug tab");
+        click(window, panel, draw, int(tabbar->BarRect.Min.x + debug_tab->Offset + debug_tab->Width / 2),
+            int(tabbar->BarRect.GetCenter().y));
+        ImGui::SetScrollY(layout, layout->ScrollMax.y);
+        draw(); draw();
+        const auto snapshot_list = [&]() {
+            for (auto* item : ImGui::GetCurrentContext()->Windows)
+                if (item->Active && std::string(item->Name).find("Snapshot list") != std::string::npos) return item;
+            throw std::runtime_error("Snapshot listing was not drawn in Debug options");
+        };
+        const auto before_list = [&](int rows, int column) {
+            const auto* list = snapshot_list();
+            const auto row = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+            // Name and action rows precede the count's shorter text row.
+            const int y = int(list->Pos.y - ImGui::GetTextLineHeightWithSpacing() - rows * row + ImGui::GetFrameHeight() / 2);
+            click(window, panel, draw, int(layout->Pos.x + 30 + column), y);
+        };
+        const auto after_list = [&](int rows, int column) {
+            const auto* list = snapshot_list();
+            const auto row = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+            const int y = int(list->Pos.y + list->Size.y + ImGui::GetStyle().ItemSpacing.y +
+                rows * row + ImGui::GetFrameHeight() / 2);
+            click(window, panel, draw, int(layout->Pos.x + 30 + column), y);
+        };
+        before_list(1, 0);
+        require(!panel.take_snapshot_action(), "An empty snapshot name emitted a save request");
+        after_list(0, 0);
+        after_list(0, 140);
+        require(!panel.take_snapshot_action(), "An empty list offered load or delete actions");
+        const auto empty_list = capture();
+        if (!prefix.empty()) save(prefix + "-snapshots-empty.ppm", empty_list);
+        before_list(2, 35);
+        SDL_Event text{};
+        text.type = SDL_TEXTINPUT;
+        text.text.windowID = SDL_GetWindowID(window);
+        SDL_strlcpy(text.text.text, "Before Paula joins", sizeof(text.text.text));
+        panel.process_event(text);
+        draw(); draw();
+        before_list(1, 0);
+        auto request = panel.take_snapshot_action();
+        require(request && request->kind == eb::SaveStateSnapshotRequest::Kind::Save && request->value == "Before Paula joins",
+            "Saving did not copy the exact snapshot name into its request");
+        require(!panel.take_snapshot_action(), "Snapshot save was emitted more than once");
+        before_list(1, 140);
+        request = panel.take_snapshot_action();
+        require(request && request->kind == eb::SaveStateSnapshotRequest::Kind::Refresh && request->value.empty(),
+            "Refresh did not emit an application-owned listing request");
+        require(!panel.take_snapshot_action(), "Snapshot refresh was emitted more than once");
+        stats.snapshots = {{"opaque-first", "Before Paula joins", "2026-10-02 12:00", 1234, 1790956800},
+                           {"opaque-second", "Saturn Valley ## literal", "2026-10-02 12:05", 2345, 1790957100}};
+        stats.snapshot_status = "Saved snapshot: Before Paula joins";
+        draw(); draw();
+        require(capture() != empty_list, "Snapshot entries and save feedback were not rendered");
+        require(std::abs(layout->Scroll.y - layout->ScrollMax.y) < 1,
+            "Snapshot operation feedback did not scroll into view");
+        if (!prefix.empty()) save(prefix + "-snapshots-list.ppm", capture());
+        const auto select = [&](int row) {
+            const auto* list = snapshot_list();
+            click(window, panel, draw, int(list->Pos.x + 60), int(list->Pos.y + ImGui::GetStyle().WindowPadding.y +
+                row * (ImGui::GetTextLineHeight() * 2 + 4 + ImGui::GetStyle().ItemSpacing.y) + ImGui::GetTextLineHeight() / 2));
+        };
+        select(1);
+        after_list(0, 0);
+        request = panel.take_snapshot_action();
+        require(request && request->kind == eb::SaveStateSnapshotRequest::Kind::Load && request->value == "opaque-second",
+            "Loading did not carry the selected snapshot's opaque ID");
+        require(!panel.take_snapshot_action(), "Snapshot load was emitted more than once");
+        after_list(0, 140);
+        require(!panel.take_snapshot_action(), "Deleting a snapshot skipped its inline confirmation");
+        require(panel.process_event(key(window, SDLK_ESCAPE)) && panel.visible(),
+            "Escape from snapshot deletion closed the Debug options");
+        draw(); draw();
+        require(!panel.take_snapshot_action(), "Canceling snapshot deletion still emitted a request");
+        after_list(0, 140);
+        const auto* list = snapshot_list();
+        const int confirm_y = int(list->Pos.y + list->Size.y + ImGui::GetStyle().ItemSpacing.y +
+            ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + ImGui::GetTextLineHeightWithSpacing() +
+            ImGui::GetFrameHeight() / 2);
+        require(confirm_y >= layout->InnerClipRect.Min.y && confirm_y < layout->InnerClipRect.Max.y,
+            "Snapshot delete confirmation did not scroll into view");
+        click(window, panel, draw, int(layout->Pos.x + 60), confirm_y);
+        request = panel.take_snapshot_action();
+        require(request && request->kind == eb::SaveStateSnapshotRequest::Kind::Delete && request->value == "opaque-second",
+            "Confirming snapshot deletion did not emit the selected opaque ID");
+        require(!panel.take_snapshot_action(), "Snapshot deletion was emitted more than once");
+        stats.snapshots.erase(stats.snapshots.begin() + 1);
+        stats.snapshot_status = "Deleted snapshot: Saturn Valley ## literal";
+        draw(); draw();
+        after_list(0, 0);
+        after_list(0, 140);
+        require(!panel.take_snapshot_action(), "A removed snapshot retained a stale load/delete selection");
+        select(0);
+        stats.snapshots_available = false;
+        draw(); draw();
+        before_list(1, 0);
+        after_list(0, 0);
+        require(!panel.take_snapshot_action(), "Save/load remained available without a game session");
+        require(stats.snapshots.size() == 1 && stats.snapshots[0].id == "opaque-first" && stats.snapshots[0].frames == 1234,
+            "Snapshot UI mutated the application's copied listing");
+        stats.snapshots.clear();
+        stats.snapshot_status.clear();
+        stats.snapshots_available = false;
+    }
+    {
+        eb::DebugPanel panel(window, context);
+        require(panel.controller_settings() == eb::ControllerSettings{}, "Controller GUI defaults changed the positional SNES layout");
+        panel.set_visible(true);
+        stats.controller.connected = true;
+        stats.controller.nintendo_layout = true;
+        stats.controller.name = "Nintendo SNES Controller";
+        auto draw = [&] { background(); panel.draw(settings, stats); };
+        draw(); draw();
+        auto* layout = ImGui::FindWindowByName("EarthBound control panel###EBControlPanel");
+        require(layout, "Missing controller settings window");
+        auto* tabbar = ImGui::GetCurrentContext()->TabBars.GetByKey(layout->GetID("Control panel tabs"));
+        require(tabbar, "Missing controller settings tabs");
+        const ImGuiTabItem* controller_tab = nullptr;
+        for (auto& tab : tabbar->Tabs)
+            if (std::string(ImGui::TabBarGetTabName(tabbar, &tab)) == "Controller") controller_tab = &tab;
+        require(controller_tab && controller_tab == &tabbar->Tabs.back(), "Controller tab was not added after the existing tabs");
+        click(window, panel, draw, int(tabbar->BarRect.Min.x + controller_tab->Offset + controller_tab->Width / 2),
+            int(tabbar->BarRect.GetCenter().y));
+        const auto rendered_text = [&] {
+            // ImGui starts logging inside a window. The panel owns its frame,
+            // so select its already-created window while starting the capture.
+            auto* context = ImGui::GetCurrentContext();
+            auto* previous = context->CurrentWindow;
+            context->CurrentWindow = layout;
+            ImGui::LogToBuffer();
+            context->CurrentWindow = previous;
+            context->LogWindow = nullptr; // Keep the capture until the frame has been inspected.
+            draw();
+            const std::string text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+            ImGui::LogFinish();
+            return text;
+        };
+        const auto connected = rendered_text();
+        require(connected.find("Connected: Nintendo SNES Controller") != std::string::npos,
+            "Controller status did not show the connected device name");
+        require(connected.find("B (bottom)") != std::string::npos && connected.find("A (right)") != std::string::npos,
+            "Controller remapping did not use the SNES controller's printed button labels");
+        const auto idle = capture();
+        stats.controller.pressed[SDL_CONTROLLER_BUTTON_B] = true;
+        stats.controller.game_buttons = 0x0080;
+        const auto held = rendered_text();
+        require(held.find("Buttons held: A (right)") != std::string::npos && held.find("A *") != std::string::npos,
+            "Live controller preview did not show the physical A button and SNES A output");
+        require(capture() != idle, "Live controller inputs did not change the displayed preview");
+        if (!prefix.empty()) save(prefix + "-controller-held.ppm", capture());
+        auto* table = ImGui::GetCurrentContext()->Tables.GetByKey(ImHashStr("Controller bindings", 0, controller_tab->ID));
+        require(table && table->ColumnsCount == 3, "Controller mapping table was not drawn");
+        const int first_y = int(table->OuterRect.Min.y + ImGui::GetTextLineHeight() +
+            3 * ImGui::GetStyle().CellPadding.y + ImGui::GetFrameHeight() / 2);
+        const int source_x = int((table->Columns[1].MinX + table->Columns[1].MaxX) / 2);
+        click(window, panel, draw, source_x, first_y);
+        auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+        require(!popups.empty() && popups.back().Window, "Controller source picker did not open");
+        const auto* popup = popups.back().Window;
+        // Unassigned is row zero, then the SDL A and B buttons. SDL B is
+        // physically A on the Nintendo controller after normalization.
+        click(window, panel, draw, int(popup->Pos.x + 60), int(popup->Pos.y + ImGui::GetStyle().WindowPadding.y +
+            ImGui::GetFontSize() / 2 + 2 * ImGui::GetTextLineHeightWithSpacing()));
+        require(panel.controller_settings().bindings[0] == SDL_CONTROLLER_BUTTON_B,
+            "Remapping SNES B did not immediately update the controller settings");
+        const auto assigned = rendered_text();
+        require(assigned.find("Pressed") != std::string::npos, "Assigned controller input did not expose its live pressed state");
+        auto customized = panel.controller_settings();
+        customized.stick_deadzone = 25000;
+        panel.set_controller_settings(customized);
+        draw(); draw();
+        // Status, held buttons and stick values are three text rows, followed
+        // by the deadzone slider. Use the actual tab geometry for the button.
+        const auto& style = ImGui::GetStyle();
+        const int restore_y = int(tabbar->BarRect.Max.y + style.ItemSpacing.y +
+            3 * ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() + style.ItemSpacing.y +
+            ImGui::GetFrameHeight() / 2);
+        click(window, panel, draw, int(layout->Pos.x + style.WindowPadding.x + 80), restore_y);
+        require(panel.controller_settings() == eb::ControllerSettings{},
+            "Restore controller defaults did not reset the bindings and stick deadzone");
+        stats.controller.connected = false;
+        const auto disconnected = rendered_text();
+        require(disconnected.find("Controller disconnected") != std::string::npos &&
+            disconnected.find("Buttons held: None") != std::string::npos && disconnected.find("A *") == std::string::npos,
+            "Disconnected controller retained a connected name or stale held-button preview");
+        if (!prefix.empty()) save(prefix + "-controller-disconnected.ppm", capture());
+        require(stats.controller.pressed[SDL_CONTROLLER_BUTTON_B] && stats.controller.game_buttons == 0x0080,
+            "Controller preview mutated the application's copied input snapshot");
+        stats.controller = {};
     }
     // Both dialogs must remain operable at the original 1x window size. Inspect
     // their actual ImGui layout after drawing and scrolling, not a copied model.
@@ -417,7 +627,40 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         panel.draw();
         require(layout->Scroll.y > 0, "Import controls could not be scrolled into view");
     }
-    std::cout << "Verified persistent top bar, game input boundaries, fullscreen/settings actions, cache confirmations, display choices, and import UI\n";
+    {
+        eb::DebugPanel panel(window, context);
+        panel.set_visible(true);
+        auto draw = [&] { background(); panel.draw(settings, stats); };
+        draw(); draw();
+        auto* layout = ImGui::FindWindowByName("EarthBound control panel###EBControlPanel");
+        auto* tabbar = ImGui::GetCurrentContext()->TabBars.GetByKey(layout->GetID("Control panel tabs"));
+        require(tabbar, "Small controller panel has no tab bar");
+        const ImGuiTabItem* controller_tab = nullptr;
+        for (auto& tab : tabbar->Tabs)
+            if (std::string(ImGui::TabBarGetTabName(tabbar, &tab)) == "Controller") controller_tab = &tab;
+        require(controller_tab, "Small settings window lost its Controller tab");
+        const int tab_x = int(tabbar->BarRect.Min.x + controller_tab->Offset - tabbar->ScrollingAnim + controller_tab->Width / 2);
+        require(tab_x >= layout->InnerClipRect.Min.x && tab_x < layout->InnerClipRect.Max.x,
+            "Controller tab was unreachable at the original window size");
+        click(window, panel, draw, tab_x, int(tabbar->BarRect.GetCenter().y));
+        require(tabbar->SelectedTabId == controller_tab->ID && fits(layout),
+            "Small settings window could not open the Controller tab");
+        require(layout->ScrollMax.y > 0, "Small Controller tab did not provide scroll access to all SNES bindings");
+        ImGui::SetScrollY(layout, layout->ScrollMax.y);
+        draw(); draw();
+        auto* table = ImGui::GetCurrentContext()->Tables.GetByKey(ImHashStr("Controller bindings", 0, controller_tab->ID));
+        require(table, "Small Controller tab lost its mapping controls");
+        const int last_y = int(table->RowPosY1 + ImGui::GetStyle().CellPadding.y + ImGui::GetFrameHeight() / 2);
+        require(last_y >= layout->InnerClipRect.Min.y && last_y < layout->InnerClipRect.Max.y,
+            "Last SNES binding could not be scrolled into view in the small Controller tab");
+        click(window, panel, draw, int((table->Columns[1].MinX + table->Columns[1].MaxX) / 2), last_y);
+        const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+        require(!popups.empty() && popups.back().Window, "Small Controller tab could not open the last binding picker");
+        const auto* popup = popups.back().Window;
+        require(fits(popup), "Small controller binding picker extended outside the original window size");
+        if (!prefix.empty()) save(prefix + "-controller-small.ppm", capture());
+    }
+    std::cout << "Verified persistent top bar, game input boundaries, fullscreen/settings actions, cache confirmations, display choices, snapshot actions, controller status/remapping/preview, and import UI\n";
 }
 } // namespace
 

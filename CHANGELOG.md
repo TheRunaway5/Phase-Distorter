@@ -1,5 +1,15 @@
 # Unreleased
 
+- Restore Threed's Investigator after Master Belch and keep the Ghost Enthusiast
+  available afterward, with their original placements, sprites and dialogue in
+  both EarthBound and Mother 2.
+- Correct SNES Nintendo Switch Online face buttons and Linux USB/Bluetooth
+  mappings; add a Controller settings tab with live inputs, saved button
+  remapping, stick deadzone and default restoration.
+- Add named save-state snapshots to the Debug GUI, with persistent listing,
+  saving, loading, refresh and confirmed deletion for each game.
+- Fix the crash after Paula's party-join jingle by retaining the source's hidden
+  actor initialization marker until a visible sprite frame is selected.
 - Keep the pyramid demo's scenery and party aligned with its fixed screen
   aperture in wide and ultrawide views.
 - Store overworld actor graphics in host-managed resources, prepare nearby

@@ -36,8 +36,9 @@ int scaled_sine(unsigned amplitude, unsigned value) {
 } // namespace
 struct BattleBackground::Content {
   std::vector<BattleBackgroundDefinition> definitions;
+  std::map<unsigned, std::vector<std::uint8_t>> graphics, arrangements;
   std::vector<std::shared_ptr<const BattleBackgroundArtwork>> artwork;
-  std::vector<std::array<PaletteColor, 16>> palettes;
+  std::vector<std::array<std::uint16_t, 16>> palettes;
   std::vector<BattleScroll> scrolling;
   std::vector<BattleDistortion> distortions;
   std::array<std::uint8_t, 256> sine;
@@ -88,7 +89,7 @@ BattleBackgrounds::BattleBackgrounds(std::span<const std::uint8_t> bytes,
     const auto at = r.pointer(std::size_t(layout.palettes) + i * 4);
     auto &palette = out->palettes.emplace_back();
     for (unsigned j = 0; j < 16; ++j)
-      palette[j] = color(r.word(std::size_t(at) + j * 2));
+      palette[j] = std::uint16_t(r.word(std::size_t(at) + j * 2));
   }
   std::map<std::pair<unsigned, unsigned>,
            std::shared_ptr<const BattleBackgroundArtwork>>
@@ -116,12 +117,14 @@ BattleBackgrounds::BattleBackgrounds(std::span<const std::uint8_t> bytes,
     const auto key = std::pair{d.artwork, d.bitdepth};
     auto found = images.find(key);
     if (found == images.end()) {
-      const auto gfx = decompress_content(
-          bytes, r.pointer(std::size_t(layout.graphics) + d.artwork * 4),
-          0x5000);
-      const auto arr = decompress_content(
-          bytes, r.pointer(std::size_t(layout.arrangements) + d.artwork * 4),
-          0x800);
+      if (!out->graphics.contains(d.artwork)) {
+        out->graphics.emplace(d.artwork, decompress_content(
+            bytes, r.pointer(std::size_t(layout.graphics) + d.artwork * 4), 0x5000));
+        out->arrangements.emplace(d.artwork, decompress_content(
+            bytes, r.pointer(std::size_t(layout.arrangements) + d.artwork * 4), 0x800));
+      }
+      const auto &gfx = out->graphics.at(d.artwork);
+      const auto &arr = out->arrangements.at(d.artwork);
       if (arr.size() != 0x800 || gfx.empty() || gfx.size() % (d.bitdepth * 8))
         throw std::runtime_error("Invalid battle background artwork size");
       const Reader pixels{gfx}, arrangement{arr};
@@ -162,6 +165,15 @@ const BattleBackgroundDefinition &
 BattleBackgrounds::definition(unsigned id) const {
   return content_->definitions.at(id);
 }
+std::span<const std::uint8_t> BattleBackgrounds::graphics(unsigned layer) const {
+  return content_->graphics.at(definition(layer).artwork);
+}
+std::span<const std::uint8_t> BattleBackgrounds::arrangement(unsigned layer) const {
+  return content_->arrangements.at(definition(layer).artwork);
+}
+const std::array<std::uint16_t, 16> &BattleBackgrounds::palette(unsigned layer) const {
+  return content_->palettes.at(definition(layer).palette);
+}
 BattleBackground BattleBackgrounds::prepare(unsigned id) const {
   (void)definition(id);
   return {content_, id};
@@ -171,10 +183,14 @@ BattleBackground::BattleBackground(std::shared_ptr<const Content> content,
     : content_(std::move(content)), definition_(content_->definitions.at(id)),
       original_palette_(content_->palettes.at(definition_.palette)) {
   frame_.artwork = content_->artwork.at(id);
-  frame_.palette = original_palette_;
+  for (unsigned i = 0; i < 16; ++i)
+    frame_.palette[i] = color(original_palette_[i]);
   cycle_palette_ = original_palette_;
 }
-BattleBackgroundUpdate BattleBackground::advance(BattleBackgroundTick tick) {
+BattleBackgroundUpdate BattleBackground::advance(BattleBackgroundTick tick,
+    std::span<std::uint16_t> publication) {
+  if (!publication.empty() && publication.size() != 16)
+    throw std::invalid_argument("Battle palette publication must contain sixteen words");
   if (tick.layer_ordinal > 1 || tick.frame_parity > 1)
     throw std::invalid_argument("Invalid battle background phase input");
   BattleBackgroundUpdate update;
@@ -190,7 +206,8 @@ BattleBackgroundUpdate BattleBackground::advance(BattleBackgroundTick tick) {
               pingpong ? (j + step) % period : (j + count - step) % count;
           if (pingpong && k >= count)
             k = period - 1 - k;
-          frame_.palette[first + j] = cycle_palette_[first + k];
+          frame_.palette[first + j] = color(cycle_palette_[first + k]);
+          if (!publication.empty()) publication[first + j] = cycle_palette_[first + k];
         }
         step = (step + 1) % period;
       };
@@ -236,6 +253,7 @@ BattleBackgroundUpdate BattleBackground::advance(BattleBackgroundTick tick) {
       state_.distortion_index = 0;
     if (const auto id = definition_.distortions[state_.distortion_index]) {
       dist = content_->distortions[id];
+      update.distortion_installed = true;
       frame_.axis = dist.style == 3 ? BattleDistortionAxis::Vertical
                                     : BattleDistortionAxis::Horizontal;
     }
@@ -270,41 +288,71 @@ BattleBackgroundUpdate BattleBackground::advance(BattleBackgroundTick tick) {
   return update;
 }
 void BattleBackground::set_initial_scroll(std::uint16_t horizontal,
-                                           std::uint16_t vertical) {
+                                          std::uint16_t vertical) {
   frame_.horizontal_scroll = horizontal;
   frame_.vertical_scroll = vertical;
 }
+void BattleBackground::set_initial_raster(BattleDistortionAxis axis,
+    const std::array<std::uint16_t, 224> &offsets) {
+  if (axis != BattleDistortionAxis::None && axis != BattleDistortionAxis::Horizontal &&
+      axis != BattleDistortionAxis::Vertical)
+    throw std::invalid_argument("Invalid battle distortion axis");
+  frame_.axis = axis;
+  frame_.offsets = offsets;
+}
 void BattleBackground::apply_palette_brightness(std::uint16_t factor,
-                                                 unsigned first,
-                                                 unsigned last) {
+                                                unsigned first, unsigned last,
+                                                std::span<std::uint16_t> publication) {
+  if (!publication.empty() && publication.size() != 16)
+    throw std::invalid_argument("Battle palette publication must contain sixteen words");
   if (first > last || last >= 16)
     throw std::invalid_argument("Invalid battle palette brightness range");
   for (unsigned i = first; i <= last; ++i) {
-    const auto original = original_palette_[i];
-    PaletteColor adjusted;
-    if (!factor) adjusted = {};
-    else if (factor == 0xffff) adjusted = {31,31,31};
-    else if (factor == 0x100) adjusted = original;
+    const auto original = color(original_palette_[i]);
+    std::uint16_t adjusted;
+    if (!factor || factor == 0xffff)
+      adjusted = factor;
+    else if (factor == 0x100)
+      adjusted = original_palette_[i];
     else {
       const auto scale = [factor](unsigned channel) {
         return ((channel * factor) >> 8) & 255;
       };
-      adjusted = color(scale(original.red) + (scale(original.green) << 5) +
-                       (scale(original.blue) << 10));
+      adjusted =
+          std::uint16_t(scale(original.red) + (scale(original.green) << 5) +
+                        (scale(original.blue) << 10));
     }
     cycle_palette_[i] = adjusted;
-    const bool cycling =
-        (definition_.palette_style == 2 && i >= definition_.first2 &&
-         i <= definition_.last2) ||
-        (definition_.palette_style && i >= definition_.first1 &&
-         i <= definition_.last1);
-    if (!cycling || factor == 0 || factor == 0x100 || factor == 0xffff)
-      frame_.palette[i] = adjusted;
+    const bool cycling = (definition_.palette_style == 2 &&
+                          i >= definition_.first2 && i <= definition_.last2) ||
+                         (definition_.palette_style &&
+                          i >= definition_.first1 && i <= definition_.last1);
+    if (!cycling || factor == 0 || factor == 0x100 || factor == 0xffff) {
+      frame_.palette[i] = color(adjusted);
+      if (!publication.empty()) publication[i] = adjusted;
+    }
   }
+}
+BattleBackgroundPalette BattleBackground::palette_state() const {
+  BattleBackgroundPalette out;
+  for (unsigned i = 0; i < 16; ++i) {
+    out.base[i] = color(cycle_palette_[i]);
+    out.backup[i] = color(original_palette_[i]);
+    out.base_high_bits |= std::uint16_t((cycle_palette_[i] >> 15) << i);
+    out.backup_high_bits |= std::uint16_t((original_palette_[i] >> 15) << i);
+  }
+  return out;
 }
 void BattleBackground::restore_palette() {
   cycle_palette_ = original_palette_;
-  frame_.palette = original_palette_;
+  for (unsigned i = 0; i < 16; ++i)
+    frame_.palette[i] = color(original_palette_[i]);
+}
+void BattleBackground::halve_palette() {
+  for (unsigned i = 0; i < 16; ++i) {
+    cycle_palette_[i] = (cycle_palette_[i] >> 1) & 0x3def;
+    frame_.palette[i] = color(cycle_palette_[i]);
+  }
 }
 void BattleBackground::clear_palette() {
   original_palette_.fill({});

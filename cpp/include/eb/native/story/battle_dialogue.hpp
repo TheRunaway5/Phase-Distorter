@@ -52,6 +52,9 @@ public:
     dialogue::Location resolve(const dialogue::ReferenceKey&) const;
     GameVersion version() const noexcept { return party_.version(); }
     const party::State& party() const noexcept { return party_; }
+    bool uses(const dialogue::WindowHost& windows, const InputState& input) const noexcept {
+        return &prompts_.windows() == &windows && &input_ == &input;
+    }
     dialogue::PreparedMessage& prepared() noexcept { return prepared_; }
     const dialogue::PreparedMessage& prepared() const noexcept { return prepared_; }
     bool busy() const noexcept { return active_ != nullptr; }

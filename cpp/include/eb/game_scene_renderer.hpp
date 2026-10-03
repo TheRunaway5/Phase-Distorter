@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace eb {
+class SnapshotArchive;
 namespace native { class OverlaySprites; class CustomSprites; }
 // Owns the host scene picture, source-aware continuation, and effect references.
 // Hardware is borrowed through a read-only view only during a synchronous call.
@@ -22,6 +23,8 @@ namespace native { class OverlaySprites; class CustomSprites; }
 // renderer; there are no back-pointers into the original bus or frame buffers.
 class GameSceneRenderer {
   public:
+    void snapshot_io(SnapshotArchive &archive);
+    void bind_snapshot_resources(std::shared_ptr<native::SpriteResources> resources);
     void set_presentation_width(const SceneReadView &view, unsigned width);
     void set_presentation_effects_enabled(const SceneReadView &view, bool enabled);
     // Import before entering gameplay. The immutable catalog can be shared by
@@ -153,6 +156,9 @@ class GameSceneRenderer {
     bool presentation_battle_scene_ = false;
     std::array<uint8_t, 7> presentation_battle_layout_{};
     unsigned presentation_psi_display_layer_ = 0;
+    // Derived from the current script/PPU state at each scanline, including
+    // after restoring a snapshot. Screen effects do not follow world bounds.
+    unsigned presentation_screen_overlay_layer_ = 0;
     struct PresentationObject {
         int x, y;
         uint8_t tile, attributes;
@@ -219,6 +225,14 @@ class GameSceneRenderer {
     std::array<int, 2> presentation_world_x_{}, presentation_world_y_{};
     uint64_t presentation_boundary_frame_ = UINT64_MAX;
     int presentation_shift_x_ = 0, presentation_clip_left_ = -384, presentation_clip_right_ = 640;
+    // Only the widescreen boundary correction has memory. Source camera motion
+    // remains immediate, and every layer/actor shares the same correction.
+    struct PresentationCamera {
+        bool valid{};
+        unsigned combination{};
+        int x{}, y{}, left{}, right{}, pending_left{}, pending_right{};
+        unsigned pending_frames{};
+    } presentation_camera_;
 
     // An eight-byte value keeps both results in the return register and avoids
     // a seventh, stack-passed argument on every pixel when effects are disabled.

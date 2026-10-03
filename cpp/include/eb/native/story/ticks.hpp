@@ -26,6 +26,15 @@ struct TickState {
     std::uint8_t frame_counter{}, flavor = 1, fastest_hp_increase{};
     std::uint16_t disabled_transitions{}, flipout{}, last_controlled_status{}, action_scripts_disabled{};
     std::uint32_t hp_speed{};
+    // NMI increments the original byte with wrap. WAIT consumes it without
+    // forcing a second publication. IRQ-only timing needs its actual H/V
+    // interrupt owner; Scene currently admits NMI or an already-pending byte.
+    std::uint8_t new_frame_started{}, interrupt_mask = 0x80;
+    // Receipt for a completed real input poll, distinct from display IRQs.
+    std::uint64_t input_polls{};
+    // Completion receipt for accepted native NMI publication, independent of
+    // the original wrapping pending/counter bytes. Never advanced by sampling.
+    std::uint64_t publications{};
 };
 
 // WINDOW_TICK / C12E42 / C1004E and the raw actor-frame sequence in source order.
@@ -42,6 +51,9 @@ class Ticks {
         Operation &operator=(const Operation &) = delete;
         dialogue::Progress advance(unsigned work_budget = 4096);
         const std::optional<TickService> &service() const;
+        // True only at C43568's WAIT reached after the actual window/world
+        // gates. This admits its native body without speculating past exits.
+        bool battle_body_pending() const noexcept;
         void respond();
         bool complete() const;
       private:

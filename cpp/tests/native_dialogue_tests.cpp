@@ -399,6 +399,70 @@ void requests_and_limits() {
         }
     }
 }
+void battle_animation_arguments() {
+    for (auto version : {eb::GameVersion::US, eb::GameVersion::JP})
+        for (unsigned first : {0u, 1u, 34u, 35u, 54u, 255u})
+            for (unsigned second : {0u, 1u, 48u, 255u})
+                for (unsigned result : {0u, 1u, 2u}) {
+                    State state;
+                    state.focus = WindowId{1};
+                    state.windows[WindowId{1}].active = {0xabcd1234, 0x89ab0042, 17};
+                    state.windows[WindowId{2}].active = {0x87654321, 0x12345678, 19};
+                    Runtime vm(program({0x1c, 0x13, std::uint8_t(first), std::uint8_t(second),
+                                        4, 7, 0, 2}, version), state);
+                    vm.start(EntryId{0});
+                    for (unsigned byte = 0; byte < 3; ++byte)
+                        require(vm.advance(1) == Progress::BudgetExhausted &&
+                                    !vm.request() && state.window().active.working == 0xabcd1234,
+                                "Battle animation completed before its two literal operands");
+                    require(vm.advance(1) == Progress::Suspended &&
+                                vm.request()->kind == RequestKind::BattleAnimation &&
+                                vm.request()->battle_animation == BattleAnimationRequest{
+                                    std::uint16_t(first - 1), std::uint16_t(second - 1)} &&
+                                vm.snapshot().consumed_bytes == 4 && !state.flag(7),
+                            "Battle animation operands used fallback, lost word wrap or consumed following code");
+                    const auto request = vm.request();
+                    rejects([&] { vm.respond(); }, "Battle animation accepted an untyped acknowledgment");
+                    require(vm.request() == request && vm.advance() == Progress::Suspended,
+                            "Pending battle animation advanced while its owner was suspended");
+                    state.focus = WindowId{2};
+                    Response response;
+                    response.battle_animation_result = BattleAnimationResult{result < 2, result == 1};
+                    vm.respond(response);
+                    require(state.windows.at(WindowId{1}).active.working == 0xabcd1234 &&
+                                state.window().active.working == (result < 2 ? result : 0x87654321) &&
+                                state.window().active.argument == 0x12345678 &&
+                                state.window().active.secondary == 19,
+                            "Battle animation result lost current focus, full width or skipped-call preservation");
+                    require(vm.advance() == Progress::Finished && state.flag(7),
+                            "Battle animation acknowledgment failed to resume the original stream");
+                }
+}
+void battle_grammar_arguments() {
+    for (auto selector : {0x14u, 0x15u}) {
+        for (auto operand : {0u, 1u, 255u}) {
+            State state;
+            state.dummy.active = {0xaabbccdd, 1, 0};
+            Runtime vm(program({0x1c, std::uint8_t(selector), std::uint8_t(operand), 2}), state);
+            vm.start(EntryId{0});
+            require(vm.advance() == Progress::Suspended, "US grammar did not await its actual battle owner");
+            const auto& request = *vm.request();
+            require(request.kind == RequestKind::BattleGrammar &&
+                    request.battle_grammar == BattleGrammarRequest{selector == 0x15, std::uint8_t(operand)},
+                    "Grammar changed its raw literal operand/side");
+            require(state.dummy.active.working == 0xaabbccdd, "Grammar published before its owner completed");
+            vm.respond({3});
+            require(vm.advance() == Progress::Finished && state.dummy.active.working == 3 &&
+                    vm.returned_cursor() == Location{0, 4}, "Grammar did not replace the complete working dword");
+        }
+        State state;
+        Runtime jp(program({0x1c, std::uint8_t(selector), 0x55, 2}, eb::GameVersion::JP), state);
+        jp.start(EntryId{0});
+        const auto requests = finish(jp);
+        require(glyphs(requests) == std::vector<unsigned>{0x55} && jp.returned_cursor() == Location{0, 4},
+                "JP ignored grammar selector consumed a following glyph");
+    }
+}
 void validation() {
     rejects([] { Program p(eb::GameVersion::US, {{0, 65535, {1, 2}}}); }, "Cross-page block accepted");
     rejects([] { Program p(eb::GameVersion::US, {{0, 0, {1, 2}}, {0, 1, {2}}}); },
@@ -433,6 +497,8 @@ int main() {
         reusable_window_banks();
         content_wrap_and_regions();
         requests_and_limits();
+        battle_animation_arguments();
+        battle_grammar_arguments();
         validation();
         std::cout << "PASS " << checks << " CPU-free dialogue semantic/request/content checks\n";
     } catch (const std::exception &error) {

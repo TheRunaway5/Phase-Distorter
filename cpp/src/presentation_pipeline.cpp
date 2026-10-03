@@ -64,6 +64,21 @@ void PresentationPipeline::reset_native_deadline(Time now) {
     native_picture_pending_ = native_wait_pending_ = false;
 }
 
+void PresentationPipeline::restored_frame(PresentationFrame frame, Time now) {
+    current_picture_ = {frame.pixels, frame.width, frame.fixed_aspect};
+    interpolator_.reset();
+    scene_motion_.reset();
+    photosensitivity_filter_.reset();
+    filtered_frame_.reset();
+    native_pacer_.set_rate(now, native_rate_);
+    presentation_clock_.reset(now, presentation_rate_);
+    native_picture_pending_ = native_wait_pending_ = false;
+    fresh_picture_pending_ = false;
+    last_presented_ = now;
+    completed_frame(frame);
+    refresh_current_picture(frame, false);
+}
+
 void PresentationPipeline::completed_frame(PresentationFrame frame) {
     if (reduce_flashing_) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),

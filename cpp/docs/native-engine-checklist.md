@@ -1,6 +1,6 @@
 # Native engine completion checklist
 
-Updated: 2026-09-30. Active scope: **all remaining engine work except audio**.
+Updated: 2026-10-02. Active scope: **all remaining engine work except audio**.
 
 This is the execution checklist for the current goal. Update it when work starts,
 lands, passes its acceptance checks, or exposes another required dependency.
@@ -18,6 +18,12 @@ explicit adapter; replacing audio sequencing, decoding or mixing is out of scope
 
 Checkpoint20 is accepted at the native module/Runtime level. The desktop still
 uses GameSession; these checks do not establish a playable native session.
+
+Current verification on 2026-10-02: the desktop entry point still constructs
+`GameSession`. Both installed Linux executable paths now match SHA-256
+`88902764ac2a739e4b55c8c43152d1c92981e8a263e2000bd1eb7b4a38866dde`.
+This supersedes the historical installed hash below; matching executable files
+alone do not verify a native session or establish runtime acceptance.
 
 - [x] **W3/G5 — Enemy approach:** real path-follow callback, waypoint
   consumption, retained authored-role routes and imported movement tasks.
@@ -50,8 +56,8 @@ Audio implementation remains excluded.
 
 ### Checkpoint21 in progress
 
-These are implementation tasks, not accepted completion claims. The installed
-Linux executables still contain the previously validated sprite milestone.
+These are implementation tasks, not accepted completion claims. A complete
+native desktop session has not been integrated or accepted.
 
 - [ ] **Enemy runtime:** finish seven typed behavior services and current-task
   sleep; verify unchanged EVENT_19/24/28 plus actual Runtime bindings in both regions.
@@ -245,9 +251,9 @@ The inventory executable passes the native linkage audit
 game instructions.
 
 The modules' passing checks do not check off I1/I4/I7: the desktop session
-still uses GameSession and the installed executables retain the verified
-baseline hash above (`installed20l.log`). No checkpoint20 desktop build is
-claimed or installed before its native session exists.
+still uses GameSession. The historical installed baseline is recorded in
+`installed20l.log`; the current executable hashes are recorded at the top of
+this checklist. Neither record establishes a complete native session.
 
 For the logs without a directory above, use
 `build/verification/native-completion/`. Reference programs accept both

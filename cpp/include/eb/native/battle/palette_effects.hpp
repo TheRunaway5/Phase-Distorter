@@ -6,10 +6,9 @@
 namespace eb::native::battle {
 using PackedPalette = std::array<std::uint16_t, 16>;
 
-// The four mutable alternate enemy palette banks (source banks12..15).
-// Initial colors come from the caller's actual scene state. These raw words
-// retain bit15 and carries between RGB fields; decoding belongs to rendering.
-// Effects and the combatant renderer borrow this same stable owner.
+// The actual raw16 staging palettes and independently displayed RGB15 colors.
+// All battle palette writers share this stable owner. Publication uses the
+// single last-written upload mode; it never merges ranges or advances effects.
 struct PaletteBankState {
     PaletteBankState() = default;
     PaletteBankState(const PaletteBankState&) = delete;
@@ -17,12 +16,20 @@ struct PaletteBankState {
     PaletteBankState(PaletteBankState&&) = delete;
     PaletteBankState& operator=(PaletteBankState&&) = delete;
 
-    PackedPalette& palette(unsigned bank) { return palettes.at(bank); }
-    const PackedPalette& palette(unsigned bank) const { return palettes.at(bank); }
-    std::array<PackedPalette, 4> palettes{};
-    // C0856B's staged publication intent. An active effect bank writes16 even
-    // if no color changed. This is not an immediate visible-frame publication;
-    // the eventual whole-battle palette compositor must share/adapt this owner.
+    // Existing effect-bank identities0..3 are physical alternate banks12..15.
+    PackedPalette& palette(unsigned bank);
+    const PackedPalette& palette(unsigned bank) const;
+    PackedPalette& staged_palette(unsigned bank) { return staged.at(bank); }
+    const PackedPalette& staged_palette(unsigned bank) const { return staged.at(bank); }
+    const PackedPalette& displayed_palette(unsigned bank) const { return displayed.at(bank); }
+    std::uint16_t& staged_color(unsigned color) { return staged.at(color / 16).at(color % 16); }
+    const std::uint16_t& staged_color(unsigned color) const { return staged.at(color / 16).at(color % 16); }
+    // The real NMI palette operation:0 does nothing;8/16/24 copy lower/upper/
+    // all128/128/256 colors, discard bit15 as CGRAM does, and consume the mode.
+    // Unsupported table aliases
+    // reject before changing either the displayed colors or upload intent.
+    bool publish_pending();
+    std::array<PackedPalette, 16> staged{}, displayed{};
     std::uint8_t upload_mode{};
 };
 
@@ -61,6 +68,7 @@ public:
     // mutation. Other zero-speed states remain valid.
     void advance();
 
+    PaletteBankState& palette_state() noexcept { return palettes_; }
     const PaletteBankState& palette_state() const noexcept { return palettes_; }
     const PaletteEffectState& state() const noexcept { return state_; }
     bool uses(const PaletteBankState&, const PaletteEffectState&) const noexcept;

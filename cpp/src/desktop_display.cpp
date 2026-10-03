@@ -4,6 +4,7 @@
 #include "eb/asset_cache.hpp"
 #include "eb/debug_panel.hpp"
 #include "eb/display_settings.hpp"
+#include "eb/controller_preferences.hpp"
 #include "eb/frame_pacer.hpp"
 #include "eb/frame_presenter.hpp"
 #include "eb/game_session.hpp"
@@ -64,7 +65,9 @@ struct DesktopDisplay::Impl {
     // Own SDL/window/GL resources as one lifetime. settings is borrowed from main
     // and survives the DesktopDisplay so edits can be saved after the last game frame.
     explicit Impl(const LaunchOptions &options, eb::DisplaySettings &settings)
-        : vsync_requested_(options.vsync), settings_(settings) {
+        : vsync_requested_(options.vsync), settings_(settings),
+          controller_preferences_(options.config.empty() ? "" : options.config + ".controllers"),
+          controller_settings_(load_controller_settings(controller_preferences_)) {
         SDL_SetMainReady();
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
             throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
@@ -113,6 +116,7 @@ struct DesktopDisplay::Impl {
             presenter_->prepare_scene_effects();
             if (settings_.crt_filter) presenter_->prepare_crt();
             input_ = std::make_unique<DesktopInput>();
+            input_->configure(controller_settings_);
             std::cout << "OpenGL: " << glGetString(GL_VERSION) << " / " << glGetString(GL_RENDERER) << '\n';
         } catch (...) {
             cleanup();
@@ -176,6 +180,7 @@ struct DesktopDisplay::Impl {
         custom_assets_ = custom_assets;
         SDL_SetWindowTitle(window_, ("Phase Distorter - " + game_title).c_str());
         panel_ = std::make_unique<eb::DebugPanel>(window_, context_);
+        panel_->set_controller_settings(controller_settings_);
         panel_->set_visible(visible);
         refresh_asset_cache();
     }
@@ -183,6 +188,18 @@ struct DesktopDisplay::Impl {
     bool fullscreen() const { return (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; }
 
     std::optional<eb::GameVersion> take_game_request() { return std::exchange(next_game_, std::nullopt); }
+    std::optional<eb::SaveStateSnapshotRequest> take_snapshot_action() {
+        return panel_ ? panel_->take_snapshot_action() : std::nullopt;
+    }
+    void adopt_debug(const eb::GameDebug &debug) {
+        if (panel_) panel_->set_game_settings(debug.settings());
+        debug_snapshot_ = debug.snapshot();
+    }
+    void set_snapshot_state(std::vector<eb::SaveStateSnapshotInfo> snapshots, std::string status, bool available) {
+        snapshots_ = std::move(snapshots);
+        snapshot_status_ = std::move(status);
+        snapshots_available_ = available;
+    }
     void update_debug(eb::GameDebug &debug) {
         if (!panel_)
             return;
@@ -260,6 +277,9 @@ struct DesktopDisplay::Impl {
             diagnostics.fullscreen = fullscreen();
             diagnostics.game_debug = debug_snapshot_;
             diagnostics.cache = cache_info_;
+            diagnostics.snapshots = snapshots_;
+            diagnostics.snapshot_status = snapshot_status_;
+            diagnostics.snapshots_available = snapshots_available_;
             if (!custom_assets_.empty())
                 diagnostics.custom_asset_status = "Using a custom asset pack: " + custom_assets_ +
                                                   ". Cache controls below only manage the default packs. "
@@ -267,9 +287,19 @@ struct DesktopDisplay::Impl {
             if (panel_->visible()) {
                 diagnostics.cpu_state = session.cpu_state;
                 diagnostics.spc_state = session.audio_cpu_state;
+                diagnostics.controller = input_->controller_snapshot();
             }
             const bool was_visible = panel_->visible();
             panel_->draw(settings_, diagnostics);
+            if (panel_->controller_settings() != controller_settings_) {
+                controller_settings_ = panel_->controller_settings();
+                input_->configure(controller_settings_);
+                try {
+                    store_controller_settings(controller_preferences_, controller_settings_);
+                } catch (const std::exception &error) {
+                    std::cerr << "Could not save controller settings: " << error.what() << '\n';
+                }
+            }
             if (!was_visible && panel_->visible())
                 refresh_asset_cache();
             handle_panel_action();
@@ -384,9 +414,14 @@ struct DesktopDisplay::Impl {
     std::unique_ptr<eb::DebugPanel> panel_;
     eb::GameDebugSnapshot debug_snapshot_;
     eb::DisplaySettings &settings_;
+    std::string controller_preferences_;
+    ControllerSettings controller_settings_;
     std::string game_title_;
     std::filesystem::path cache_directory_;
     std::array<eb::AssetCacheInfo, 2> cache_info_;
+    std::vector<eb::SaveStateSnapshotInfo> snapshots_;
+    std::string snapshot_status_;
+    bool snapshots_available_{};
     std::string custom_assets_;
     eb::GameVersion game_ = eb::GameVersion::US;
     std::optional<eb::GameVersion> next_game_;
@@ -410,8 +445,16 @@ bool DesktopDisplay::poll_events(std::uint16_t &physical_buttons) {
 void DesktopDisplay::update_debug(GameDebug &debug) {
     impl_->update_debug(debug);
 }
+void DesktopDisplay::adopt_debug(const GameDebug &debug) { impl_->adopt_debug(debug); }
 std::optional<GameVersion> DesktopDisplay::take_game_request() {
     return impl_->take_game_request();
+}
+std::optional<SaveStateSnapshotRequest> DesktopDisplay::take_snapshot_action() {
+    return impl_->take_snapshot_action();
+}
+void DesktopDisplay::set_snapshot_state(std::vector<SaveStateSnapshotInfo> snapshots, std::string status,
+                                       bool available) {
+    impl_->set_snapshot_state(std::move(snapshots), std::move(status), available);
 }
 unsigned DesktopDisplay::render_width() const {
     return impl_->render_width();

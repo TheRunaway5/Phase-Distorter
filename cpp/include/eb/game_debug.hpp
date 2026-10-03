@@ -8,6 +8,7 @@
 namespace eb {
 class SnesBus;
 class MainCpu65816;
+class SnapshotArchive;
 struct SourceProfile;
 struct GameDebugSettings {
     bool infinite_hp{}, infinite_pp{}, noclip{}, enemies_ignore{};
@@ -40,9 +41,11 @@ public:
     GameDebug(const GameDebug&) = delete;
     GameDebug& operator=(const GameDebug&) = delete;
     void configure(GameDebugSettings settings);
+    GameDebugSettings settings() const { return settings_; }
     void request(GameDebugRequest request);
     void before_step();
     GameDebugSnapshot snapshot() const;
+    void snapshot_io(SnapshotArchive &archive);
 private:
     SnesBus& bus_;
     MainCpu65816& cpu_;
@@ -63,6 +66,8 @@ private:
     std::optional<SavedMainCpuRegisters> suspended_call_;
     unsigned party_attempts_{};
     std::optional<DebugDestination> active_teleport_;
+    void install_hooks();
+    void install_teleport_hook();
     unsigned read_word(unsigned address) const;
     void write_word(unsigned address,unsigned value);
     void refresh_stats();

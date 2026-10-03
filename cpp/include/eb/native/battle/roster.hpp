@@ -40,6 +40,7 @@ public:
     Roster(Roster&&) = delete;
     Roster& operator=(Roster&&) = delete;
     GameVersion version() const { return resources_->version(); }
+    const EnemyResources& resources() const { return *resources_; }
     Battler& at(unsigned slot) { return records_.at(slot).value; }
     const Battler& at(unsigned slot) const { return records_.at(slot).value; }
     std::uint64_t identity(unsigned slot) const { return records_.at(slot).identity; }

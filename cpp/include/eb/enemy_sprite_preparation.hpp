@@ -6,6 +6,7 @@
 #include <optional>
 
 namespace eb {
+class SnapshotArchive;
 enum class EnemyResourcePreparationFailure { None, Budget, Allocation };
 
 // Read-only compatibility boundary for encounter artwork preparation. Import
@@ -14,6 +15,8 @@ enum class EnemyResourcePreparationFailure { None, Budget, Allocation };
 // content and the native runtime's artwork resources.
 class EnemySpritePreparation {
 public:
+    void snapshot_io(SnapshotArchive &archive);
+    void bind_snapshot_resources(std::shared_ptr<native::SpriteResources> resources) { sprites_ = std::move(resources); }
     EnemySpritePreparation(std::span<const std::uint8_t> assets, GameVersion version,
                            std::shared_ptr<native::SpriteResources> resources,
                            native::SpriteImageLeaseLimits limits = {});

@@ -132,8 +132,8 @@ add_library(eb_core STATIC
     src/game/cutscenes/credits_state.cpp
     src/game/cutscenes/credits_execution.cpp
     $<TARGET_OBJECTS:eb_game_runtime>
-    src/main_cpu_65816.cpp src/entity_preload.cpp
-    src/snes_bus.cpp src/snes_ppu_registers.cpp src/snes_ppu_renderer.cpp src/game_scene_renderer.cpp src/direct_scene_capture.cpp
+    src/main_cpu_65816.cpp src/entity_preload.cpp src/source_entity_admission.cpp src/source_enemy_preload.cpp
+    src/snes_bus.cpp src/battle_sprite_bus.cpp src/snes_ppu_registers.cpp src/snes_ppu_renderer.cpp src/game_scene_renderer.cpp src/direct_scene_capture.cpp src/game_scene_snapshot.cpp
     src/spc700_audio_cpu.cpp src/game_debug.cpp src/overworld_sprite_bridge.cpp
     src/overworld_sprite_runtime.cpp src/overworld_sprite_draw.cpp src/overworld_sprite_effects.cpp
     src/actor_surface_service.cpp src/actor_draw_order_service.cpp src/map_strip_service.cpp
@@ -247,8 +247,8 @@ if(EB_BUILD_FRONTEND)
     install(DIRECTORY external/imgui/ DESTINATION share/eb_cpp/imgui)
     install(DIRECTORY external/sdl2/ DESTINATION share/eb_cpp/sdl2)
     add_library(eb_desktop_support STATIC
-        src/launch_options.cpp src/display_preferences.cpp src/input_replay.cpp
-        src/session_storage.cpp src/audio_output.cpp)
+        src/launch_options.cpp src/display_preferences.cpp src/controller_preferences.cpp src/input_replay.cpp
+        src/session_storage.cpp src/audio_output.cpp src/snapshot_store.cpp)
     target_include_directories(eb_desktop_support PUBLIC include)
     target_link_libraries(eb_desktop_support PUBLIC eb_video)
     add_library(eb_desktop STATIC src/desktop_display.cpp src/desktop_input.cpp)
@@ -360,6 +360,9 @@ if(EB_BUILD_TESTS)
     add_executable(native_npc_catalog_tests tests/native_npc_catalog_tests.cpp)
     target_link_libraries(native_npc_catalog_tests PRIVATE eb_native_engine)
     add_test(NAME native_npc_catalog_tests COMMAND native_npc_catalog_tests)
+    add_executable(threed_npc_restoration_tests tests/threed_npc_restoration_tests.cpp)
+    target_link_libraries(threed_npc_restoration_tests PRIVATE eb_native_engine eb_core eb_assets eb_session)
+    add_test(NAME threed_npc_restoration_tests COMMAND threed_npc_restoration_tests)
     add_executable(native_npc_catalog_reference tests/native_npc_catalog_reference.cpp)
     target_link_libraries(native_npc_catalog_reference PRIVATE eb_native_engine eb_assets eb_core)
     foreach(native_test native_actor_world_tests native_sprite_appearance_tests native_sprite_artwork_tests native_sprite_effect_tests native_custom_sprite_tests native_palette_tests
@@ -390,7 +393,7 @@ if(EB_BUILD_TESTS)
                              native_world_movement_reference native_actor_creation_reference
                              native_camera_refresh_reference native_appearance_return_reference
                              native_actor_roles_reference native_palette_animation_reference native_save_reference
-                             native_world_activation_reference native_palette_transition_reference
+                             native_world_activation_reference npc_preload_reference enemy_preload_reference native_palette_transition_reference
                              native_save_session_reference
                              native_world_enemies_reference
                              native_battle_background_reference native_world_actor_services_reference native_character_growth_reference
@@ -450,6 +453,9 @@ if(EB_BUILD_TESTS)
     add_executable(native_sprite_draw_tests tests/native_sprite_draw_tests.cpp)
     target_link_libraries(native_sprite_draw_tests PRIVATE eb_core)
     add_test(NAME native_sprite_draw_tests COMMAND native_sprite_draw_tests)
+    add_executable(offscreen_scene_tests tests/offscreen_scene_tests.cpp)
+    target_link_libraries(offscreen_scene_tests PRIVATE eb_core)
+    add_test(NAME offscreen_scene_tests COMMAND offscreen_scene_tests)
     add_executable(overworld_sprite_bridge_reference tests/overworld_sprite_bridge_reference.cpp)
     target_link_libraries(overworld_sprite_bridge_reference PRIVATE eb_core eb_assets)
     add_executable(host_sprite_publication_reference tests/host_sprite_publication_reference.cpp)
@@ -457,6 +463,13 @@ if(EB_BUILD_TESTS)
     add_executable(game_session_tests tests/game_session_tests.cpp)
     target_link_libraries(game_session_tests PRIVATE eb_session)
     add_test(NAME game_session_tests COMMAND game_session_tests)
+    add_executable(game_session_snapshot_tests tests/game_session_snapshot_tests.cpp)
+    target_link_libraries(game_session_snapshot_tests PRIVATE eb_session)
+    add_test(NAME game_session_snapshot_tests COMMAND game_session_snapshot_tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_session_snapshot_reference.cpp")
+        add_executable(game_session_snapshot_reference tests/game_session_snapshot_reference.cpp src/input_replay.cpp)
+        target_link_libraries(game_session_snapshot_reference PRIVATE eb_session eb_assets)
+    endif()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_session_differential.cpp")
         add_executable(game_session_differential tests/game_session_differential.cpp src/input_replay.cpp)
         target_link_libraries(game_session_differential PRIVATE eb_session eb_assets)
@@ -518,9 +531,20 @@ if(EB_BUILD_TESTS)
         target_link_libraries(presentation_scene_tests PRIVATE eb_core eb_assets)
     endif()
     if(EB_BUILD_FRONTEND)
+        add_executable(desktop_input_tests tests/desktop_input_tests.cpp src/desktop_input.cpp)
+        target_include_directories(desktop_input_tests PRIVATE src include)
+        target_link_libraries(desktop_input_tests PRIVATE SDL2::SDL2)
+        add_test(NAME desktop_input_tests COMMAND desktop_input_tests)
+        add_executable(controller_preferences_tests tests/controller_preferences_tests.cpp src/controller_preferences.cpp)
+        target_include_directories(controller_preferences_tests PRIVATE include)
+        target_link_libraries(controller_preferences_tests PRIVATE SDL2::SDL2)
+        add_test(NAME controller_preferences_tests COMMAND controller_preferences_tests)
         add_executable(desktop_support_tests tests/desktop_support_tests.cpp)
         target_link_libraries(desktop_support_tests PRIVATE eb_desktop_support)
         add_test(NAME desktop_support_tests COMMAND desktop_support_tests)
+        add_executable(snapshot_store_tests tests/snapshot_store_tests.cpp)
+        target_link_libraries(snapshot_store_tests PRIVATE eb_desktop_support)
+        add_test(NAME snapshot_store_tests COMMAND snapshot_store_tests)
         add_executable(debug_panel_tests tests/debug_panel_tests.cpp)
         target_link_libraries(debug_panel_tests PRIVATE eb_debug_panel eb_imgui)
         if(MINGW)
@@ -573,6 +597,12 @@ if(EB_BUILD_TESTS)
     add_executable(widescreen_tests tests/widescreen_tests.cpp)
     target_link_libraries(widescreen_tests PRIVATE eb_core)
     add_test(NAME widescreen_tests COMMAND widescreen_tests)
+    add_executable(widescreen_story_effects_tests tests/widescreen_story_effects_tests.cpp)
+    target_link_libraries(widescreen_story_effects_tests PRIVATE eb_core)
+    add_test(NAME widescreen_story_effects_tests COMMAND widescreen_story_effects_tests)
+    add_executable(widescreen_camera_path_tests tests/widescreen_camera_path_tests.cpp)
+    target_link_libraries(widescreen_camera_path_tests PRIVATE eb_core)
+    add_test(NAME widescreen_camera_path_tests COMMAND widescreen_camera_path_tests)
     add_executable(game_debug_tests tests/game_debug_tests.cpp)
     target_link_libraries(game_debug_tests PRIVATE eb_core eb_assets eb_dsp)
     add_test(NAME game_debug_tests COMMAND game_debug_tests)
@@ -612,7 +642,7 @@ add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp
     src/native/world_encounter.cpp src/native/world_battle_entry.cpp
     src/native/world_enemy_movement.cpp src/native/world_enemy_contact.cpp
     src/native/world_startup.cpp src/native/world_enemy_behavior.cpp
-    src/native/world_encounter_effects.cpp src/native/world_scene_presentation.cpp
+    src/native/world_scene_presentation.cpp
     src/native/world_map_load.cpp)
 target_include_directories(eb_native_world_runtime PUBLIC include)
 target_link_libraries(eb_native_world_runtime PUBLIC eb_native_engine eb_native_story_scene)

@@ -8,6 +8,7 @@
 #include <span>
 
 namespace eb {
+class SnapshotArchive;
 
 struct HostSpritePose {
     std::shared_ptr<const native::SpriteImage> image;
@@ -16,6 +17,7 @@ struct HostSpritePose {
     unsigned group{}, frame{};
     native::SpriteFrameFormat format{};
     native::SpriteSurface surface{};
+    void snapshot_io(SnapshotArchive &archive);
 };
 
 struct HostSpriteDiagnostics {
@@ -49,6 +51,7 @@ class OverworldSpriteBridge {
     std::uint64_t artwork_revision() const;
     void collect_artwork(std::span<const std::uint64_t> retained_generations);
     HostSpriteDiagnostics diagnostics() const;
+    void snapshot_io(SnapshotArchive &archive);
 
   private:
     struct State;

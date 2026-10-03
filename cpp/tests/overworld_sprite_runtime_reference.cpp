@@ -188,7 +188,84 @@ unsigned authored_return_continuations(const eb::GameAssets &assets) {
     return ticks;
 }
 
+void party_join_hidden_animation(const eb::GameAssets &assets) {
+    for (unsigned slot : {25u, 0u})
+        for (unsigned direction : {0u, 7u})
+            for (bool retained : {false, true}) {
+                Fixture reference(assets, false), candidate(assets);
+                const unsigned offset = slot * 2;
+                const auto &profile = eb::source_profile(assets.version);
+                reference.create(2, slot);
+                candidate.create(2, slot);
+                if (retained) {
+                    for (auto *fixture : {&reference, &candidate}) {
+                        fixture->put(fixture->direction + offset, 2);
+                        fixture->put(fixture->animation + offset, 0);
+                        fixture->put(fixture->surface + offset, 0);
+                        fixture->put(fixture->update, offset);
+                        fixture->call(fixture->eight_pc, false);
+                    }
+                }
+                const auto previous = candidate.bus.native_sprite_runtime()->snapshot(offset)->image;
+                for (auto *fixture : {&reference, &candidate}) {
+                    // Captured US selector: byte slot 50, direction 0, animation
+                    // 0xffff, surface 0, frame table 0xef1ab1 and graphics bank
+                    // 0xd2. The cabin-key story reaches this refresh after its
+                    // join jingle. CREATE retains the hidden animation sentinel
+                    // until the action resets it.
+                    fixture->put(fixture->direction + offset, direction);
+                    fixture->put(fixture->animation + offset, 0xffff);
+                    fixture->put(fixture->surface + offset, 0);
+                    fixture->put(fixture->update, offset);
+                    fixture->put(0x1e88, offset);
+                    fixture->put((fixture->jp ? 0x1af4 : 0x3456) + offset, 0xffff);
+                    fixture->cpu.accumulator = fixture->cpu.x_index = offset;
+                    fixture->cpu.y_index = 0x9a64;
+                }
+                // Use the same authored animation callback that admits the failing loader,
+                // including its first-refresh fingerprint update and real near call.
+                reference.call(reference.jp ? 0xc0a6c2 : 0xc0a6e3);
+                candidate.call(candidate.jp ? 0xc0a6c2 : 0xc0a6e3);
+                require(reference.get(reference.animation + offset) == 0xffff &&
+                            candidate.get(candidate.animation + offset) == 0xffff,
+                        "Party join refresh changed the hidden source animation sentinel");
+                require(reference.get((reference.jp ? 0x1af4 : 0x3456) + offset) == direction &&
+                            candidate.get((candidate.jp ? 0x1af4 : 0x3456) + offset) == direction,
+                        "Party join callback lost its authored animation fingerprint update");
+                require(reference.get(profile.wram_entity_displayed_sprites + offset) ==
+                            candidate.get(profile.wram_entity_displayed_sprites + offset),
+                        "Hidden party join refresh changed the source displayed-frame latch");
+                require(candidate.bus.native_sprite_runtime()->snapshot(offset)->image == previous,
+                        "Hidden party join refresh decoded or replaced unrelated artwork");
+                // The following authored action makes the member visible. A hidden
+                // refresh must not poison that later ordinary frame selection.
+                reference.put(reference.animation + offset, 0);
+                candidate.put(candidate.animation + offset, 0);
+                reference.call(reference.eight_pc, false);
+                candidate.call(candidate.eight_pc, false);
+                const auto selected = candidate.bus.native_sprite_runtime()->snapshot(offset);
+                require(selected && selected->image &&
+                            reference.get(profile.wram_entity_displayed_sprites + offset) ==
+                                candidate.get(profile.wram_entity_displayed_sprites + offset),
+                        "Joined party member did not recover its authored visible pose");
+                // Visible misaligned byte offsets remain an invalid native content request;
+                // the hidden creation sentinel exception must not broaden that contract.
+                candidate.put(candidate.animation + offset, 1);
+                bool rejected = false;
+                try {
+                    candidate.call(candidate.eight_pc, false);
+                } catch (const std::out_of_range &) {
+                    rejected = true;
+                }
+                require(rejected && candidate.bus.native_sprite_runtime()->snapshot(offset)->image == selected->image,
+                        "Hidden sentinel exception accepted or damaged a visible misaligned frame");
+            }
+    std::cout << (assets.version == eb::GameVersion::JP ? "JP" : "US")
+              << ": captured Paula party-join hidden animation, retained artwork, visible recovery and validation passed\n";
+}
+
 void run(const eb::GameAssets &assets) {
+    party_join_hidden_animation(assets);
     Fixture test(assets);
     const auto resources = test.bus.native_sprite_runtime()->resources();
     unsigned largest = 0, blocks = 0;

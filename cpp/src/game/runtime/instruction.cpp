@@ -27,7 +27,7 @@ Instruction::Instruction(MainCpu65816 &cpu, std::uint8_t timing_opcode, std::uin
     if (cpu_.entity_preload_.enabled() && (cpu_.status_register & 0x30) == 0 &&
         (instruction_address_ & 0xff0000) == 0xc00000)
         cpu_.entity_preload_.adapt(cpu_.game_version, instruction_address_, timing_opcode, length, operand_,
-                                   cpu_.accumulator);
+                                   cpu_.accumulator, cpu_.hardware_, cpu_.direct_page);
     // Fetches are observable even though they never decode the operation. Keep
     // their order and bank wrapping before any addressing or operand reads.
     if (cpu_.hardware_)

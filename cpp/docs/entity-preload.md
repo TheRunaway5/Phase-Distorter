@@ -1,38 +1,57 @@
 # Offscreen actor loading
 
-This experimental policy is disabled in the desktop session. Expanding source
-activation can exhaust sprite resources and change scripted actor order; the
-title demo's bicycle freeze was reproduced with it enabled. Host-owned offscreen
-readiness is being developed separately in [the native engine](native-engine.md).
+`RenderDistance` owns viewport width, camera-reframing allowance and offscreen
+padding. Tile capture, artwork preparation and source loading share that policy.
+Imported normal/mirrored sprite extents expand placement queries so a tall or
+wide sprite is prepared before its anchor enters the draw band. These paths work
+without frame interpolation, at every supported even width through 1024.
 
-When explicitly enabled in a test, `EntityPreload` expands source NPC placement
-queries and enemy sector scans to cover the wide view before actors enter it.
-The policy works with interpolation disabled. Native 256-column loading is unchanged.
+Stationary Person/Object scripts 8, 605 and 606 have source-verified initial
+poses. Their dormant artwork is prepared and drawn without allocating source
+actors, running callbacks or advancing randomness. Active NPC identity hands
+that artwork back to the source actor. Water overlays, moving poses and other
+scripted state remain owned by actual actors.
 
-For a wider view, the extra half-width is rounded up to a 64-pixel enemy sector
-and extended by one more sector. Initial map loads and vertical scrolls scan
-wider rows; horizontal scrolls query farther-out columns. NPC horizontal spawn
-bounds grow by the same amount. The source's existing horizontal retention
-bounds grow too, preserving a further 64-pixel gap between NPC activation and
-retention. Vertical bounds, map/collision streaming, event flags, allocation,
-encounter selection and entity/enemy caps retain their source behavior.
+The desktop native-sprite session enables the guarded world preloader for wider
+views. Source NPC and enemy strip planners scan a wider horizontal band during
+map loading and scrolling. The extension covers imported horizontal artwork
+extents and rounds to the source loader's 64-pixel grid. Source activation and
+retention remain unchanged at native width; vertical bounds are unchanged.
+Increasing width mid-scene affects subsequent source queries.
 
-The adapter is opt-in at the translated CPU boundary and checks regional
-instruction address, opcode, length and expected operand. It changes the
-parameters of existing compiled loaders, not cartridge instruction bytes or
-render-time snapshots. The independently translated US and JP paths have
-separate verified sites. Rendering-only tools do not enable the adapter.
+Moving NPCs in the proven script 6/12 family can activate earlier. Other NPC
+programs retain their original activation until their worker-task lifetime is
+proven. Existing source-created actors retain the wider horizontal lifetime.
+Unknown programs never receive an invented moving pose.
 
-This is a gameplay activation change: additional actors can update earlier,
-and additional enemy-sector queries can consume randomness and change encounter
-timing. The fixed source pools still limit crowded scenes. Increasing width
-mid-scene affects subsequent source queries; loading a scene with the selected
-width fills its wider initial band.
+`SourceEntityAdmission` validates the source's shared 22 ordinary actor roles
+and 70 tasks, including queued workers which have not started yet. It reserves
+pending canonical NPCs and the remaining authored enemy population before
+optional NPC admission. Enemy admission reserves the selected group's remaining
+actors and workers before using the source's existing capacity-rejection branch.
+A minimum task reserve protects other scheduling. Source programs and directory
+entries must match reviewed regional content before their task bounds are used;
+content signatures are checked once by the native compatibility owner at load.
+Unproven task demand, corrupt lists and insufficient capacity fail closed.
 
-`entity_preload_tests` executes the actual translated NPC/enemy row loaders,
-horizontal scroll call sites, NPC spawn gates and actor retention routine for
-both regions at 256, 398, 522, 800 and 1024 columns. It checks both edges,
-vertical-bound preservation, native behavior and restoration of native bounds.
-The same regression with native loading fails at the wider horizontal scan.
-A local US asset replay additionally checks active actors while walking both
-ways through Twoson; it is not proof for every map or every pool-saturation case.
+The adapter changes verified parameters of compiled source loaders rather than
+patching instruction bytes or mutating render snapshots. Appearance conditions,
+selected enemy groups, random draws, terrain checks and creation remain source
+work. Wider scans cause NPC and enemy simulation to start earlier and can change
+randomness and encounter timing. Fixed source pools still limit crowded scenes;
+these changes do not establish universal absence of pop-in.
+
+Ordinary scene gates exclude photograph, debug, battle and incompatible map or
+hardware-window effects. NPC enable/object-only conditions remain independent
+from enemy enable/chance conditions. New negative or wrapped enemy strip cells
+are rejected before entering selectors. The older unguarded NPC/enemy experiment
+remains available to source tests through `set_entity_preload_width`, but desktop
+sessions do not enable it; that experiment reproduced a title-demo bicycle freeze.
+
+`npc_preload_reference` and `enemy_preload_reference` execute real US/JP source
+selection, creation, worker initialization, retention and strip traversal. They
+cover both widescreen edges, scene gates, corrupt and exhausted pools, canonical
+reservations, map extrema and imported-content rejection. Stationary source and
+renderer references separately compare exact poses and edge pixels, including
+Twoson benches and people, Threed streetlights and tall Dungeon Man art.
+`entity_preload_tests` retains coverage of the disabled unguarded experiment.

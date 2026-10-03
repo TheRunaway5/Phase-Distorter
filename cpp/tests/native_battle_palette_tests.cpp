@@ -48,7 +48,7 @@ void run() {
       colors.palette(bank)[i] = std::uint16_t(0x8123 + i * 0x421 + bank);
   }
   const auto saved = state;
-  const auto packed = colors.palettes;
+  const auto packed = colors.staged;
   effects.reverse(2, 0xffff);
   require(state.speed == 0xffff && state.banks[2].frames_left == 0xffff,
           "Reverse failed to set shared speed and bank duration");
@@ -64,19 +64,19 @@ void run() {
                           : saved.banks[b].deltas[i]),
               "Reverse did not negate exact raw delta");
     }
-  require(colors.palettes == packed && colors.upload_mode == 0xa7,
+  require(colors.staged == packed && colors.upload_mode == 0xa7,
           "Reverse changed palettes/publication");
   auto preserved = state;
   rejects([&] { effects.reverse(4, 2); }, "Invalid bank accepted");
-  require(state == preserved && colors.palettes == packed,
+  require(state == preserved && colors.staged == packed,
           "Invalid reverse partially changed state");
   rejects([&] { effects.target(64, 1, 2, 3); }, "Invalid color accepted");
-  require(state == preserved && colors.palettes == packed,
+  require(state == preserved && colors.staged == packed,
           "Invalid target partially changed state");
   rejects(
       [&] { effects.target(std::numeric_limits<unsigned>::max(), 1, 2, 3); },
       "Oversized color accepted");
-  require(state == preserved && colors.palettes == packed &&
+  require(state == preserved && colors.staged == packed &&
               colors.upload_mode == 0xa7,
           "Oversized color wrapped into a bank");
   // Equal channels retain old steps, clear only their deltas/counters, and
@@ -105,7 +105,7 @@ void run() {
   // Counter addition wraps before thresholding; channels mutate the packed word
   // in order.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   colors.upload_mode = 0x53;
   state.speed = 10;
   auto &b = state.banks[1];
@@ -127,14 +127,14 @@ void run() {
   require(b.frames_left == 0, "Duration did not expire exactly");
   colors.upload_mode = 3;
   preserved = state;
-  const auto done = colors.palettes;
+  const auto done = colors.staged;
   effects.advance();
-  require(state == preserved && colors.palettes == done &&
+  require(state == preserved && colors.staged == done &&
               colors.upload_mode == 3,
           "Inactive tick published or mutated");
   // Shared speed changes affect an already-running bank, without rescaling it.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   state.banks[0].frames_left = 3;
   state.banks[0].steps[3] = 31;
   state.banks[0].deltas[3] = 1;
@@ -149,7 +149,7 @@ void run() {
   // Transparent color0 is never advanced, but participates in setup and
   // reversal.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   state.speed = 4;
   effects.target(0, 31, 31, 31);
   const auto zero = state.banks[0];
@@ -163,16 +163,16 @@ void run() {
           "Color0-only bank lost active publication");
   // Zero speed rejects before even an earlier all-equal bank is decremented.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   colors.upload_mode = 0x91;
   state.banks[0].frames_left = 4;
   state.banks[3].frames_left = 1;
   state.banks[3].deltas[47] = 0xfc00;
   preserved = state;
-  const auto before_reject = colors.palettes;
+  const auto before_reject = colors.staged;
   rejects([&] { effects.advance(); },
           "Source nonterminating zero speed accepted");
-  require(state == preserved && colors.palettes == before_reject &&
+  require(state == preserved && colors.staged == before_reject &&
               colors.upload_mode == 0x91,
           "Rejected zero-speed update partially published");
   state.banks[3].deltas[47] = 0;
@@ -183,7 +183,7 @@ void run() {
           "Safe zero-speed state rejected or advanced incorrectly");
   // Arbitrary packed deltas and multiple carries remain exact modulo16.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   state.speed = 1;
   state.banks[2].frames_left = 1;
   colors.palette(2)[7] = 0x8001;
@@ -196,7 +196,7 @@ void run() {
           "Packed arithmetic clamped channels or discarded bit15");
   // Target RGB words may carry into adjacent fields; this is not RGB clamping.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   effects.set_speed(1);
   colors.palette(0)[1] = 0x83ff;
   effects.target(1, 32, 31, 0);
@@ -205,7 +205,7 @@ void run() {
           "Target red32 did not carry through green into blue");
   // Reversing one bank changes the actual global speed used by another bank.
   state = {};
-  colors.palettes = {};
+  colors.staged = {};
   effects.set_speed(10);
   effects.target(1, 31, 0, 0);
   effects.advance();
@@ -220,9 +220,9 @@ void run() {
   // The direct endpoint is independent of the implementation's update loop.
   for (unsigned selected = 0; selected < 64; ++selected) {
     state = {};
-    colors.palettes = {};
+    colors.staged = {};
     colors.upload_mode = 0x39;
-    for (auto &palette : colors.palettes)
+    for (auto &palette : colors.staged)
       palette.fill(0x8e87); // RGB(7,20,3), bit15.
     effects.set_speed(11);
     effects.target(selected, 25, 10, 5);
@@ -238,7 +238,7 @@ void run() {
     effects.reverse(selected / 16, 11);
     for (unsigned frame = 0; frame < 11; ++frame)
       effects.advance();
-    for (const auto &palette : colors.palettes)
+    for (const auto &palette : colors.staged)
       for (const auto color : palette)
         require(color == 0x8e87,
                 "Reverse lifetime did not restore original packed word");

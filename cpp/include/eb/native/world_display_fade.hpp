@@ -29,6 +29,8 @@ public:
   WorldDisplayFade &operator=(const WorldDisplayFade &) = delete;
   void begin_in(std::uint16_t step, std::uint16_t delay);
   void begin_out(std::uint16_t magnitude, std::uint16_t delay);
+  // Direct INIDISP mirror write used by the two original blank helpers.
+  void force_blank(bool stop_fade = false) noexcept;
   bool active() const noexcept { return state_.step != 0; }
   const WorldDisplayFadeState &state() const noexcept { return state_; }
   Frame preview_next_frame() const noexcept;

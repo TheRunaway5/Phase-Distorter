@@ -1,4 +1,5 @@
 #include "eb/native/sprite_resources.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <algorithm>
 #include <map>
 #include <stdexcept>
@@ -132,6 +133,7 @@ SpriteCatalogLayout sprite_catalog_layout(GameVersion version) {
 struct SpriteResources::State {
     std::vector<Group> groups;
     std::map<std::uint32_t, unsigned> frame_tables;
+    PixelBounds artwork_bounds;
 };
 
 SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCatalogLayout layout)
@@ -186,6 +188,12 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
                     throw std::runtime_error("Unsupported sprite shape flags");
                 image_layout->parts[mirror].push_back({std::int8_t(entry[3]), std::int8_t(entry[0]),
                     part < def.upper_parts, bool(entry[2] & 0x40), bool(entry[2] & 0x80)});
+                const auto &piece = image_layout->parts[mirror].back();
+                auto &bounds = state_->artwork_bounds;
+                bounds.left = std::min(bounds.left, piece.left);
+                bounds.top = std::min(bounds.top, piece.top);
+                bounds.right = std::max(bounds.right, piece.left + 16);
+                bounds.bottom = std::max(bounds.bottom, piece.top + 16);
             }
         group.layout = std::move(image_layout);
         for (unsigned pose = 0; pose < def.frames; ++pose) {
@@ -213,6 +221,7 @@ SpriteResources::~SpriteResources() = default;
 SpriteResources::SpriteResources(SpriteResources &&) noexcept = default;
 SpriteResources &SpriteResources::operator=(SpriteResources &&) noexcept = default;
 unsigned SpriteResources::size() const { return state_->groups.size(); }
+PixelBounds SpriteResources::artwork_bounds() const { return state_->artwork_bounds; }
 const SpriteDefinition &SpriteResources::definition(unsigned group) const {
     return state_->groups.at(group).definition;
 }
@@ -311,5 +320,63 @@ std::shared_ptr<const SpriteImage> SpriteArtwork::snapshot(SpriteOrientation ori
     if (!image)
         image = assemble(layout_, canvas_, palette_, authored_mirror_, display_mirror);
     return image;
+}
+void SpriteImage::ShapePart::snapshot_io(SnapshotArchive &archive) {
+    archive(left, top, upper, flip_x, flip_y);
+}
+void SpriteImage::Layout::snapshot_io(SnapshotArchive &archive) {
+    archive(canvas_width, canvas_height, parts);
+    if (archive.loading()) {
+        if (!canvas_width || !canvas_height || canvas_width > 4096 || canvas_height > 4096 ||
+            (canvas_width & 15) || (canvas_height & 15))
+            throw std::runtime_error("Invalid snapshot sprite canvas geometry");
+        for (const auto &orientation : parts) {
+            if (orientation.empty() || orientation.size() > 64 ||
+                orientation.size() > std::size_t(canvas_width) * canvas_height / 256)
+                throw std::runtime_error("Invalid snapshot sprite shape");
+            for (const auto &part : orientation)
+                if (part.left < -128 || part.left > 127 || part.top < -128 || part.top > 127)
+                    throw std::runtime_error("Invalid snapshot sprite shape offset");
+        }
+    }
+}
+void SpriteImage::Part::snapshot_io(SnapshotArchive &archive) {
+    archive(left, top, upper, indices);
+}
+void SpriteImage::snapshot_io(SnapshotArchive &archive) {
+    archive(width, height, palette, left, top, indices, parts, layout, canvas, authored_mirror);
+    if (archive.loading()) {
+        validate_canvas(*this);
+        const bool geometry_only = !width && !height && indices.empty() && parts.empty();
+        if ((!geometry_only && (!width || !height || parts.empty())) || width > 512 || height > 512 ||
+            indices.size() != std::size_t(width) * height || parts.size() > 64 ||
+            std::any_of(indices.begin(), indices.end(), [](auto pixel) { return pixel > 15; }))
+            throw std::runtime_error("Invalid snapshot sprite image");
+        for (const auto &part : parts)
+            if (part.left < -128 || part.left > 127 || part.top < -128 || part.top > 127 ||
+                std::any_of(part.indices.begin(), part.indices.end(), [](auto pixel) { return pixel > 15; }))
+                throw std::runtime_error("Invalid snapshot sprite image part");
+    }
+}
+void SpriteArtwork::snapshot_io(SnapshotArchive &archive) {
+    archive(layout_, canvas_, palette_, authored_mirror_, revision_);
+    if (archive.loading()) {
+        SpriteImage geometry;
+        geometry.layout = layout_;
+        geometry.canvas = canvas_;
+        geometry.palette = palette_;
+        validate_canvas(geometry);
+        images_ = {};
+    }
+}
+SpriteArtwork SpriteArtwork::from_snapshot(SnapshotArchive &archive) {
+    if (!archive.loading()) throw std::logic_error("Sprite artwork restore requires an input archive");
+    SpriteImage geometry;
+    std::uint64_t revision{};
+    archive(geometry.layout, geometry.canvas, geometry.palette, geometry.authored_mirror, revision);
+    SpriteArtwork restored(geometry);
+    restored.canvas_ = std::move(geometry.canvas);
+    restored.revision_ = revision;
+    return restored;
 }
 } // namespace eb::native

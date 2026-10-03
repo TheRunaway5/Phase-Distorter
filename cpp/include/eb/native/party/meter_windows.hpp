@@ -47,13 +47,16 @@ class MeterWindows {
     std::unique_ptr<Operation> begin_show();
     std::unique_ptr<Operation> begin_hide(bool battle);
     std::unique_ptr<Operation> begin_clear_selection();
+    // Complete C43573. Its captured phase survives both regional waits; the
+    // controlled count is read at the actual post-wait row-clear operation.
+    std::unique_ptr<Operation> begin_select(unsigned phase);
     std::span<const dialogue::ArtworkCellReference, 12> digit_cells(unsigned phase) const;
 
   private:
     struct Execution;
     std::unique_ptr<Execution> execution_;
-    enum class Action { Show, Hide, ClearSelection };
-    std::unique_ptr<Operation> begin(Action, bool battle = false);
+    enum class Action { Show, Hide, ClearSelection, Select };
+    std::unique_ptr<Operation> begin(Action, bool battle = false, unsigned phase = 0);
     void require_live() const;
     void clear_selection();
     void finish(Action, bool battle);

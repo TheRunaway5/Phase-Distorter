@@ -5,6 +5,7 @@
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/spc700_audio_cpu.hpp"
+#include "eb/snapshot_archive.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -23,7 +24,7 @@ struct GameSession::State {
     FrameObserver frame_observer;
 
     State(std::span<const std::uint8_t> cartridge, GameVersion version, bool enhanced_timing)
-        : hardware(cartridge, version), audio_cpu(hardware), audio_dsp(audio_cpu), main_cpu(hardware),
+        : hardware(cartridge, version, true), audio_cpu(hardware), audio_dsp(audio_cpu), main_cpu(hardware),
           game_debug(hardware, main_cpu) {
         main_cpu.reset_from_vector();
         main_cpu.set_gameplay_timing(enhanced_timing);
@@ -87,8 +88,9 @@ std::span<const std::uint32_t, 256 * 224> GameSession::native_pixels() const {
 
 void GameSession::configure_presentation(unsigned width, bool identify_flashing_effects, bool direct_rendering) {
     state_->hardware.set_presentation_width(width);
-    // Display width must not consume the source engine's fixed sprite pools.
-    // Host-owned actor resources will provide offscreen loading independently.
+    // Static placements use host-owned artwork. Moving NPCs and enemies enter
+    // the wider view through their source loaders with shared capacity checks.
+    state_->main_cpu.set_world_preload_width(state_->hardware.native_sprite_runtime() ? width : 256);
     state_->hardware.set_presentation_effects_enabled(identify_flashing_effects);
     state_->hardware.set_direct_rendering_enabled(direct_rendering);
 }
@@ -98,6 +100,7 @@ void GameSession::enable_host_sprite_resources(bool enabled) {
 }
 void GameSession::enable_native_sprite_runtime(bool enabled) {
     state_->hardware.enable_native_sprite_runtime(enabled, enabled);
+    state_->main_cpu.set_world_preload_width(enabled ? state_->hardware.presentation_width() : 256);
 }
 void GameSession::set_logical_clock_policy(LogicalClockPolicy policy) {
     state_->hardware.set_logical_clock_policy(policy);
@@ -151,5 +154,63 @@ SessionDiagnostics GameSession::diagnostics(bool include_registers) const {
 
 GameDebug &GameSession::debug() {
     return state_->game_debug;
+}
+
+std::vector<std::uint8_t> GameSession::save_snapshot() const {
+    SnapshotArchive machine;
+    machine(state_->hardware, state_->audio_cpu, state_->audio_dsp, state_->main_cpu,
+            state_->game_debug, state_->steps);
+    auto payload = machine.release_bytes();
+    std::array<std::uint8_t, 8> magic{'P', 'D', 'S', 'N', 'A', 'P', '0', '1'};
+    std::uint32_t format = 3;
+    auto version = game_version();
+    auto content = snapshot_checksum(state_->hardware.cartridge_image());
+    auto checksum = snapshot_checksum(payload);
+    SnapshotArchive file;
+    file(magic, format, version, content, checksum);
+    file.blob(payload);
+    return file.release_bytes();
+}
+
+void GameSession::load_snapshot(std::span<const std::uint8_t> snapshot) {
+    SnapshotArchive file(snapshot);
+    std::array<std::uint8_t, 8> magic{};
+    std::uint32_t format{};
+    GameVersion version{};
+    std::uint64_t content{}, checksum{};
+    std::vector<std::uint8_t> payload;
+    file(magic, format, version, content, checksum);
+    if (magic != std::array<std::uint8_t, 8>{'P', 'D', 'S', 'N', 'A', 'P', '0', '1'} ||
+        (format != 1 && format != 2 && format != 3))
+        throw std::runtime_error("Snapshot format is not supported by this build");
+    if (version != game_version() || content != snapshot_checksum(state_->hardware.cartridge_image()))
+        throw std::runtime_error("Snapshot belongs to different game content");
+    file.blob(payload);
+    file.finish();
+    if (checksum != snapshot_checksum(payload)) throw std::runtime_error("Snapshot checksum does not match");
+
+    auto candidate = std::make_unique<State>(state_->hardware.cartridge_image(), version, false);
+    SnapshotArchive machine(payload, format);
+    machine(candidate->hardware, candidate->audio_cpu, candidate->audio_dsp, candidate->main_cpu,
+            candidate->game_debug, candidate->steps);
+    machine.finish();
+    if (format < 3)
+        candidate->main_cpu.set_world_preload_width(candidate->hardware.native_sprite_runtime()
+                                                    ? candidate->hardware.presentation_width() : 256);
+    // Host consumers belong to this session, not to the historical snapshot.
+    // Prepare the callback before the no-throw ownership swap so any failure
+    // leaves the current machine and its observer untouched.
+    candidate->frame_observer = state_->frame_observer;
+    if (candidate->frame_observer) {
+        candidate->hardware.on_presentation_frame = [state = candidate.get()](std::span<const std::uint32_t> pixels,
+                                                                            unsigned width, std::uint64_t frame) {
+            auto picture = state->picture();
+            picture.pixels = pixels;
+            picture.width = width;
+            picture.frame = frame;
+            state->frame_observer(picture);
+        };
+    }
+    state_.swap(candidate);
 }
 } // namespace eb

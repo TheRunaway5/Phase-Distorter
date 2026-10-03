@@ -18,15 +18,20 @@
 namespace eb {
 struct SourceProfile;
 class MainCpu65816;
+class SnapshotArchive;
 
 // HiROM cartridge and the CPU-visible SNES hardware. Pixel words are 0xAARRGGBB.
 class SnesBus {
+    friend class BattleSpriteBus;
   public:
     // The cartridge image is copied into the bus; the caller may release its
     // import buffer. The version chooses immutable source-address metadata for
     // presentation helpers, while memory accesses share the hardware model.
-    explicit SnesBus(std::span<const uint8_t> rom, GameVersion version = GameVersion::US);
+    explicit SnesBus(std::span<const uint8_t> rom, GameVersion version = GameVersion::US,
+                     bool restore_threed_npcs = false);
     GameVersion game_version() const { return game_version_; }
+    std::span<const std::uint8_t> cartridge_image() const { return cartridge_rom_; }
+    void snapshot_io(SnapshotArchive &archive);
     // Reads and writes are observable hardware operations, not inspection APIs:
     // reads can acknowledge interrupts, advance ports, and update open bus.
     uint8_t read_byte(uint32_t address);
@@ -179,6 +184,7 @@ class SnesBus {
   private:
     friend struct RuntimeStateAudit;
     const GameVersion game_version_;
+    const bool restore_threed_npcs_;
     const SourceProfile *source_profile_;
     bool sprite_snapshots_enabled_{};
     void capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::uint16_t x,

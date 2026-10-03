@@ -9,6 +9,7 @@
 #include "eb/presentation_pipeline.hpp"
 #include "eb/presentation_wait.hpp"
 #include "eb/session_storage.hpp"
+#include "eb/snapshot_store.hpp"
 #include "generated_assets.hpp"
 
 #include <SDL.h>
@@ -130,6 +131,19 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
         session.observe_completed_frames(
             [&](PresentationFrame frame) { presentation.completed_frame(frame); });
 
+        SnapshotStore snapshots(native_path(preferences) / "snapshots" / game_basename(game));
+        std::vector<SaveStateSnapshotInfo> snapshot_list;
+        const auto refresh_snapshots = [&](const std::string &message) {
+            if (!display) return;
+            try {
+                snapshot_list = snapshots.list();
+                display->set_snapshot_state(snapshot_list, message, true);
+            } catch (const std::exception &error) {
+                display->set_snapshot_state(snapshot_list, std::string("Cannot list snapshots: ") + error.what(), true);
+            }
+        };
+        refresh_snapshots("");
+
         const auto drain_audio = [&] {
             const auto samples = session.take_audio_samples();
             if (wave)
@@ -167,6 +181,47 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                 if (display) {
                     if (!display->poll_events(physical_buttons))
                         break;
+                    if (const auto action = display->take_snapshot_action()) {
+                        // UI requests are applied between simulation advances,
+                        // never while a borrowed picture is being rendered.
+                        try {
+                            std::string message;
+                            switch (action->kind) {
+                            case SaveStateSnapshotRequest::Kind::Save: {
+                                const auto state = session.save_snapshot();
+                                const auto saved = snapshots.save(action->value, session.frames(), state);
+                                message = "Saved snapshot: " + saved.name;
+                                break;
+                            }
+                            case SaveStateSnapshotRequest::Kind::Load: {
+                                const auto state = snapshots.load(action->value);
+                                session.load_snapshot(state);
+                                input.seek(session.frames());
+                                // Replace the old borrowed canvas before any
+                                // host reconfiguration can allocate or fail.
+                                presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
+                                if (audio) audio->clear();
+                                session.configure_presentation(display->render_width(), settings.reduce_flashing,
+                                    settings.high_frame_rate() && settings.direct_rendering);
+                                presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
+                                display->adopt_debug(session.debug());
+                                message = "Loaded snapshot at frame " + std::to_string(session.frames());
+                                break;
+                            }
+                            case SaveStateSnapshotRequest::Kind::Delete:
+                                snapshots.erase(action->value);
+                                message = "Deleted snapshot";
+                                break;
+                            case SaveStateSnapshotRequest::Kind::Refresh:
+                                message = "Snapshot list refreshed";
+                                break;
+                            }
+                            refresh_snapshots(message);
+                        } catch (const std::exception &error) {
+                            display->set_snapshot_state(snapshot_list,
+                                std::string("Snapshot operation failed: ") + error.what(), true);
+                        }
+                    }
                     display->update_debug(session.debug());
                     display->update_swap_interval();
                     if (presentation.configure(settings, display->frame_rate(), display->presentation_rate(),

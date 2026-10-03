@@ -182,6 +182,10 @@ dialogue::Progress Ticks::Operation::advance(unsigned budget) {
     return dialogue::Progress::BudgetExhausted;
 }
 const std::optional<TickService> &Ticks::Operation::service() const { return execution_->pending; }
+bool Ticks::Operation::battle_body_pending() const noexcept {
+    const auto &e = *execution_;
+    return e.pending == TickService::FrameBoundary && e.stage == Execution::Stage::Battle;
+}
 void Ticks::Operation::respond() {
     auto &e = *execution_;
     e.shared.check(e.owner);

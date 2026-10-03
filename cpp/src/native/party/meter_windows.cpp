@@ -231,20 +231,24 @@ void MeterWindows::finish(Action action, bool battle) {
 struct MeterWindows::Operation::Execution {
     MeterWindows& windows;
     Action action;
-    bool battle{}, started{}, clear_pending{}, done{};
+    bool battle{}, started{}, clear_pending{}, selected{}, done{};
+    unsigned phase{};
     std::optional<dialogue::WindowEffect> effect;
-    Execution(MeterWindows& windows, Action action, bool battle) : windows(windows), action(action), battle(battle) {}
+    Execution(MeterWindows& windows, Action action, bool battle, unsigned phase)
+        : windows(windows), action(action), battle(battle), phase(phase) {}
 };
-std::unique_ptr<MeterWindows::Operation> MeterWindows::begin(Action action, bool battle) {
+std::unique_ptr<MeterWindows::Operation> MeterWindows::begin(Action action, bool battle, unsigned phase) {
     require_live();
     require(!execution_->active, "A meter lifecycle operation is already pending");
-    auto result = std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(*this, action, battle)));
+    require(action != Action::Select || phase < 4, "Meter selection exceeds the four player windows");
+    auto result = std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(*this, action, battle, phase)));
     execution_->active = true;
     return result;
 }
 std::unique_ptr<MeterWindows::Operation> MeterWindows::begin_show() { return begin(Action::Show); }
 std::unique_ptr<MeterWindows::Operation> MeterWindows::begin_hide(bool battle) { return begin(Action::Hide, battle); }
 std::unique_ptr<MeterWindows::Operation> MeterWindows::begin_clear_selection() { return begin(Action::ClearSelection); }
+std::unique_ptr<MeterWindows::Operation> MeterWindows::begin_select(unsigned phase) { return begin(Action::Select, false, phase); }
 MeterWindows::Operation::Operation(std::unique_ptr<Execution> execution) : execution_(std::move(execution)) {}
 MeterWindows::Operation::~Operation() {
     if (!execution_->done) {
@@ -265,7 +269,25 @@ dialogue::OutputProgress MeterWindows::Operation::advance() {
             return dialogue::OutputProgress::Suspended;
         }
     }
-    if (e.clear_pending) e.windows.clear_selection();
+    if (e.clear_pending) {
+        e.windows.clear_selection();
+        e.clear_pending = false;
+    }
+    if (e.action == Action::Select) {
+        auto &owner = *e.windows.execution_;
+        if (!e.selected) {
+            owner.flags.selected_phase = std::uint16_t(e.phase);
+            e.selected = true;
+            if (owner.party.version() == GameVersion::US) {
+                e.effect = dialogue::WindowEffect{dialogue::WindowEffectKind::FrameWait};
+                return dialogue::OutputProgress::Suspended;
+            }
+        }
+        const auto first = first_cell(e.phase, owner.party.controlled_count, 26);
+        validate_rectangle(first, 7, 1);
+        owner.host.clear_meter_rect(first, 7, 1);
+        owner.host.request_meter_redraw();
+    }
     e.windows.finish(e.action, e.battle);
     e.done = true;
     e.windows.execution_->active = false;

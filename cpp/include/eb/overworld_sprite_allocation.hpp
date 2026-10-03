@@ -11,6 +11,7 @@ namespace eb {
 // owns that binding and preserves the existing game actor scheduler.
 class OverworldSpriteAllocation {
   public:
+    void snapshot_io(SnapshotArchive &archive);
     using ResourceId = std::uint64_t;
     class CreationLease {
       public:
@@ -27,6 +28,7 @@ class OverworldSpriteAllocation {
         explicit CreationLease(std::unique_ptr<State> state);
         std::unique_ptr<State> state_;
     };
+    void snapshot_lease_io(SnapshotArchive &archive, CreationLease &lease);
     struct Snapshot {
         ResourceId id{};
         // Creation palette is authoritative for the actor. Images selected

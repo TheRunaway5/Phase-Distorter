@@ -1,4 +1,5 @@
 #include "eb/native/world_encounter_effects.hpp"
+#include "eb/native/battle/frame_display.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -158,23 +159,48 @@ WorldEncounterEffects::WorldEncounterEffects(
     const WorldSwirlData &definitions, const WorldEncounterEffectData &data,
     WorldSwirlState &swirl, ScenePalette &colors,
     WorldEncounterVisualState &visual, WorldEncounterRestoration &restoration)
-    : definitions_(definitions), data_(data), swirl_(swirl), colors_(colors),
+    : definitions_(definitions), data_(data), swirl_(swirl), colors_(&colors),
       visual_(visual), restoration_(restoration) {
-  if (!restoration_.uses(colors_, visual_))
+  if (!restoration_matches())
     throw std::invalid_argument("Encounter restoration owns a different scene");
 }
+WorldEncounterEffects::WorldEncounterEffects(
+    const WorldSwirlData &definitions, const WorldEncounterEffectData &data,
+    WorldSwirlState &swirl, battle::PaletteBankState &colors,
+    WorldEncounterVisualState &visual, WorldEncounterRestoration &restoration)
+    : definitions_(definitions), data_(data), swirl_(swirl), battle_colors_(&colors),
+      visual_(visual), restoration_(restoration) {
+  if (!restoration_matches())
+    throw std::invalid_argument("Encounter restoration owns a different battle palette");
+}
+bool WorldEncounterEffects::restoration_matches() const noexcept {
+  return colors_ ? restoration_.uses(*colors_, visual_)
+                 : restoration_.uses_battle_palette(*battle_colors_, visual_);
+}
+bool WorldEncounterEffects::uses(
+    const WorldSwirlData &data, const WorldSwirlState &swirl,
+    const battle::PaletteBankState &colors, const WorldEncounterVisualState &visual) const noexcept {
+  return &data == &definitions_ && &swirl == &swirl_ && &colors == battle_colors_ &&
+         &visual == &visual_ && restoration_matches();
+}
 void WorldEncounterEffects::check() const {
-  if (failed_ || executing_ || !restoration_.uses(colors_, visual_))
+  if (failed_ || executing_ || !restoration_matches())
     throw std::logic_error("Encounter effects are failed, busy or rebound");
 }
 bool WorldEncounterEffects::uses(
     const WorldSwirlData &data, const WorldSwirlState &swirl,
     const ScenePalette &colors, const WorldEncounterVisualState &visual) const noexcept {
-  return &data == &definitions_ && &swirl == &swirl_ && &colors == &colors_ &&
+  return &data == &definitions_ && &swirl == &swirl_ && &colors == colors_ &&
          &visual == &visual_ && restoration_.uses(colors, visual);
 }
 bool WorldEncounterEffects::uses(const WorldEncounterRestoration &owner) const noexcept {
-  return &owner == &restoration_ && owner.uses(colors_, visual_);
+  return &owner == &restoration_ && restoration_matches();
+}
+void WorldEncounterEffects::bind_display(battle::FrameDisplay &display) {
+  check();
+  if (display_ && display_ != &display)
+    throw std::logic_error("Encounter effects already bound to another display");
+  display_ = &display;
 }
 void WorldEncounterEffects::install(const EncounterWindowMask &mask, bool second) {
   visual_.window_pattern = mask;
@@ -245,6 +271,7 @@ void WorldEncounterEffects::advance_oval() {
   EncounterWindowMask rows{};
   for (unsigned y = 0; y < rows.size(); ++y) rows[y][0] = oval[y];
   install(rows, false);
+  if (display_) display_->install_oval(rows);
 }
 void WorldEncounterEffects::advance_clip() {
   if (--swirl_.update_in) return;
@@ -257,7 +284,13 @@ void WorldEncounterEffects::advance_clip() {
       if (swirl_.reverse) frame = --swirl_.frame;
       else frame = swirl_.frame++;
       const auto &clip = data_.clips.at(frame);
+      const auto old_offset = swirl_.hdma_channel_offset;
+      const auto next_offset = std::uint8_t((old_offset + 1) & 1);
+      if (old_offset >= 2)
+        throw std::out_of_range("Encounter clip channel offset");
       install(clip.rows, clip.second_window);
+      if (display_) display_->replace_swirl(old_offset, next_offset, clip.rows, clip.second_window);
+      swirl_.hdma_channel_offset = next_offset;
       --swirl_.frames_left;
       return;
     }
@@ -285,6 +318,7 @@ void WorldEncounterEffects::advance_clip() {
     return;
   }
   if (!swirl_.restore_after) return;
+  if (display_) display_->disable_swirl(swirl_.hdma_channel_offset);
   visual_.window_pattern.reset();
   visual_.window_rows_enabled = false;
   visual_.window_layers.fill(false);

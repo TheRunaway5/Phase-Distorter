@@ -5,6 +5,7 @@
 #include "eb/native/dialogue/window_commands.hpp"
 #include "eb/native/dialogue/text_animations.hpp"
 #include "eb/native/dialogue/prepared_message.hpp"
+#include "eb/native/battle/grammar.hpp"
 #include "eb/native/party/queries.hpp"
 #include <algorithm>
 #include <deque>
@@ -69,6 +70,8 @@ struct WindowHost::Execution {
     PromptState prompt_state;
     const party::State *party{};
     PreparedMessage *prepared{};
+    const battle::Roster *roster{};
+    const battle::ActionState *action{};
     std::vector<WindowId> order;
     std::vector<std::optional<unsigned>> title_owners;
     // Five sixteen-column title reservations plus the real US final-owner
@@ -85,6 +88,7 @@ struct WindowHost::Execution {
     bool suppress_tick{};
     Scene buffer{}, published{};
     std::array<SceneCell, 32> published_tail{};
+    std::array<SceneCell, 96> published_lower{};
     struct Publication {
         enum class Kind { Scene, Tail, MeterArea, MeterRow } kind{};
         unsigned first{}, offset{};
@@ -804,6 +808,21 @@ void WindowHost::bind_prepared_message(PreparedMessage &state) {
     e.prepared = &state;
 }
 PreparedMessage *WindowHost::prepared_message() const { return execution_->prepared; }
+void WindowHost::bind_battle(const battle::Roster& roster, const battle::ActionState& action) {
+    auto& e = *execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind battle queries only with idle text output");
+    require(roster.version() == version() && e.party, "Battle queries require the actual regional party");
+    require((!e.roster || e.roster == &roster) && (!e.action || e.action == &action),
+            "Window host has different battle owners");
+    e.roster = &roster;
+    e.action = &action;
+}
+std::optional<std::uint16_t> WindowHost::query_battle(const BattleGrammarRequest& request) const {
+    const auto& e = *execution_;
+    if (!e.roster || !e.action) return {};
+    return battle::grammar(*e.roster, *e.party, *e.action, request.target, request.operand);
+}
 std::optional<std::uint16_t> WindowHost::query_party(const PartyQueryRequest &request) const {
     const auto *state = execution_->party;
     if (!state) return {};
@@ -931,23 +950,53 @@ void WindowHost::publish_prompt(unsigned slot_index, unsigned phase) {
 std::shared_ptr<const TextFrame> WindowHost::scene() const { return sample(execution_->buffer); }
 std::shared_ptr<const TextFrame> WindowHost::frame() const { return sample(execution_->published); }
 std::shared_ptr<const TextFrame> WindowHost::tail_frame() const { return sample(execution_->published_tail); }
+std::shared_ptr<const TextFrame> WindowHost::full_frame() const {
+    std::array<SceneCell, 32 * 32> cells;
+    const auto &e = *execution_;
+    auto at = std::copy(e.published.begin(), e.published.end(), cells.begin());
+    at = std::copy(e.published_tail.begin(), e.published_tail.end(), at);
+    std::copy(e.published_lower.begin(), e.published_lower.end(), at);
+    return sample(cells);
+}
+void WindowHost::restore_lower_rows(std::span<const ArtworkCellReference, 96> rows) {
+    auto &e = *execution_;
+    std::array<SceneCell, 96> resolved;
+    for (unsigned i = 0; i < rows.size(); ++i) resolved[i] = e.meter_cell(rows[i]);
+    e.published_lower = std::move(resolved);
+}
+void WindowHost::clear_published_tilemap() {
+    auto &e = *execution_;
+    const auto blank = e.meter_cell(ArtworkCellReference{});
+    e.published.fill(blank);
+    e.published_tail.fill(blank);
+    e.published_lower.fill(blank);
+}
 void WindowHost::load_artwork(unsigned flavor) { execution_->load_artwork(flavor); }
 void WindowHost::bind_palette_publication(WindowPalettePublication &publisher) {
     require(!execution_->palette_publication || execution_->palette_publication == &publisher,
             "Window palette already has another publication owner");
     execution_->palette_publication = &publisher;
 }
+WindowPalettePublication *WindowHost::palette_publication() const noexcept {
+    return execution_->palette_publication;
+}
+void WindowHost::replace_palette_publication(const WindowPalettePublication &expected,
+                                              WindowPalettePublication &next) {
+    require(execution_->palette_publication == &expected,
+            "Window palette handoff lost its expected publication owner");
+    execution_->palette_publication = &next;
+}
 void WindowHost::clear_palette_publication(const WindowPalettePublication &publisher) noexcept {
     if (execution_->palette_publication == &publisher) execution_->palette_publication = nullptr;
 }
 void WindowHost::publish_palette(unsigned flavor, bool incapacitated, bool disabled) {
     const auto colors = execution_->resources->palette(flavor, incapacitated, disabled);
-    if (execution_->palette_publication) execution_->palette_publication->publish_window_range(0, colors);
+    if (execution_->palette_publication) execution_->palette_publication->publish_window_range(0, colors, WindowPaletteUpload::Background);
     execution_->colors = colors;
 }
 void WindowHost::animate_palette(unsigned flavor, std::uint64_t frame) {
     const auto &colors = execution_->resources->animated_palette5(flavor, frame);
-    if (execution_->palette_publication) execution_->palette_publication->publish_window_range(20, colors);
+    if (execution_->palette_publication) execution_->palette_publication->publish_window_range(20, colors, WindowPaletteUpload::Full);
     std::copy(colors.begin(), colors.end(), execution_->colors.begin() + 20);
 }
 const std::array<std::uint16_t, 32> &WindowHost::palette() const { return execution_->colors; }

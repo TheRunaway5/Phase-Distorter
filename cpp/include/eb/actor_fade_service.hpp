@@ -3,6 +3,7 @@
 #include <optional>
 
 namespace eb {
+class SnapshotArchive;
 class MainCpu65816;
 class SnesBus;
 enum class FadeClockOwner { HardwareFrame, ActorPass };
@@ -14,6 +15,7 @@ class ActorFadeService {
     bool try_execute(MainCpu65816 &cpu, SnesBus &bus);
     FadeClockOwner owner() const { return owner_; }
     std::uint64_t actor_fade_ticks() const { return actor_fade_ticks_; }
+    void snapshot_io(SnapshotArchive &archive);
 
   private:
     FadeClockOwner owner_ = FadeClockOwner::HardwareFrame;

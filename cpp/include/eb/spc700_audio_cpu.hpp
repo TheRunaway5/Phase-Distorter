@@ -7,6 +7,7 @@
 
 namespace eb {
 class SnesBus;
+class SnapshotArchive;
 // Architectural execution helpers called from source-translated SPC instructions.
 // No opcode is fetched or decoded from RAM at runtime.
 class Spc700AudioCpu {
@@ -50,6 +51,7 @@ public:
     // use SPC clocks; mixing the two units would change music tempo.
     void advance_master_clocks(unsigned master_clocks);
     std::string describe_registers() const;
+    void snapshot_io(SnapshotArchive &archive);
     template <unsigned Opcode> void execute_instruction(uint16_t operand, unsigned instruction_size) {
         static_assert(Opcode < 256);
         execute_opcode_semantics(Opcode, operand, instruction_size);

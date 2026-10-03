@@ -168,7 +168,7 @@ std::vector<Creation> native_events(const std::vector<NpcActivation>&events, con
     return result;
 }
 void run(const eb::GameAssets &assets){
-    const auto catalog=std::make_shared<NpcCatalog>(assets.image,npc_catalog_layout(assets.version));
+    const auto catalog=std::make_shared<NpcCatalog>(assets.image,npc_catalog_layout(assets.version,false));
     const auto sprites=std::make_shared<SpriteResources>(assets.image,sprite_catalog_layout(assets.version));
     const auto program=std::make_shared<CompiledActionProgram>(import_action_scripts(assets.image,assets.version),assets.version);
     WorldActivation activation(catalog,sprites,program->scripts(),assets.version);

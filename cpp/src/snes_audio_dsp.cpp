@@ -1,9 +1,12 @@
 #include "eb/snes_audio_dsp.hpp"
 #include "SPC_DSP.h"
 #include "eb/spc700_audio_cpu.hpp"
+#include "eb/snapshot_archive.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <stdexcept>
 #include <utility>
 
 namespace eb {
@@ -14,6 +17,47 @@ struct SnesAudioDsp::SynthesisState {
     SPC_DSP processor;
     std::array<SPC_DSP::sample_t, 128> sample_buffer{};
 };
+
+namespace {
+thread_local unsigned char *dsp_archive_end{};
+void write_dsp_state(unsigned char **io, void *state, std::size_t count) {
+    if (count > static_cast<std::size_t>(dsp_archive_end - *io))
+        throw std::runtime_error("DSP snapshot exceeds its processor state limit");
+    std::memcpy(*io, state, count);
+    *io += count;
+}
+void read_dsp_state(unsigned char **io, void *state, std::size_t count) {
+    if (count > static_cast<std::size_t>(dsp_archive_end - *io))
+        throw std::runtime_error("DSP snapshot is truncated");
+    std::memcpy(state, *io, count);
+    *io += count;
+}
+} // namespace
+
+void SnesAudioDsp::snapshot_io(SnapshotArchive &archive) {
+    std::vector<std::uint8_t> state;
+    if (!archive.loading()) {
+        state.resize(SPC_DSP::state_size);
+        auto *cursor = state.data();
+        dsp_archive_end = cursor + state.size();
+        synthesis_->processor.copy_state(&cursor, write_dsp_state);
+        state.resize(static_cast<std::size_t>(cursor - state.data()));
+    }
+    archive(state, queued_stereo_samples_, generated_stereo_frames_);
+    if (archive.loading()) {
+        if (state.empty() || state.size() > SPC_DSP::state_size || (queued_stereo_samples_.size() & 1))
+            throw std::runtime_error("Invalid DSP snapshot state");
+        auto *cursor = state.data();
+        dsp_archive_end = cursor + state.size();
+        // The supported DSP state copier restores its internal pointers onto
+        // this candidate's initialized SPC RAM and voice/register ownership.
+        synthesis_->processor.copy_state(&cursor, read_dsp_state);
+        if (cursor != dsp_archive_end) throw std::runtime_error("DSP snapshot contains trailing data");
+        synthesis_->processor.set_output(synthesis_->sample_buffer.data(),
+                                         static_cast<int>(synthesis_->sample_buffer.size()));
+    }
+    dsp_archive_end = nullptr;
+}
 
 SnesAudioDsp::SnesAudioDsp(std::span<std::uint8_t, 65536> audio_ram) : synthesis_(std::make_unique<SynthesisState>()) {
     static_assert(sizeof(SPC_DSP::sample_t) == sizeof(std::int16_t));

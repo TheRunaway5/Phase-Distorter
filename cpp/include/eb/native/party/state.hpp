@@ -30,6 +30,9 @@ struct Character {
     std::uint16_t hp_fraction{}, current_hp{}, target_hp{};
     std::uint16_t pp_fraction{}, current_pp{}, target_pp{};
     std::uint16_t hp_pp_window_options{};
+    // char_struct::unknown94, cleared by the round prefix and written by
+    // battle selection. Saved character data restores it into this same live owner.
+    std::uint8_t battle_selection{};
     // Raw equipment-derived levels, before battle's damage/status conversion.
     // Saved character data restores these into this same live party owner.
     std::uint8_t fire_resistance{}, freeze_resistance{}, flash_resistance{},

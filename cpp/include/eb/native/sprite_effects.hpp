@@ -54,8 +54,13 @@ public:
   void copy_phase(unsigned phase);
   std::shared_ptr<const SpriteImage>
   snapshot(SpriteOrientation orientation = SpriteOrientation::Authored) const;
+  void snapshot_io(SnapshotArchive &archive);
+  static SpriteEffectCanvas from_snapshot(SnapshotArchive &archive);
 
 private:
+  struct RestoreTag {};
+  SpriteEffectCanvas(RestoreTag, SpriteImage target);
+  void snapshot_fields(SnapshotArchive &archive);
   void publish();
   unsigned width_{}, height_{}, display_width_{}, top_{};
   SpriteImage target_;

@@ -102,7 +102,7 @@ struct WorldStartup::Operation::State {
       o.formation.trail_cursors[i] = c.position_index;
       o.formation.character_startup[i] = {
           c.reserved_53_59[0], c.reserved_53_59[3], c.reserved_53_59[2],
-          word(c.reserved_92_94.data())};
+          word(c.reserved_92_93.data())};
       o.formation.selected_styles[i] = c.reserved_53_59[1];
       o.formation.last_trail_styles[i] = c.reserved_65;
     }
@@ -276,7 +276,7 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
       case WorldStartupStage::Restore:
         s.restore();
         s.stage = WorldStartupStage::CloseWindows;
-        s.windows = o.windows.begin({dialogue::WindowAction::CloseAll});
+        s.windows = o.windows.begin({dialogue::WindowAction::CloseAll, std::nullopt, {}, 0});
         break;
       case WorldStartupStage::CloseWindows:
         if (s.windows->advance() == dialogue::OutputProgress::Complete) {

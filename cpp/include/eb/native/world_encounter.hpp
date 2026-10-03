@@ -61,6 +61,8 @@ struct WorldSwirlState {
   std::uint8_t padding{};
   bool restore_after{}, oval{};
   std::uint8_t next{}, repeat_speed{}, repeats_until_speedup{};
+  // Actual alternating clip HDMA channel offset (channels3/4). Oval leaves it.
+  std::uint8_t hdma_channel_offset{};
   WorldOvalState oval_state;
   bool operator==(const WorldSwirlState &) const = default;
 };
@@ -92,6 +94,11 @@ struct WorldEncounterVisualState {
   std::uint64_t window_revision{};
   bool operator==(const WorldEncounterVisualState &) const = default;
 };
+// Shared complete C4A67E setup. It changes only these actual authored owners;
+// no palette, input, clock, audio or animation frame is advanced.
+void configure_world_swirl(const WorldSwirlData&, WorldSwirlState&,
+                           WorldEncounterVisualState&, unsigned id,
+                           std::uint16_t options, std::uint8_t padding = 0);
 struct WorldEncounterMusicChange {
   std::uint16_t track{};
   bool operator==(const WorldEncounterMusicChange &) const = default;

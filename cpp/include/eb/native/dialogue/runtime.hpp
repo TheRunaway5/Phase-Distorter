@@ -105,6 +105,9 @@ enum class RequestKind {
     // CC1C08's literal selector; rendering and source ticks belong to the
     // window host's animation service, not to parser scheduling.
     TextAnimation,
+    // CC1C13 consumes two literal bytes, including zero. The actual scene
+    // animation owner executes only while the output prompt mode is nonzero.
+    BattleAnimation,
     Inventory,
     // JP1C11 waits for the real formation/movement/palette owner before
     // selecting and printing a conscious member's name. No operand follows.
@@ -127,7 +130,8 @@ enum class RequestKind {
     WidthHint,
     // Operandless191E/1F read the shared prepared number/item scratch.
     // This remains external until a stable prepared-message owner is bound.
-    PreparedValue
+    PreparedValue,
+    BattleGrammar
 };
 struct MenuAppendRequest {
     // CC19_02/C17889 gather into a 30-byte scratch buffer. The first byte is
@@ -186,6 +190,15 @@ struct ScriptSoundRequest {
     std::uint16_t source_value{};
     bool operator==(const ScriptSoundRequest &) const = default;
 };
+struct BattleAnimationRequest {
+    std::uint16_t ally{}, enemy{};
+    bool operator==(const BattleAnimationRequest &) const = default;
+};
+struct BattleAnimationResult {
+    // A zero prompt mode consumes the command without writing working memory.
+    bool executed{}, value{};
+    bool operator==(const BattleAnimationResult &) const = default;
+};
 enum class NpcGiftAction { Open, Close, IsOpen };
 enum class PartyQueryKind {
     DisplayCharacter, Status, ControlledCount, StatusEquals, FewerControlledThan,
@@ -199,6 +212,11 @@ struct PartyQueryRequest {
     std::uint8_t expected_status{};
     std::uint32_t amount{};
     bool operator==(const PartyQueryRequest &) const = default;
+};
+struct BattleGrammarRequest {
+    bool target{};
+    std::uint8_t operand{};
+    bool operator==(const BattleGrammarRequest&) const = default;
 };
 struct Request {
     RequestKind kind{};
@@ -223,6 +241,9 @@ struct Request {
     std::optional<NpcGiftAction> npc_gift{};
     std::optional<ScriptSoundRequest> script_sound{};
     std::optional<WorldControlCommand> world_control{};
+    std::optional<BattleAnimationRequest> battle_animation{};
+    // US1C14/15 consume one literal byte; zero selects the count path.
+    std::optional<BattleGrammarRequest> battle_grammar{};
     bool operator==(const Request &) const = default;
 };
 struct Response {
@@ -234,6 +255,7 @@ struct Response {
     // Prepared CNUM is genuinely32-bit; other existing service results retain
     // their source16-bit width. CITEM is zero-extended from its byte owner.
     std::optional<std::uint32_t> prepared_value{};
+    std::optional<BattleAnimationResult> battle_animation_result{};
 };
 enum class Progress { Suspended, Finished, BudgetExhausted };
 struct FrameSnapshot {

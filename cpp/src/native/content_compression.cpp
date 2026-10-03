@@ -1,4 +1,5 @@
 #include "eb/native/content_compression.hpp"
+#include "eb/native/detail/content_decoder.hpp"
 #include <stdexcept>
 
 namespace eb::native {
@@ -7,53 +8,32 @@ namespace eb::native {
 std::vector<std::uint8_t>
 decompress_content(std::span<const std::uint8_t> content, std::size_t at,
                    std::size_t limit) {
-  std::vector<std::uint8_t> out;
-  const auto next = [&]() -> unsigned {
-    if (at >= content.size())
-      throw std::runtime_error("Truncated compressed content");
-    return content[at++];
-  };
-  for (;;) {
-    const unsigned header = next();
-    if (header == 255)
-      return out;
-    unsigned command = header >> 5, count = (header & 31) + 1;
-    if (command == 7) {
-      command = (header >> 2) & 7;
-      count = (((header & 3) << 8) | next()) + 1;
+  struct Input {
+    std::span<const std::uint8_t> content;
+    std::size_t at;
+    unsigned peek() const {
+      if (at >= content.size()) throw std::runtime_error("Truncated compressed content");
+      return content[at];
     }
-    const unsigned length = count * (command == 2 ? 2 : 1);
-    if (length > limit - out.size())
-      throw std::runtime_error("Oversized compressed content");
-    if (!command) {
-      for (unsigned i = 0; i < count; ++i)
-        out.push_back(std::uint8_t(next()));
-    } else if (command <= 3) {
-      const unsigned first = next(), second = command == 2 ? next() : 0;
-      for (unsigned i = 0; i < count; ++i) {
-        out.push_back(std::uint8_t(first + (command == 3 ? i : 0)));
-        if (command == 2)
-          out.push_back(std::uint8_t(second));
-      }
-    } else {
-      int source = int(next() << 8);
-      source |= int(next());
-      for (unsigned i = 0; i < count; ++i) {
-        if (source < 0 || unsigned(source) >= out.size())
-          throw std::runtime_error("Invalid compressed content back reference");
-        unsigned value = out[unsigned(source)];
-        if (command == 5) {
-          unsigned reversed = 0;
-          for (unsigned bit = 0; bit < 8; ++bit) {
-            reversed = (reversed << 1) | (value & 1);
-            value >>= 1;
-          }
-          value = reversed;
-        }
-        out.push_back(std::uint8_t(value));
-        source += command == 6 ? -1 : 1;
-      }
+    std::uint8_t next() { const auto value = peek(); ++at; return std::uint8_t(value); }
+    std::uint16_t word() { const unsigned low = next(); return std::uint16_t(low | unsigned(next()) << 8); }
+  } input{content, at};
+  struct Output {
+    std::vector<std::uint8_t> bytes;
+    std::size_t limit;
+    void reserve(unsigned count) const {
+      if (count > limit - bytes.size()) throw std::runtime_error("Oversized compressed content");
     }
-  }
+    void write(std::uint8_t value) { bytes.push_back(value); }
+    void word(std::uint16_t value) { write(std::uint8_t(value)); write(std::uint8_t(value >> 8)); }
+    int reference(std::uint16_t offset) const { return offset; }
+    unsigned read(int at) const {
+      if (at < 0 || unsigned(at) >= bytes.size()) throw std::runtime_error("Invalid compressed content back reference");
+      return bytes[unsigned(at)];
+    }
+    void advance(int &at, int delta) const { at += delta; }
+  } output{{}, limit};
+  detail::decode_content(input, output);
+  return std::move(output.bytes);
 }
 } // namespace eb::native

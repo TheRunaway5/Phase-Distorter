@@ -147,6 +147,7 @@ SubstitutionResources::import(std::span<const std::uint8_t> image, GameVersion v
     for (unsigned i = 0; i < result->npc_enemies_.size(); ++i) {
         require(npc[i * 2 + 1] < result->enemies_.size(), "NPC name references an invalid enemy catalog entry");
         result->npc_enemies_[i] = npc[i * 2 + 1];
+        result->npc_flags_[i] = npc[i * 2];
     }
     const auto abilities = bytes(image,source.abilities,54 * 15);
     for (unsigned i = 0; i < result->abilities_.size(); ++i) {
@@ -179,6 +180,11 @@ std::span<const std::uint8_t> SubstitutionResources::item_text(unsigned id) cons
 std::span<const std::uint8_t> SubstitutionResources::raw_item_name(unsigned id) const {
     (void)item_text_lengths_.at(id);
     return std::span(item_table_).subspan(id * item_stride_,item_name_size_);
+}
+std::uint16_t SubstitutionResources::item_cost(unsigned id) const {
+    (void)item_text_lengths_.at(id);
+    const auto at = id * item_stride_ + item_name_size_ + 1;
+    return std::uint16_t(item_table_[at] | unsigned(item_table_[at + 1]) << 8);
 }
 ItemProperties SubstitutionResources::item_properties(unsigned id) const {
     (void)item_text_lengths_.at(id);

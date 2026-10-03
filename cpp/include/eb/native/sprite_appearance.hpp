@@ -18,6 +18,7 @@ struct SpriteFrameSelection {
     SpriteSurface surface = SpriteSurface::Normal;
     SpriteFrameFormat format = SpriteFrameFormat::FourDirection;
     bool operator==(const SpriteFrameSelection &) const = default;
+    void snapshot_io(SnapshotArchive &archive);
 };
 
 struct FourDirectionWalk {
@@ -53,6 +54,8 @@ class SpriteAppearance {
     // of dimensions/shape needs a newly created appearance, as in the source.
     void set_sprite(unsigned sprite);
     unsigned sprite() const { return requested_sprite_; }
+    unsigned geometry_sprite() const { return geometry_sprite_; }
+    void snapshot_io(SnapshotArchive &archive);
     const std::optional<SpriteFrameSelection> &displayed() const { return displayed_; }
     std::uint16_t fingerprint() const { return fingerprint_; }
     bool flashing_hidden() const { return flashing_hidden_; }

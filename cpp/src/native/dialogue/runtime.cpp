@@ -60,6 +60,8 @@ struct Runtime::Execution {
         NumberPadding,
         CompareUnsigned,
         TextAnimation,
+        BattleAnimation,
+        BattleGrammar,
         Inventory,
         PartyQuery,
         ItemCommand,
@@ -293,6 +295,13 @@ struct Runtime::Execution {
                 break;
             case 4: ask(RequestKind::ShowMeters, source, command, selector); break;
             case 8: frame.handler = Handler::TextAnimation; break;
+            case 0x13: frame.handler = Handler::BattleAnimation; break;
+            case 0x14: case 0x15:
+                if (program->version() == GameVersion::US) {
+                    frame.selector = selector;
+                    frame.handler = Handler::BattleGrammar;
+                }
+                break;
             case 9: frame.handler = Handler::NumberPadding; break;
             case 0x0d: case 0x0e: case 0x0f:
                 ask(RequestKind::Substitution, source, command, selector);
@@ -603,6 +612,25 @@ struct Runtime::Execution {
             ask(RequestKind::Substitution, source, frame.command, selector, operand);
             return;
         }
+        if (handler == Handler::BattleGrammar) {
+            complete_handler();
+            ask(RequestKind::BattleGrammar, source, frame.command, frame.selector);
+            pending->battle_grammar = BattleGrammarRequest{frame.selector == 0x15, value};
+            return;
+        }
+        if (handler == Handler::BattleAnimation) {
+            if (!frame.argument_count) {
+                frame.arguments[frame.argument_count++] = value;
+                return;
+            }
+            const BattleAnimationRequest animation{
+                std::uint16_t(unsigned(frame.arguments[0]) - 1),
+                std::uint16_t(unsigned(value) - 1)};
+            complete_handler();
+            ask(RequestKind::BattleAnimation, source, frame.command, 0x13);
+            pending->battle_animation = animation;
+            return;
+        }
         if (handler == Handler::Call || handler == Handler::Jump || handler == Handler::SubroutineTarget) {
             frame.arguments.at(frame.argument_count++) = value;
             if (frame.argument_count < 4)
@@ -871,6 +899,13 @@ void Runtime::respond(Response response) {
             e.ask(RequestKind::ResetMenu, request.source, request.command, request.selector);
             return;
         }
+    } else if (request.kind == RequestKind::BattleAnimation) {
+        if (!request.battle_animation || !response.battle_animation_result)
+            throw std::logic_error("Battle animation requires its complete typed result");
+        // Resolve the current focus after every real setup wait and callback.
+        // The original bool is sign-extended into the complete working dword.
+        if (response.battle_animation_result->executed)
+            e.set_working(request.source, response.battle_animation_result->value ? 1u : 0u);
     } else if (request.kind == RequestKind::ItemCommand) {
         if (!request.item_command || !response.item_result ||
             response.item_result->argument.has_value() != (request.item_command->kind == ItemCommandKind::Give))
@@ -885,6 +920,9 @@ void Runtime::respond(Response response) {
         if (*request.npc_gift == NpcGiftAction::IsOpen) e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::PartyQuery) {
         if (!request.party_query) throw std::logic_error("Party query lacks its typed operands");
+        e.set_working(request.source, response.value);
+    } else if (request.kind == RequestKind::BattleGrammar) {
+        if (!request.battle_grammar) throw std::logic_error("Battle grammar lacks its literal selector");
         e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::PreparedValue) {
         if (!response.prepared_value)

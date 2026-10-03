@@ -6,6 +6,7 @@
 #include "eb/native/dialogue/window_resources.hpp"
 
 namespace eb::native::party { class MeterWindows; class State; }
+namespace eb::native::battle { class Roster; struct ActionState; }
 namespace eb::native::dialogue {
 // A semantic cell in the shared UI surface. Artwork comes from the existing
 // WindowGraphics owner; no second font atlas or processor descriptor is held.
@@ -59,10 +60,12 @@ struct WindowMetadata {
 // Receives actual authored palette writes, including repeated equal colors.
 // The publisher is borrowed and must outlive its binding. Ranges distinguish
 // full32-color theme publication from the four animated colors at offset20.
+enum class WindowPaletteUpload : std::uint8_t { Background = 8, Full = 24 };
 class WindowPalettePublication {
   public:
     virtual ~WindowPalettePublication() = default;
-    virtual void publish_window_range(unsigned first, std::span<const std::uint16_t>) = 0;
+    virtual void publish_window_range(unsigned first, std::span<const std::uint16_t>,
+                                      WindowPaletteUpload = WindowPaletteUpload::Full) = 0;
 };
 
 // Original CREATE/CLOSE and BG2 window composition expressed as native state.
@@ -133,6 +136,10 @@ class WindowHost {
     PreparedMessage *prepared_message() const;
     // Unbound hosts retain a typed external request instead of guessing data.
     std::optional<std::uint16_t> query_party(const PartyQueryRequest &) const;
+    // Borrow the actual physical battle selectors and admitted roster while
+    // output is idle. They must outlive every dialogue using this binding.
+    void bind_battle(const battle::Roster&, const battle::ActionState&);
+    std::optional<std::uint16_t> query_battle(const BattleGrammarRequest&) const;
     // One lazily created substitution owner shares this host's scratch/state.
     TextSubstitutions &substitutions();
     // Context commands share one source attribute backup and the existing
@@ -176,8 +183,22 @@ class WindowHost {
     std::shared_ptr<const TextFrame> frame() const;
     // The retained offscreen row28 is separate from the canonical 224px view.
     std::shared_ptr<const TextFrame> tail_frame() const;
+    // The actual retained32-row UI tilemap, including row28 and the three
+    // lower rows untouched by ordinary window publication. A cold host starts
+    // with empty lower rows; a restored display supplies their real artwork
+    // identities before it can be scrolled into view.
+    std::shared_ptr<const TextFrame> full_frame() const;
+    void restore_lower_rows(std::span<const ArtworkCellReference, 96>);
+    // Immediate startup BG3 DMA clears displayed descriptors only. Staged
+    // window rows and queued transfers remain live for their later publisher.
+    void clear_published_tilemap();
     void load_artwork(unsigned flavor);
     void bind_palette_publication(WindowPalettePublication &);
+    WindowPalettePublication *palette_publication() const noexcept;
+    // Replace only the expected live sink. No colors, queued uploads or
+    // published windows are copied or consumed by this routing change.
+    void replace_palette_publication(const WindowPalettePublication &expected,
+                                     WindowPalettePublication &next);
     void clear_palette_publication(const WindowPalettePublication &) noexcept;
     void publish_palette(unsigned flavor, bool incapacitated = false, bool transitions_disabled = false);
     void animate_palette(unsigned flavor, std::uint64_t logical_frame);

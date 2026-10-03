@@ -1,4 +1,6 @@
 #include "eb/snes_bus.hpp"
+#include "eb/threed_npc_restoration.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "eb/overworld_sprite_draw.hpp"
 #include "generated_profile.hpp"
 
@@ -6,6 +8,43 @@
 #include <stdexcept>
 
 namespace eb {
+void SnesBus::snapshot_io(SnapshotArchive &archive) {
+    bool host = bool(host_sprites_), native = bool(native_sprite_runtime_);
+    bool effects = bool(native_sprite_effects_), stationary = native_stationary_sprites_enabled_;
+    archive(host, native, effects, stationary);
+    if (archive.loading()) {
+        if (effects != native || (stationary && !native))
+            throw std::runtime_error("Invalid snapshot native sprite ownership");
+        // Immutable content and service references come from this cartridge.
+        // This candidate bus has not run yet; startup ownership is still safe.
+        enable_native_sprite_runtime(native, stationary);
+        enable_host_sprite_resources(host);
+    }
+    archive(sprite_snapshots_enabled_, logical_clock_policy_, native_actor_frame_,
+            native_actor_tick_count_, native_actor_wait_clocks_, native_actor_fades_,
+            work_ram, video_ram, palette_ram, object_attributes, save_ram,
+            audio_to_main_ports, main_to_audio_ports, native_framebuffer, completed_frames,
+            ppu_registers_, cpu_io_registers_, dma_registers_, hdma_active_, hdma_transfer_,
+            background_scroll_x_, background_scroll_y_, mode7_transform_, mode7_scroll_offsets_,
+            open_bus_, ppu1_bus_, ppu2_bus_, scroll_latch_, mode7_latch_, oam_latch_, cgram_latch_,
+            vram_address_, vram_buffer_, oam_address_, cgram_address_, oam_reload_, fixed_color_,
+            latched_h_, latched_v_, latch_h_high_, latch_v_high_, counters_latched_,
+            wram_address_, buttons_, joy_latch_, joy_result_, joy_position_, joy_strobe_,
+            scanline_master_clock_, scanline_index_, dma_stall_master_clocks_, autojoy_remaining_clocks_,
+            master_clocks_, refresh_clock_, refresh_done_, nmi_flag_, nmi_pending_, irq_flag_,
+            multiply_result_, divide_result_, pending_product_, pending_quotient_,
+            math_remaining_cpu_cycles_, pending_divide_, sprite_status_);
+    if (host) archive(*host_sprites_);
+    if (native) archive(*native_sprite_runtime_, *native_sprite_effects_);
+    archive(scene_renderer_);
+    if (archive.loading()) {
+        if (scanline_index_ >= 262 || scanline_master_clock_ >= 1364 || wram_address_ >= 0x20000 ||
+            joy_position_ > 16 || (logical_clock_policy_ != LogicalClockPolicy::SourceTiming &&
+                                  logical_clock_policy_ != LogicalClockPolicy::ActorFrames))
+            throw std::runtime_error("Invalid hardware snapshot state");
+        if (native) scene_renderer_.bind_snapshot_resources(native_sprite_runtime_->resources());
+    }
+}
 namespace {
 // Each DMA mode walks a repeating set of B-bus register offsets. HDMA uses
 // the same pattern but only one mode-sized group per transferred scanline.
@@ -30,8 +69,8 @@ void write_dma_word(std::array<uint8_t, 16> &registers, unsigned offset, uint16_
 // Start with forced blank and uninitialized cartridge SRAM. The source game's
 // reset routine performs normal register/RAM setup through the same bus used
 // during play; this constructor does not fast-forward any game initialization.
-SnesBus::SnesBus(std::span<const uint8_t> rom, GameVersion version)
-    : game_version_(version), source_profile_(&source_profile(version)),
+SnesBus::SnesBus(std::span<const uint8_t> rom, GameVersion version, bool restore_threed_npcs)
+    : game_version_(version), restore_threed_npcs_(restore_threed_npcs), source_profile_(&source_profile(version)),
       cartridge_rom_(rom.begin(), rom.end()) {
     if (cartridge_rom_.empty())
         throw std::invalid_argument("empty cartridge image");
@@ -76,7 +115,7 @@ void SnesBus::enable_native_sprite_runtime(bool enabled, bool prepare_stationary
         std::optional<EnemySpritePreparation> enemy;
         if (prepare_stationary) {
             stationary = std::make_shared<native::StationaryNpcSprites>(cartridge_rom_, game_version_,
-                                                                       runtime.resources());
+                runtime.resources(), native::NpcSpriteReadinessLimits{}, restore_threed_npcs_);
             enemy.emplace(cartridge_rom_, game_version_, runtime.resources());
         }
         // All content validation finishes before any live owner is replaced.
@@ -214,6 +253,8 @@ uint8_t SnesBus::read_byte(uint32_t address) {
         }
         const unsigned offset = (base + index) % cartridge_rom_.size();
         value = cartridge_rom_[offset];
+        if (restore_threed_npcs_)
+            value = restored_threed_npc_byte(threed_npc_table_offset(game_version_), offset, value);
         if (debug_read_rom)
             value = debug_read_rom(offset, value);
     }

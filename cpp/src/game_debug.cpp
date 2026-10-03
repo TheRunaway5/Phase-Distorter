@@ -1,8 +1,10 @@
 #include "eb/game_debug.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/main_cpu_65816.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "generated_profile.hpp"
 #include <algorithm>
+#include <stdexcept>
 
 namespace eb {
 GameDebug::GameDebug(SnesBus& bus, MainCpu65816& cpu)
@@ -26,7 +28,12 @@ void GameDebug::write_word(unsigned address, unsigned value) {
 void GameDebug::configure(GameDebugSettings settings) {
     if (settings == settings_) return;
     settings_ = settings;
-    if (settings.noclip || settings.enemies_ignore) {
+    install_hooks();
+    refresh_stats();
+}
+
+void GameDebug::install_hooks() {
+    if (settings_.noclip || settings_.enemies_ignore) {
         bus_.debug_read_wram = [this](unsigned address, std::uint8_t value) {
             if (!ready_) return value;
             // The game's bit 1 bypasses terrain and NPC collision, while the
@@ -39,12 +46,60 @@ void GameDebug::configure(GameDebugSettings settings) {
     } else {
         bus_.debug_read_wram = {};
     }
-    if (settings.infinite_hp || settings.infinite_pp) {
+    if (settings_.infinite_hp || settings_.infinite_pp) {
         bus_.debug_write_wram = [this](unsigned address, std::uint8_t value) { return filter_stat_write(address, value); };
     } else {
         bus_.debug_write_wram = {};
     }
-    refresh_stats();
+}
+
+void GameDebug::snapshot_io(SnapshotArchive &archive) {
+    archive(settings_.infinite_hp, settings_.infinite_pp, settings_.noclip, settings_.enemies_ignore,
+            ready_, status_, original_max_, captured_max_, party_attempts_);
+    bool pending = bool(pending_request_);
+    archive(pending);
+    if (archive.loading()) {
+        if (pending) pending_request_.emplace();
+        else pending_request_.reset();
+    }
+    if (pending) {
+        archive(pending_request_->kind, pending_request_->destination, pending_request_->party);
+        if (archive.loading() && pending_request_->kind != GameDebugRequest::Kind::Teleport &&
+            pending_request_->kind != GameDebugRequest::Kind::Party)
+            throw std::runtime_error("Invalid snapshot debug request");
+    }
+    bool suspended = bool(suspended_call_);
+    archive(suspended);
+    if (archive.loading()) {
+        if (suspended) suspended_call_.emplace();
+        else suspended_call_.reset();
+    }
+    if (suspended) {
+        auto &call = *suspended_call_;
+        archive(call.accumulator, call.x_index, call.y_index, call.stack_pointer, call.direct_page,
+                call.status_register, call.data_bank, call.program_counter, call.continuation);
+        if (archive.loading() && (call.program_counter > 0xffffff ||
+            (call.continuation != CallContinuation::PartyChange && call.continuation != CallContinuation::FadeOut &&
+             call.continuation != CallContinuation::BlackFrame)))
+            throw std::runtime_error("Invalid suspended snapshot debug call");
+    }
+    bool teleport = bool(active_teleport_);
+    unsigned destination = teleport ? active_teleport_->id : 0;
+    archive(teleport, destination);
+    if (archive.loading()) {
+        active_teleport_.reset();
+        if (teleport) {
+            const auto places = debug_destinations();
+            const auto found = std::find_if(places.begin(), places.end(),
+                [&](auto place) { return place.id == destination; });
+            if (found == places.end()) throw std::runtime_error("Unknown snapshot teleport destination");
+            active_teleport_ = *found;
+        }
+        // Reinstall callbacks on the candidate owners without refreshing stats
+        // or submitting a new command. Snapshot reads never advance gameplay.
+        install_hooks();
+        install_teleport_hook();
+    }
 }
 
 std::uint8_t GameDebug::filter_stat_write(unsigned address, std::uint8_t value) const {
@@ -273,6 +328,15 @@ void GameDebug::before_step() {
 void GameDebug::start_teleport() {
     const auto places = debug_destinations();
     active_teleport_ = *std::find_if(places.begin(), places.end(), [this](auto place) { return place.id == pending_request_->destination; });
+    install_teleport_hook();
+    write_word(source_.teleport_state.destination, 16);
+    write_word(source_.teleport_state.style, 3); // TELEPORT_STYLE::INSTANT
+    pending_request_.reset();
+    status_ = "Teleport requested.";
+}
+
+void GameDebug::install_teleport_hook() {
+    if (!active_teleport_) { bus_.debug_read_rom = {}; return; }
     // Slot 16 is the unused final PSI destination. Redirect its four
     // coordinate bytes for this one transition; the original instant-warp
     // routine loads the map, places followers, and fades back in.
@@ -288,9 +352,5 @@ void GameDebug::start_teleport() {
         }
         return value;
     };
-    write_word(source_.teleport_state.destination, 16);
-    write_word(source_.teleport_state.style, 3); // TELEPORT_STYLE::INSTANT
-    pending_request_.reset();
-    status_ = "Teleport requested.";
 }
 }
