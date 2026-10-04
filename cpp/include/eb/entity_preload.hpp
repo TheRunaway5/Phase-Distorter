@@ -6,6 +6,8 @@
 
 namespace eb {
 class SnesBus;
+class MainCpu65816;
+class SnapshotArchive;
 // Source loaders own appearance conditions, selection and actor creation.
 // The desktop path widens their queries with shared actor/task admission checks.
 class EntityPreload {
@@ -23,6 +25,13 @@ public:
     extra_pixels_ = RenderDistance(width).activation_extension(artwork);
   }
   bool enabled() const { return extra_pixels_ != 0; }
+  // Horizontal streaming must visit the canonical column before the wider
+  // column: static NPCs deliberately retain the original activation limits.
+  void begin_column(MainCpu65816 &cpu, std::uint8_t opcode, unsigned length,
+                    std::uint32_t operand, const SnesBus *hardware);
+  void finish_column(MainCpu65816 &cpu);
+  void snapshot_columns(SnapshotArchive &archive);
+  void reset_columns() { column_ = {}; }
   void adapt(GameVersion version, std::uint32_t pc, std::uint8_t opcode,
              unsigned length, std::uint32_t &operand,
              std::uint16_t &accumulator, const SnesBus *hardware = nullptr,
@@ -32,5 +41,15 @@ private:
   friend class MainCpu65816;
   unsigned extra_pixels_{};
   bool guarded_world_{};
+  struct Registers {
+    std::uint16_t a{}, x{}, y{}, direct{};
+    std::uint8_t status{}, bank{};
+  };
+  struct Column {
+    unsigned phase{}; // 0 idle, 1 canonical call, 2 additional call
+    std::uint32_t site{};
+    std::uint16_t stack{}, extended_x{};
+    Registers input{}, canonical_return{};
+  } column_;
 };
 } // namespace eb

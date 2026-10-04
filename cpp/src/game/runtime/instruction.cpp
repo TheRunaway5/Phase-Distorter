@@ -24,6 +24,8 @@ Instruction::Instruction(MainCpu65816 &cpu, std::uint8_t timing_opcode, std::uin
       cycles_(minimum_instruction_cycles[timing_opcode]), operand_mask_(0),
       byte_operand_(cpu.accumulator_is_8_bit()) {
     cpu_.memory_wait_master_clocks_ = 0;
+    if (timing_opcode == 0x22 && cpu_.entity_preload_.enabled())
+        cpu_.entity_preload_.begin_column(cpu_, timing_opcode, length, operand_, cpu_.hardware_);
     if (cpu_.entity_preload_.enabled() && (cpu_.status_register & 0x30) == 0 &&
         (instruction_address_ & 0xff0000) == 0xc00000)
         cpu_.entity_preload_.adapt(cpu_.game_version, instruction_address_, timing_opcode, length, operand_,

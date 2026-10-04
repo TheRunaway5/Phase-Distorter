@@ -1,4 +1,6 @@
 #include "eb/entity_preload.hpp"
+#include "eb/main_cpu_65816.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "eb/native/stationary_npc_policy.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/source_entity_admission.hpp"
@@ -39,6 +41,48 @@ bool npc_site(bool jp, std::uint32_t pc, std::uint8_t opcode, unsigned length) {
            pc == (jp ? 0xc02500u : 0xc024f2u) || pc == (jp ? 0xc024c4u : 0xc024b6u)));
 }
 } // namespace
+void EntityPreload::begin_column(MainCpu65816 &cpu, std::uint8_t opcode, unsigned length,
+                                 std::uint32_t operand, const SnesBus *hardware) {
+  if (!guarded_world_ || !enabled() || column_.phase || !hardware ||
+      opcode != 0x22 || length != 4 || cpu.emulation_mode || (cpu.status_register & 0x30)) return;
+  const bool jp = cpu.game_version == GameVersion::JP;
+  const bool right = cpu.program_counter == (jp ? 0xc0160au : 0xc015f4u);
+  const bool left = cpu.program_counter == (jp ? 0xc0165du : 0xc01647u);
+  if ((!right && !left) || operand != (jp ? 0xc025ddu : 0xc025cfu)) return;
+  const auto view = hardware->scene_read_view();
+  if (!word(view.work_ram, npc_layout(jp).enabled) || !SourceEntityAdmission::ordinary_world(view)) return;
+  column_.phase = 1; column_.site = cpu.program_counter; column_.stack = cpu.stack_pointer;
+  column_.extended_x = std::uint16_t(cpu.accumulator + (right ? int(extra_pixels_ / 8) : -int(extra_pixels_ / 8)));
+  column_.input = {cpu.accumulator, cpu.x_index, cpu.y_index, cpu.direct_page, cpu.status_register, cpu.data_bank};
+}
+void EntityPreload::finish_column(MainCpu65816 &cpu) {
+  if (!column_.phase || cpu.program_counter != column_.site + 4 || cpu.stack_pointer != column_.stack) return;
+  const auto restore = [&](const Registers &r) {
+    cpu.accumulator = r.a; cpu.x_index = r.x; cpu.y_index = r.y;
+    cpu.direct_page = r.direct; cpu.status_register = r.status; cpu.data_bank = r.bank;
+  };
+  if (column_.phase == 1) {
+    column_.canonical_return = {cpu.accumulator, cpu.x_index, cpu.y_index, cpu.direct_page,
+                                 cpu.status_register, cpu.data_bank};
+    restore(column_.input);
+    cpu.accumulator = column_.extended_x;
+    cpu.program_counter = column_.site;
+    column_.phase = 2;
+  } else {
+    restore(column_.canonical_return);
+    column_ = {};
+  }
+}
+void EntityPreload::snapshot_columns(SnapshotArchive &archive) {
+  if (archive.format_version() < 6) { if (archive.loading()) column_ = {}; return; }
+  archive(column_.phase, column_.site, column_.stack, column_.extended_x);
+  const auto registers = [&](Registers &r) { archive(r.a, r.x, r.y, r.direct, r.status, r.bank); };
+  registers(column_.input); registers(column_.canonical_return);
+  const bool jp_site = column_.site == 0xc0160a || column_.site == 0xc0165d;
+  const bool us_site = column_.site == 0xc015f4 || column_.site == 0xc01647;
+  if (archive.loading() && (column_.phase > 2 || (column_.phase && (!guarded_world_ || !(jp_site || us_site)))))
+    throw std::runtime_error("Invalid snapshot NPC column continuation");
+}
 void EntityPreload::adapt(GameVersion version, std::uint32_t pc,
                           std::uint8_t opcode, unsigned length,
                           std::uint32_t &operand,
@@ -76,6 +120,9 @@ void EntityPreload::adapt(GameVersion version, std::uint32_t pc,
       return;
     }
     if (!word(view.work_ram, l.enabled) || !SourceEntityAdmission::ordinary_world(view)) return;
+    // begin_column schedules an additional source call after this canonical
+    // call returns. Replacing the canonical scan strands stationary actors.
+    if (opcode == 0x22 && operand == (jp ? 0xc025ddu : 0xc025cfu)) return;
     if (opcode == 0xa9) {
       const unsigned npc = word(view.work_ram, std::uint16_t(direct_page + 0x20));
       if (!SourceEntityAdmission::moving_npc_tasks(view, npc)) return;

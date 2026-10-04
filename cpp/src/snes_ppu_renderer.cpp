@@ -358,7 +358,6 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
     }
     // Windows remain anchored to the native picture. Extending their edge
     // membership preserves full-screen fades and clips in the extra picture.
-    const unsigned window_x = unsigned(std::clamp(x, 0, 255));
     for (unsigned layer = 0; layer < 5; ++layer) {
         // Disabled layers cannot contribute to either the picture or its
         // flash-safe reference. Avoid tile/map decoding for those layers on
@@ -406,7 +405,8 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
                                                                           margin && scenery ? this : nullptr);
         if (candidate.priority < 0)
             continue;
-        const bool masked = view.layer_window_contains(layer, window_x);
+        const bool masked = margin ? presentation_window_contains(view, layer, x, y)
+                                   : view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
         if ((view.ppu_registers[0x2c] & (1 << layer)) &&
             !((view.ppu_registers[0x2e] & (1 << layer)) && masked) &&
             candidate.priority > main_screen.priority)
@@ -432,7 +432,8 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
                 reference_sub = clean;
         }
     }
-    const bool inside = view.layer_window_contains(5, window_x);
+    const bool inside = margin ? presentation_window_contains(view, 5, x, y)
+                               : view.layer_window_contains(5, unsigned(std::clamp(x, 0, 255)));
     const auto affected = [inside](unsigned setting) {
         return setting == 3 || (setting == 1 && !inside) || (setting == 2 && inside);
     };

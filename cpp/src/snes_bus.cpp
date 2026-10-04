@@ -1,4 +1,5 @@
 #include "eb/snes_bus.hpp"
+#include "eb/photosensitivity_filter.hpp"
 #include "eb/threed_npc_restoration.hpp"
 #include "eb/snapshot_archive.hpp"
 #include "eb/overworld_sprite_draw.hpp"
@@ -8,6 +9,9 @@
 #include <stdexcept>
 
 namespace eb {
+namespace {
+constexpr bool giygas_group(unsigned group) { return (group >= 476 && group <= 480) || group == 483; }
+}
 void SnesBus::snapshot_io(SnapshotArchive &archive) {
     bool host = bool(host_sprites_), native = bool(native_sprite_runtime_);
     bool effects = bool(native_sprite_effects_), stationary = native_stationary_sprites_enabled_;
@@ -37,6 +41,12 @@ void SnesBus::snapshot_io(SnapshotArchive &archive) {
     if (host) archive(*host_sprites_);
     if (native) archive(*native_sprite_runtime_, *native_sprite_effects_);
     archive(scene_renderer_);
+    if (archive.format_version() >= 7)
+        archive(prayer_psi_saved_, prayer_psi_, filter_psi_active_, filter_psi_animation_);
+    else if (archive.loading()) {
+        prayer_psi_saved_ = filter_psi_active_ = false;
+        prayer_psi_ = {}; filter_psi_animation_ = 0;
+    }
     if (archive.loading()) {
         if (scanline_index_ >= 262 || scanline_master_clock_ >= 1364 || wram_address_ >= 0x20000 ||
             joy_position_ > 16 || (logical_clock_policy_ != LogicalClockPolicy::SourceTiming &&
@@ -193,6 +203,37 @@ void SnesBus::capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::u
     if (host_sprites_)
         host_sprites_->before_instruction(pc, a, x, y, stack, direct, work_ram);
     const bool jp = game_version_ == GameVersion::JP;
+    const unsigned psi = source_profile_->wram_psi_animation_state;
+    // Prayer text executes deep overworld scratch frames in the same WRAM
+    // region as the suspended battle's PSI state. Preserve the battle owner
+    // before switching scenes; restore before its first resumed update.
+    if (pc == (jp ? 0xc2c334u : 0xc2c37au)) {
+        std::copy_n(work_ram.begin() + psi, prayer_psi_.size(), prayer_psi_.begin());
+        prayer_psi_saved_ = true;
+    }
+    const unsigned battle = source_profile_->wram_battle_mode_flag;
+    if (!prayer_psi_saved_ && pc == (jp ? 0xc2c1cau : 0xc2c21fu) &&
+        giygas_group(a) && !work_ram[battle] && !work_ram[battle + 1]) {
+        // Older snapshots taken inside prayer text lack the suspended owner.
+        // There is no live PSI animation in that overworld scene to resume.
+        prayer_psi_ = {};
+        prayer_psi_saved_ = true;
+    }
+    if (prayer_psi_saved_ && (pc == (jp ? 0xc2c1cau : 0xc2c21fu) ||
+                             pc == (jp ? 0xc2c383u : 0xc2c3c9u))) {
+        std::copy(prayer_psi_.begin(), prayer_psi_.end(), work_ram.begin() + psi);
+        if (pc == (jp ? 0xc2c383u : 0xc2c3c9u)) prayer_psi_saved_ = false;
+    }
+    if (pc == (jp ? 0xc2e06bu : 0xc2e116u)) {
+        filter_psi_active_ = true; filter_psi_animation_ = a;
+    } else if (pc == (jp ? 0xc2e67bu : 0xc2e766u)) {
+        filter_psi_active_ = false;
+    }
+    if (pc == (jp ? 0xc0b128u : 0xc0b149u)) {
+        const unsigned at = std::uint16_t(direct + 0x0e);
+        scene_renderer_.capture_aperture(std::int16_t(a), std::int16_t(x), y,
+                                        work_ram[at] | unsigned(work_ram[std::uint16_t(at + 1)]) << 8);
+    }
     if (pc == (jp ? 0xc088a3u : 0xc088b1u)) {
         scene_renderer_.begin_sprite_frame(work_ram[0x2e]);
     } else if (native_sprite_runtime_ && pc == (jp ? 0xc08c49u : 0xc08c58u)) {
@@ -216,6 +257,14 @@ void SnesBus::capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::u
                                                  std::int16_t(x), std::int16_t(y), (next - base) / 4,
                                                  (end - base) / 4);
     }
+}
+
+FlashFilterContext SnesBus::flashing_context() const {
+    const unsigned at = game_version_ == GameVersion::JP ? 0x4e12 : 0x4a8c;
+    const unsigned group = work_ram[at] | unsigned(work_ram[at + 1]) << 8;
+    const unsigned battle = source_profile_->wram_battle_mode_flag;
+    return {bool(work_ram[battle] || work_ram[battle + 1]) && giygas_group(group),
+            filter_psi_active_, filter_psi_animation_};
 }
 
 // HiROM decode order matters: WRAM and low-bank I/O overlays take precedence

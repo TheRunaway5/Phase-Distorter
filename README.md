@@ -7,13 +7,13 @@ native desktop application for Linux and Windows. It includes keyboard and
 controller input, audio, persistent saves, a Settings window, and
 widescreen presentation with offscreen actor preloading.
 
-Version **0.2** is a development release. Both games run their respective
+Version **0.2.1** is a development release. Both games run their respective
 compiled program and use assets imported from the player's own supported ROM.
 ROMs and extracted gameplay asset packs are not included. You must supply your
 own copy before playing. The launcher and window icons derive from the provided
 Saturn artwork.
 
-[Draft v0.2 patch notes](releases/Phase-Distorter-0.2-patch-notes.md) · [Screenshots](#screenshots) · [Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
+[v0.2.1 patch notes](releases/Phase-Distorter-0.2.1-patch-notes.md) · [Screenshots](#screenshots) · [Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
 [Controls](#controls-and-display) · [Building](#building-from-source) ·
 [Saves](#saves-settings-and-updating) · [Troubleshooting](#troubleshooting)
 
@@ -56,8 +56,8 @@ A sanctuary cave panorama, including the sparkling boss encounter marker.
 
 ### Downloaded a release ZIP?
 
-1. Choose the [Windows ZIP](releases/Phase-Distorter-0.2-windows-x86_64.zip) or
-   [Linux ZIP](releases/Phase-Distorter-0.2-linux-x86_64.zip) from `releases/`.
+1. Choose the [Windows ZIP](releases/Phase-Distorter-0.2.1-windows-x86_64.zip) or
+   [Linux ZIP](releases/Phase-Distorter-0.2.1-linux-x86_64.zip) from `releases/`.
 2. Use **Extract All** or your archive manager to extract the entire application
    folder. **Do not run the application from inside the ZIP.** Keep its files
    together.
@@ -79,12 +79,12 @@ Platform archives are stored only in **`releases/`**:
 
 | Package | Contents |
 | --- | --- |
-| `releases/Phase-Distorter-0.2-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
-| `releases/Phase-Distorter-0.2-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
+| `releases/Phase-Distorter-0.2.1-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
+| `releases/Phase-Distorter-0.2.1-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
 
 Each ZIP contains one fresh application folder:
-`Phase-Distorter-0.2-windows-x86_64/` or
-`Phase-Distorter-0.2-linux-x86_64/`. Extract the entire ZIP and open the native
+`Phase-Distorter-0.2.1-windows-x86_64/` or
+`Phase-Distorter-0.2.1-linux-x86_64/`. Extract the entire ZIP and open the native
 application inside that folder. These runnable packages
 contain the required application files but no ROMs, imported gameplay asset
 packs, saves, or source/build trees. Supply your own supported ROM on first
@@ -92,11 +92,11 @@ launch. Each ZIP includes `README.txt`, a file manifest and checksums;
 `releases/SHA256SUMS` records the archive hashes, including retained older versions.
 
 For the repository-style executable layout, download the
-[combined v0.2 launcher ZIP](releases/Phase-Distorter-0.2-launchers-x86_64.zip)
-or use the [versioned launcher folder](releases/Phase-Distorter-0.2-launchers-x86_64/README.txt).
+[combined v0.2.1 launcher ZIP](releases/Phase-Distorter-0.2.1-launchers-x86_64.zip)
+or use the [versioned launcher folder](releases/Phase-Distorter-0.2.1-launchers-x86_64/README.txt).
 It includes both platforms, `launch.sh` / `launch.bat`, runtimes and shortcut
-setup. The canonical `launchers/` folder also contains the v0.2 binaries.
-Each v0.2 bundle includes `VERSION` and `PATCH-NOTES.md`.
+setup. The canonical `launchers/` folder also contains the v0.2.1 binaries.
+Each v0.2.1 bundle includes `VERSION` and `PATCH-NOTES.md`.
 
 ### Running from the source repository
 
@@ -361,17 +361,11 @@ files are never deleted by these controls.
 ### Optional photosensitivity filter
 
 The **Photosensitivity filter** in **F1 → Display** is **disabled by default**
-and works independently of widescreen. It analyzes every completed picture in
-both games and immediately dims the whole screen when strong contrast changes
-or rapid pixel/color flicker cross its thresholds. Repeated flashes keep the
-screen dimmed; brightness returns gradually after the activity stops. Detection
-uses screen pixels without per-attack or per-scene lists. Game execution, input,
-audio, and save data remain unchanged.
-
-Coverage checks include the requested Kraken/Starman/Giygas backgrounds, every
-authored PSI animation and original poison/nausea/sunstroke flashes in both
-games. Lightning, white-out and warp flashes also have rendered mechanism
-fixtures; complete story cutscene playthroughs remain unverified.
+and works independently of widescreen. It uses the SNES Classic EarthBound
+filter's 80% brightness ramp and quantized temporal feedback for PSI and Giygas.
+The feedback persists across native frames, including prayer returns; host
+redraws do not advance it. Filtering affects the complete picture, including
+text and widescreen margins, while the original framebuffer remains intact.
 
 The setting is saved with your display preferences. To enable it before the
 first game frame, use:
@@ -384,11 +378,9 @@ Use `--no-reduce-flashing` to override a saved enabled setting. The Windows
 executable accepts the same flags. `--presentation-screenshot` and `--gl-screenshot` capture
 the adjusted image; `--screenshot` retains the original framebuffer for checks.
 
-This independently implemented filter is inspired by reduced-flashing
-re-releases; Nintendo's exact Wii U/Switch algorithms are not reproduced or
-verified. **It cannot guarantee seizure safety or eliminate every trigger.**
-See [filter behavior and sources](cpp/docs/photosensitivity.md) for its scope,
-parameters, and limitations.
+The pixel processing has been compared directly with the SNES Classic's
+EarthBound filter. Separate Wii U output and physical display parity remain
+unverified. See [filter behavior and verification](cpp/docs/photosensitivity.md).
 
 Higher frame rates are available under **F1 → Display → Frame rate**: Native, 90–300 FPS, or Uncapped (`--fps 0`). **Direct scene rendering** draws verified overworld backgrounds and sprites at fractional positions without blending completed frames; gameplay and audio retain their original speed. It adds one game frame of visual latency. Battles and unsupported effects retain native frames. Use `--native-frames` to disable smoothing, or `--interpolation` for legacy image-based generation. See [timing and verification](cpp/docs/timing.md).
 
@@ -538,7 +530,7 @@ cmake --build build --parallel 4
 
 ## Saves, settings, and updating
 
-Version 0.2 retains the existing `ebsrc/EarthBoundCpp` application-data location:
+Version 0.2.1 retains the existing `ebsrc/EarthBoundCpp` application-data location:
 
 | Platform | Default directory |
 | --- | --- |
@@ -646,8 +638,8 @@ in `launchers/linux/lib/`, maintainers can validate and recreate the whitelisted
 runnable packages using Python 3:
 
 ```sh
-python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2-patch-notes.md --include-launchers --check
-python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2-patch-notes.md --include-launchers
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2.1-patch-notes.md --include-launchers --check
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2.1-patch-notes.md --include-launchers
 ```
 
 The packager writes versioned archives and the combined launcher snapshot to

@@ -1,11 +1,11 @@
 Phase Distorter @VERSION@ - Windows x86-64
 EarthBound / Mother 2 PC port
 
-This update improves widescreen/ultrawide rendering, frame pacing, audio delivery,
-CRT effects, reduced flashing, controllers and debugging. It fixes Paula
-recruitment, wall text and missing/pop-in props, and restores two Threed NPCs.
-PATCH-NOTES.md has the complete draft notes, including native component work
-and remaining migration limits. Existing supported imports and saves work.
+This update fixes NPCs and props disappearing at the original viewport edges,
+expands widescreen cutscenes and prayer apertures, corrects Giygas prayer-return
+stalls, and replaces automatic dimming with console brightness and PSI/Giygas
+feedback. PATCH-NOTES.md lists all changes since v0.2. Existing supported
+imports, normal saves and older snapshots remain usable.
 
 Use Extract All to unpack this entire ZIP, then open its
 Phase-Distorter-@VERSION@-windows-x86_64 folder and double-click Phase Distorter.exe.
@@ -45,11 +45,10 @@ Fixed intro artwork uses a centered 4:3 view. Animated Giygas static fills the
 selected wide view while the original intro card stays centered.
 The Mother 2 logo screen extends its background into widescreen margins while
 keeping the original logo and copyright centered.
-The filter analyzes every completed picture for contrast and rapid color/pattern
-changes, dims the entire picture immediately, then gradually restores brightness
-after a quiet period. It is an independent implementation, with no verified
-Nintendo parity, and cannot guarantee
-seizure safety or eliminate every trigger. Enable it before play with:
+The optional filter uses the SNES Classic EarthBound brightness ramp (about
+80% brightness) with temporal feedback for PSI effects and Giygas. It advances
+once per completed game frame and includes widescreen margins. Full console
+scene parity and medical safety are unverified. Enable it before play with:
   "Phase Distorter.exe" --reduce-flashing
 
 Settings -> Debug offers infinite health and PSI/PP at 999/999, noclip, and

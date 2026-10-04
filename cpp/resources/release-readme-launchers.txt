@@ -22,14 +22,15 @@ F11 toggles fullscreen. Arrow keys move; Z=B, X=A, A=Y, S=X, Q=L, W=R;
 Enter=Start; Right Shift=Select. Controllers are supported and remappable.
 Use --help for command-line options, --game earthbound / --game mother2 to
 choose a game, and --no-config to ignore saved display/controller preferences.
-The optional photosensitivity filter is an independently implemented automatic
-dimmer. Its exact Nintendo equivalence and medical safety are unverified.
+The optional photosensitivity filter uses console brightness (about 80%) and
+temporal feedback for PSI effects and Giygas. Full console scene parity and
+medical safety are unverified.
 
 Optional menu/shortcut setup: ./install-linux.sh or install-shortcuts.vbs.
 These create per-user shortcuts; keep this folder in place or rerun setup if
 it moves. No installation is required to play.
 
-PATCH-NOTES.md contains the complete draft v0.2 notes. VERSION identifies this
+PATCH-NOTES.md contains all changes since the previous release. VERSION identifies this
 launcher snapshot. MANIFEST.json and SHA256SUMS record its payload and hashes.
 NOTICE.txt, licenses/ and launchers/linux/lib/ document bundled dependencies.
 This is a development release; the full native engine migration is in progress.

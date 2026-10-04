@@ -24,6 +24,16 @@ void GameSceneRenderer::bind_snapshot_resources(std::shared_ptr<native::SpriteRe
 }
 
 void GameSceneRenderer::snapshot_io(SnapshotArchive &ar) {
+    if (ar.format_version() >= 7)
+        ar(aperture_valid_, aperture_x_, aperture_y_, aperture_radius_x_, aperture_radius_y_, presentation_aperture_);
+    else if (ar.loading()) {
+        aperture_valid_ = presentation_aperture_ = false;
+        aperture_x_ = aperture_y_ = 0; aperture_radius_x_ = aperture_radius_y_ = 0;
+    }
+    if (ar.loading() && aperture_valid_ && (aperture_x_ < 0 || aperture_x_ > 255 ||
+        aperture_y_ < 0 || aperture_y_ > 255 || !aperture_radius_x_ || aperture_radius_x_ > 256 ||
+        !aperture_radius_y_ || aperture_radius_y_ > 256))
+        throw std::runtime_error("Invalid snapshot aperture");
     if (ar.loading()) presentation_robot_ending_ = false; // Derived from the restored source actors.
     ar(direct_capture_, direct_world_tiles_, presentation_width_, requested_presentation_width_,
        presentation_frame_aspect_, presentation_framebuffer_, presentation_effects_enabled_,

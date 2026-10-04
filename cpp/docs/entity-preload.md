@@ -31,6 +31,24 @@ extents and rounds to the source loader's 64-pixel grid. Source activation and
 retention remain unchanged at native width; vertical bounds are unchanged.
 Increasing width mid-scene affects subsequent source queries.
 
+Horizontal scrolling preserves the original NPC column scan and then visits
+its wider counterpart. The source call finishes normally; a bounded continuation
+runs the second source call with its original inputs and restores the canonical
+call's return registers. Native width and non-world scenes add no call. Both
+scans retain the authored appearance, duplicate, creation and capacity checks.
+Snapshots preserve an in-flight continuation (format 6 and newer).
+
+The previous policy replaced the canonical column with the wider one. Static
+placements kept their original activation bounds, so the wider scan rejected
+them before they could activate. Walking never rescanned their canonical
+column. Prepared artwork then disappeared at the original viewport boundary,
+leaving no source actor, collision or dialogue behind it. Initial-map and
+isolated cell/row tests missed this because they bypassed horizontal streaming.
+`npc_preload_reference` now executes the actual left/right scrolling call sites
+in completed-load mode for people, lamps, presents, containers and sanctuary
+markers at five widths, under both source runtimes and regional content. It also
+saves and resumes exactly between the canonical and additional scans.
+
 Moving NPCs in the proven script 6/12 family can activate earlier. Other NPC
 programs retain their original activation until their worker-task lifetime is
 proven. Existing source-created actors retain the wider horizontal lifetime.

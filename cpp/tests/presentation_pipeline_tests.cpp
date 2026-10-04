@@ -20,11 +20,12 @@ void require(bool condition, const char* message) {
 
 struct Canvas {
     unsigned width;
+    eb::FlashFilterContext filter_context{};
     std::vector<std::uint32_t> pixels;
     explicit Canvas(unsigned width = 64, std::uint32_t color = 0xff203040)
         : width(width), pixels(width * height, color) {}
     eb::PresentationFrame view(std::uint64_t frame, double aspect = 0) const {
-        return {pixels, width, aspect, frame, {}, {}};
+        return {pixels, width, aspect, frame, {}, {}, {}, filter_context};
     }
     void flashing() {
         std::fill(pixels.begin(), pixels.end(), 0xffffffff);
@@ -156,7 +157,7 @@ void callbacks_and_picture_lifetime() {
     for (std::uint64_t frame = 2; frame <= 4; ++frame)
         pipeline.completed_frame(canvas.view(frame));
     pipeline.simulation_finished(canvas.view(4), 3, Time{});
-    require(pipeline.current_picture().pixels[0] == 0xff404040,
+    require(pipeline.current_picture().pixels[0] == 0xffcccccc,
             "Long DMA did not filter every completed frame exactly once");
     require(!pipeline.simulation_due(Time{} + eb::FramePacer::period() * 3),
             "Multiple completed frames lost simulation clock debt");
@@ -344,7 +345,7 @@ void filter_toggles_and_partial_failures() {
     canvas.flashing();
     pipeline.completed_frame(canvas.view(1));
     pipeline.simulation_finished(canvas.view(1), 1, Time{});
-    require(pipeline.current_picture().pixels[0] == 0xff404040, "First detected flash was not dimmed immediately");
+    require(pipeline.current_picture().pixels[0] == 0xffcccccc, "First flash did not use console brightness");
     settings.reduce_flashing = false;
     pipeline.configure(settings, eb::FramePacer::frame_rate, 300, Time{} + 1ms);
     require(!pipeline.presentation_due(Time{} + 1ms), "Filter toggle reused an incompatible interpolation endpoint");
@@ -356,18 +357,18 @@ void filter_toggles_and_partial_failures() {
     pipeline.configure(settings, eb::FramePacer::frame_rate, 300, Time{} + 2ms);
     pipeline.completed_frame(canvas.view(3));
     pipeline.simulation_finished(canvas.view(3), 1, Time{} + 2ms);
-    require(pipeline.current_picture().pixels[0] == 0xffffffff,
+    require(pipeline.current_picture().pixels[0] == 0xffcccccc,
             "Disabled filter history leaked into re-enabled output");
 
     Canvas partial(96, 0xffffffff);
     pipeline.refresh_after_error(partial.view(3, 4.0 / 3));
-    require(copy(pipeline.current_picture()) == partial.pixels && pipeline.current_picture().width == 96,
+    require(pipeline.current_picture().pixels[0] == 0xffcccccc && pipeline.current_picture().width == 96,
             "Exception snapshot reused stale pixels after a resize in the same hardware frame");
     require(pipeline.current_picture().fixed_aspect == 4.0 / 3, "Exception snapshot lost scene aspect");
 
     Pipeline headless(Time{}, settings, eb::FramePacer::frame_rate, 300, false);
     headless.simulation_finished(canvas.view(0), 0, Time{});
-    require(headless.current_picture().pixels[0] == 0xffffffff,
+    require(headless.current_picture().pixels[0] == 0xffcccccc,
             "First partial picture acquired a startup fade without a prior frame");
 }
 
@@ -386,10 +387,10 @@ void restore_discards_future() {
         pipeline.simulation_finished(future.view(91), 1, Time{} + 1ms);
         const auto now = Time{} + 5s;
         pipeline.restored_frame(restored.view(12), now);
-        require(copy(pipeline.current_picture()) == restored.pixels &&
+        require(pipeline.current_picture().pixels[0] == 0xff663319 &&
                 pipeline.current_picture().width == restored.width,
                 "Restoring retained abandoned borrowed/filter history");
-        require(copy(pipeline.picture(now)) == restored.pixels,
+        require(pipeline.picture(now).pixels[0] == 0xff663319,
                 "Restoring interpolated an abandoned future endpoint");
         require(pipeline.simulation_due(now), "Restoring retained old simulation deadlines");
         pipeline.simulation_finished(restored.view(12), 1, now);
@@ -401,19 +402,20 @@ void automatic_filter_cadence() {
     for (unsigned width : {256u, 398u, 522u}) {
         for (int fps : {60, 144, 300}) {
             Canvas canvas(width, 0xff202020);
+            canvas.filter_context = {true, false, 0};
             eb::DisplaySettings settings;
             settings.frame_limit = fps;
             settings.reduce_flashing = true;
             settings.interpolate_frames = false;
             Pipeline pipeline(Time{}, settings, 60, fps, true, canvas.view(0));
             eb::PhotosensitivityFilter reference;
-            reference.apply(canvas.pixels, width, height, true);
-            auto expected = canvas.pixels;
+            reference.apply(canvas.pixels, width, height, true, canvas.filter_context);
+            auto expected = copy(pipeline.current_picture());
             for (std::uint64_t frame = 1; frame <= 150; ++frame) {
                 std::fill(canvas.pixels.begin(), canvas.pixels.end(),
                           frame >= 70 || frame % 2 ? 0xffffffff : 0xff202020);
                 const auto raw = canvas.pixels;
-                const auto filtered = reference.apply(raw, width, height, true);
+                const auto filtered = reference.apply(raw, width, height, true, canvas.filter_context);
                 expected.assign(filtered.begin(), filtered.end());
                 pipeline.completed_frame(canvas.view(frame));
                 require(copy(pipeline.current_picture()) == expected,

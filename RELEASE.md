@@ -1,3 +1,54 @@
+# Phase Distorter — version 0.2.1 release bundle
+
+Prepared 2026-10-04 from the source checkout with all fixes since the actual
+packaged v0.2 source snapshot. The [v0.2.1 patch notes](releases/Phase-Distorter-0.2.1-patch-notes.md)
+cover viewport handoff, cutscene framing, prayer apertures and battle returns,
+console photosensitivity processing, snapshot compatibility and verification.
+
+| Artifact | Layout |
+| --- | --- |
+| [Linux x86-64 ZIP](releases/Phase-Distorter-0.2.1-linux-x86_64.zip) | Native application with bundled SDL2/GCC runtimes |
+| [Windows x86-64 ZIP](releases/Phase-Distorter-0.2.1-windows-x86_64.zip) | Native application with SDL2.dll |
+| [Combined launcher ZIP](releases/Phase-Distorter-0.2.1-launchers-x86_64.zip) | Both platforms in the repository-style layout |
+| [Versioned launcher folder](releases/Phase-Distorter-0.2.1-launchers-x86_64/README.txt) | The combined layout, already expanded |
+
+The canonical `launchers/linux/bin/eb_cpp` and
+`launchers/windows/bin/eb_cpp.exe` contain the new build; `launchers/VERSION`
+is 0.2.1. All bundles include `VERSION`, `PATCH-NOTES.md`, instructions,
+dependencies, licenses, a payload manifest and checksums. The platform ZIPs
+retain the earlier layout: extract one versioned application folder and run
+`Phase Distorter` or `Phase Distorter.exe` directly. Existing supported imports,
+normal saves and snapshot formats 1–6 remain usable.
+
+Rebuild with `cmake --build build --target refresh_launchers` and
+`cmake --build build-windows --target refresh_launchers`, then package with:
+
+```sh
+python3 cpp/tools/package_release.py --version 0.2.1 \
+  --patch-notes releases/Phase-Distorter-0.2.1-patch-notes.md --include-launchers
+```
+
+The [build record](releases/Phase-Distorter-0.2.1-build-info.json) identifies
+source inputs, binaries, archive hashes and verification scope. Archive hashes
+are also in [releases/SHA256SUMS](releases/SHA256SUMS).
+Linux requires glibc 2.43 or newer and desktop OpenGL. Windows execution checks
+use Wine; native Windows hardware validation remains outstanding. Packages
+contain no ROMs, imported packs, saves, snapshots or personal preferences.
+
+## v0.2.1 validation
+
+The fixed source passed 228 registered tests with 38 optional tests skipped on
+each platform. Separate US/JP asset-backed checks passed 240 horizontal source
+scan cases, 72 staged walking replays, sprite visibility and snapshot
+continuation. Source-backed scene checks passed 4,917,257 checks per region on
+Linux and Windows under Wine. Five packager regression checks passed.
+Detailed local evidence is retained in `build/verification/viewport-handoff/`
+and `build/verification/release-0.2.1/`. These are bounded replays and fixtures,
+not a manual full-game playthrough or physical VRR/controller certification.
+The desktop still uses `GameSession`; full native integration is in progress.
+
+## Historical v0.2 release
+
 # Phase Distorter — version 0.2 release bundle
 
 Prepared 2026-10-04 from the current source checkout, including the week of

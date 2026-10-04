@@ -43,13 +43,11 @@ walls, hotspot triggers, and NPC spawn boundaries are not interchangeable with
 graphics-region boundaries.
 
 Entity-directed story cameras (`UNKNOWN_C46698`/`C466A8`, camera mode 2)
-and active layer/color windows retain the authored 256-pixel canvas with black
-side margins. Their neighboring map storage can contain another room using the
-same combination, and extending window-edge membership can expose horizontal
-strips outside a prayer iris. This presentation policy applies to software and
-direct scene capture, leaves source-owned actors visible, and resets immediately
-when ordinary control/window state returns. Other camera modes and ordinary
-forest/cave borders retain their wide view.
+retain the map's selected border policy. Active layer/color windows use the
+authored 256-pixel canvas unless the source oval routine has supplied a captured
+aperture. Extending arbitrary window-edge membership can expose horizontal
+strips outside an iris. Software and direct scene capture share these rules,
+leave source-owned actors visible, and reset when window state changes.
 Direct scenery and actor quads also clip in display coordinates after
 interpolation; changing between the ordinary map and the authored canvas resets
 motion history even when both stages share a tileset combination.
@@ -75,29 +73,38 @@ Screen-space window effects retain the source framing. A scenery-only boundary
 adjustment would move actors independently of a fixed layer mask or color window.
 In the pyramid title demo, crossing a sector-row boundary moved the party outside
 the circular aperture even though the source camera still followed correctly.
-Active main/subscreen layer windows and color-window effects therefore use the
-authored canvas instead of a presentation boundary adjustment. Unmasked scenes
-use the scene's selected border policy.
+Active main/subscreen layer windows and color-window effects therefore avoid a
+presentation boundary adjustment. Captured story ovals use their source focus
+and shape; other windows retain the authored canvas. Unmasked scenes use the
+scene's selected border policy.
 
-Prayer apertures retain the original oval's centre and movement in the native
-256-by-224 picture. The display's side margin translates the people and aperture
-together; the host must not recenter the opening on the wider viewport or choose
-a different nearby NPC. An off-centre source focus therefore remains off-centre
-by the same amount within the authored picture.
+Prayer apertures retain the original oval's centre and movement. The display's
+side margin translates the people and aperture together; the host must not
+recenter the opening on the wider viewport or choose a different nearby NPC.
+Both radii grow by the same viewport-width ratio, preserving a circular opening
+while allowing the fully open scene to fill the wider picture. Source actors,
+camera coordinates, window tables and timing remain unchanged. Snapshot format
+7 preserves the captured aperture; native-width rendering stays source-exact.
 `native_stationary_npc_render_reference --prayer-focus <asset-pack>` verifies
-this against the 4:3 renderer using imported people and the original
-`UNKNOWN_C0B149` oval routine (JP `C0B128`). It compares every pixel through
-opening/closing, moving subjects, four display widths, layer/color windows,
+this using imported people and the original `UNKNOWN_C0B149` oval routine
+(JP `C0B128`). It compares native-width pixels, checks focus visibility and
+widescreen aperture bounds through opening/closing, moving subjects, four display widths, layer/color windows,
 and ordinary/entity-directed camera modes, including display resizing during
 the sequence. Direct rendering must fall back to the scanline window renderer.
 These are deterministic renderer fixtures, not a natural replay of every prayer
 story sequence.
 
-The post-Giygas robot stage also retains its original framing. `EEVENT5` moves
-to teleport `$D7`, whose centre is `(200,6064)`, and displays the four robot
-corpse NPCs 1306–1309. Detect those actual source actors in their authored region
-to keep the camera and scenery in the centred 256-pixel canvas, even when the
-ordinary boundary policy would move this combination-zero stage.
+An entity-directed story camera does not impose a 256-pixel crop. Unmasked map
+cutscenes use the same natural or constrained border policy as walking. Direct
+capture includes 64 pixels of overscan beyond the maximum viewport so fractional
+camera movement cannot uncover a black strip at an ultrawide edge.
+
+The post-Giygas robot stage keeps its original camera while extending its world
+canvas to the selected width. `EEVENT5` moves to teleport `$D7`, whose centre is
+`(200,6064)`, and displays corpse NPCs 1306–1309. Detect those actual source actors
+in their authored region to avoid recentering this combination-zero stage.
+Imported map lookup supplies the wider scenery and the area's border metatile;
+the original camera, actors and scene timing remain authoritative.
 `EVENT_551`–`554` send sprite group 258 left to world X zero. That endpoint is
 only 72 pixels left of the native picture, so it lies inside sufficiently wide
 displays. During their final departure leg, presentation adds leftward travel
@@ -107,8 +114,8 @@ Their initial rise, the later Saturn Valley return, the source coordinates,
 velocities, event waits, release timing, and native picture stay unchanged.
 Software composition and direct capture use the same uploaded progress; direct
 motion anchors include the extra travel, and snapshots preserve it independently
-of display width. Scenery remains clipped to the original stage while spirits
-can cross its black margins.
+of display width. Scenery and actors share the full widescreen canvas; source
+window/iris effects retain their explicit aperture policy.
 `native_stationary_npc_render_reference --robot-ending <asset-pack>` uses the
 real corpse placements/artwork and outgoing soul scripts' sampled positions.
 It checks all four spirits at five widths in US/JP, unchanged native pixels and

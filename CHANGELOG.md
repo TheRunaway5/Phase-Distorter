@@ -1,3 +1,25 @@
+# Phase Distorter 0.2.1 — 2026-10-04
+
+Complete changes since the packaged v0.2 build are in
+[the v0.2.1 patch notes](releases/Phase-Distorter-0.2.1-patch-notes.md).
+
+- Preserve the original horizontal NPC scan and add the wider scan afterward,
+  fixing people, lamps, presents, containers and sanctuary markers disappearing
+  when entering the original viewport. Cover both regions and execution paths.
+- Extend scripted map cutscenes and the robot ending across widescreen without
+  changing the source camera or scene timing. Expand captured prayer apertures
+  around their original focus, preserving their shape.
+- Add ultrawide capture padding to prevent black edge strips during fractional
+  camera interpolation.
+- Replace temporary automatic dimming with the recovered SNES Classic brightness
+  ramp and PSI/Giygas temporal feedback, processed once per completed game frame.
+- Preserve suspended battle PSI state during prayer cutscenes, fixing prolonged
+  stalls after battle return and supporting mid-prayer snapshot restoration.
+- Save snapshot format 7 with aperture, prayer/filter context and pending NPC
+  scans; retain loading compatibility with formats 1–6.
+- Rebuild both launcher applications and provide v0.2.1 Linux, Windows and
+  combined launcher bundles, notes, version records and integrity metadata.
+
 # Phase Distorter 0.2 — 2026-10-04
 
 Draft release notes covering the original September 27 v0.1 release through

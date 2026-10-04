@@ -225,7 +225,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     // This is independent of widescreen and never changes game
                     // timing. The frontend applies it to the completed picture.
                     ImGui::Checkbox("Photosensitivity filter", &settings.reduce_flashing);
-                    ImGui::TextWrapped("Automatically dims the whole picture during strong flashes or rapid flicker, then restores brightness gradually. Does not guarantee seizure safety.");
+                    ImGui::TextWrapped("Uses console brightness with temporal smoothing for PSI effects and Giygas.");
                     ImGui::Spacing();
                     if (ImGui::Button("Restore game display")) settings = DisplaySettings{};
                     ImGui::Spacing();

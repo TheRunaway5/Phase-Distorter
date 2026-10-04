@@ -27,6 +27,7 @@ class GameSceneRenderer {
     void bind_snapshot_resources(std::shared_ptr<native::SpriteResources> resources);
     void set_presentation_width(const SceneReadView &view, unsigned width);
     void set_presentation_effects_enabled(const SceneReadView &view, bool enabled);
+    void capture_aperture(int x, int y, unsigned radius_x, unsigned radius_y);
     // Import before entering gameplay. The immutable catalog can be shared by
     // copied renderers; each copy owns its event-resolved map preparation.
     void set_native_stationary_sprites(std::shared_ptr<const native::StationaryNpcSprites> sprites) noexcept;
@@ -153,6 +154,11 @@ class GameSceneRenderer {
     int presentation_lumine_phase_ = -1;
     unsigned presentation_lumine_columns_ = 0;
     bool presentation_world_map_ = false;
+    bool aperture_valid_{};
+    int aperture_x_{}, aperture_y_{};
+    unsigned aperture_radius_x_{}, aperture_radius_y_{};
+    bool presentation_aperture_{};
+    bool presentation_window_contains(const SceneReadView &view, unsigned layer, int x, unsigned y) const;
     bool presentation_robot_ending_ = false; // Derived from the source corpse actors each scanline.
     bool presentation_jp_title_ = false;
     bool presentation_intro_static_ = false;
@@ -230,7 +236,7 @@ class GameSceneRenderer {
     uint64_t presentation_objects_frame_ = UINT64_MAX;
     std::array<int, 2> presentation_world_x_{}, presentation_world_y_{};
     uint64_t presentation_boundary_frame_ = UINT64_MAX;
-    int presentation_shift_x_ = 0, presentation_clip_left_ = -384, presentation_clip_right_ = 640;
+    int presentation_shift_x_ = 0, presentation_clip_left_ = -448, presentation_clip_right_ = 704;
     // Only the widescreen boundary correction has memory. Source camera motion
     // remains immediate, and every layer/actor shares the same correction.
     struct PresentationCamera {

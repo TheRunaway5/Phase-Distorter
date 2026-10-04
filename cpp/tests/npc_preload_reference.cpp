@@ -137,6 +137,79 @@ NpcPlacement anchor(const GameAssets &assets, unsigned id) {
       for (const auto &p : catalog.cell(x, y)) if (p.npc == id) return p;
   throw std::runtime_error("Missing authored NPC reference placement");
 }
+
+// Walking executes these source JSL sites, not the isolated row/cell loaders.
+// Static placements retain canonical activation while moving actors scan wide.
+void walking_column_handoff(const GameAssets &assets, MainCpuRuntime runtime) {
+  for (unsigned id : {328u, 572u, 1530u, 1567u, 1246u, 676u})
+    for (unsigned width : {256u, 398u, 522u, 800u, 1024u})
+      for (bool right : {false, true}) {
+        const auto p = anchor(assets, id);
+        context = assets.title + " walking NPC" + std::to_string(id) + " width=" +
+                  std::to_string(width) + (right ? " right" : " left");
+        Fixture f(assets, width, runtime);
+        const NpcCatalog catalog(assets.image, npc_catalog_layout(assets.version));
+        const auto &definition = catalog.definition(id);
+        if (definition.appearance == NpcAppearance::FlagOn && definition.event_flag)
+          f.bus.work_ram[f.flags + (definition.event_flag - 1) / 8] |= 1u << ((definition.event_flag - 1) & 7);
+        f.put(f.enabled, 0xffff);
+
+        unsigned canonical_queries = 0, wider_queries = 0;
+        for (int x = right ? 304 : -48; right ? x >= 264 : x <= -8; x += right ? -8 : 8) {
+          const int camera_x = int(p.x) - x;
+          f.camera(std::uint16_t(camera_x), p.y - 112, p.tileset);
+          const unsigned pc = right ? (f.jp ? 0xc0160a : 0xc015f4) : (f.jp ? 0xc0165d : 0xc01647);
+          f.cpu.emulation_mode = false; f.cpu.status_register = MainCpu65816::InterruptDisable;
+          f.cpu.data_bank = 0x7e; f.cpu.direct_page = 0x1e00; f.cpu.stack_pointer = 0x1fff;
+          f.cpu.accumulator = (camera_x / 8) + (right ? 34 : -3);
+          f.cpu.x_index = (p.y - 112) / 8 - 1; f.cpu.program_counter = pc;
+          const auto core_column = f.cpu.accumulator / 32;
+          const auto extra = RenderDistance(width).activation_extension(
+              f.bus.native_sprite_runtime()->resources()->artwork_bounds()) / 8;
+          const auto wide_column = std::uint16_t(f.cpu.accumulator + (right ? int(extra) : -int(extra))) / 32;
+          bool snapshotted = false;
+          for (unsigned steps = 0; ; ++steps) {
+            check(steps < 250000, "Walking source column failed to return");
+            if (f.cpu.program_counter == f.cell) {
+              canonical_queries += f.cpu.accumulator == core_column;
+              wider_queries += f.cpu.accumulator == wide_column;
+            }
+            f.cpu.step_instruction();
+            if (!snapshotted && id == 328 && width == 522 && right &&
+                f.cpu.program_counter == pc && f.cpu.stack_pointer == 0x1fff) {
+              // Suspend exactly between the canonical and additional scans.
+              SnapshotArchive saved; saved(f.bus, f.cpu);
+              Fixture restored(assets, width, runtime);
+              SnapshotArchive loaded(saved.bytes()); loaded(restored.bus, restored.cpu); loaded.finish();
+              for (unsigned more = 0; ; ++more) {
+                check(more < 250000, "Restored source column failed to return");
+                restored.cpu.step_instruction();
+                if (restored.cpu.program_counter == pc + 4 && restored.cpu.stack_pointer == 0x1fff) break;
+              }
+              // The original independently resumes the same pending call below.
+              for (unsigned more = 0; f.cpu.program_counter != pc + 4 || f.cpu.stack_pointer != 0x1fff; ++more) {
+                check(more < 250000, "Original pending source column failed to return");
+                if (f.cpu.program_counter == f.cell) {
+                  canonical_queries += f.cpu.accumulator == core_column;
+                  wider_queries += f.cpu.accumulator == wide_column;
+                }
+                f.cpu.step_instruction();
+              }
+              check(f.bus.work_ram == restored.bus.work_ram && f.cpu.accumulator == restored.cpu.accumulator &&
+                    f.cpu.x_index == restored.cpu.x_index && f.cpu.y_index == restored.cpu.y_index &&
+                    f.cpu.status_register == restored.cpu.status_register &&
+                    f.cpu.instruction_count == restored.cpu.instruction_count,
+                    "Snapshot changed the pending canonical/wide column handoff");
+              snapshotted = true;
+            }
+            if (f.cpu.program_counter == pc + 4 && f.cpu.stack_pointer == 0x1fff) break;
+          }
+        }
+        check(canonical_queries > 0 && (width == 256 || wider_queries > 0),
+              "Horizontal streaming skipped its canonical or additional source column");
+        check(f.contains(id), "Walking scan failed to activate a canonical stationary NPC/prop");
+      }
+}
 void actual_edges(const GameAssets &assets, MainCpuRuntime runtime) {
   const auto p = anchor(assets, 303);
   check(p.x == 1248 && p.y == 6440, "NPC303 source placement changed");
@@ -452,7 +525,9 @@ int main(int argc, char **argv) {
     check(argc >= 2, "npc_preload_reference pack.ebpak ...");
     for (int i = 1; i < argc; ++i) {
       const auto assets = load_game_assets(argv[i], asset_profiles());
-      for (auto runtime : {MainCpuRuntime::Ported, MainCpuRuntime::Legacy}) actual_edges(assets, runtime);
+      for (auto runtime : {MainCpuRuntime::Ported, MainCpuRuntime::Legacy}) {
+        walking_column_handoff(assets, runtime); actual_edges(assets, runtime);
+      }
       scene_gates(assets); source_guard(assets); priority_and_preview(assets);
       initialization_task_capacity(assets);
       task_content_proofs(assets); negative_source_camera(assets); enemy_capacity_coexistence(assets);

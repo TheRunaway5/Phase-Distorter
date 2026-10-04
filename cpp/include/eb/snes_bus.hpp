@@ -1,4 +1,5 @@
 #pragma once
+#include "eb/photosensitivity_filter.hpp"
 
 #include "eb/game_version.hpp"
 #include "eb/game_scene_renderer.hpp"
@@ -17,6 +18,7 @@
 
 namespace eb {
 struct SourceProfile;
+struct FlashFilterContext;
 class MainCpu65816;
 class SnapshotArchive;
 
@@ -96,8 +98,6 @@ class SnesBus {
     const OverworldSpriteBridge* host_sprites() const { return host_sprites_ ? &*host_sprites_ : nullptr; }
     void capture_game_sprite_instruction(std::uint32_t pc, std::uint16_t a, std::uint16_t x,
                                          std::uint16_t y, std::uint16_t stack, std::uint16_t direct) {
-        if (!sprite_snapshots_enabled_)
-            return;
         // RUN_ACTIONSCRIPT_FRAME executes through bank $80; its near calls
         // reach the same ROM code as $C0. Normalize only mapped ROM addresses,
         // never low-bank RAM/I/O or the executable WRAM banks $7E/$7F.
@@ -106,7 +106,8 @@ class SnesBus {
             pc |= 0xc00000;
         // Most instructions have no graphics semantics. Keep view construction
         // and snapshot parsing off that path, including native gameplay batches.
-        if (host_sprites_ || (pc >= 0xc08800 && pc < 0xc0a500))
+        if ((sprite_snapshots_enabled_ && (host_sprites_ || (pc >= 0xc08800 && pc < 0xc0a500))) ||
+            (pc >= 0xc0b128 && pc <= 0xc0b149) || (pc >= 0xc2c1ca && pc <= 0xc2e766))
             capture_sprite_operation(pc, a, x, y, stack, direct);
     }
     // Borrowed read-only rendering state, valid until this bus is changed.
@@ -137,6 +138,7 @@ class SnesBus {
     // with the picture, not read from next-frame registers; zero means the
     // user's ordinary presentation aspect applies again.
     double presentation_fixed_aspect() const { return scene_renderer_.presentation_fixed_aspect(); }
+    FlashFilterContext flashing_context() const;
     // Optional, read-only effect metadata follows the same scanline timing as
     // the presented image. A nonzero mask marks a visible, source-identified
     // flashing effect; its reference pixel is the current scene without that
@@ -187,6 +189,10 @@ class SnesBus {
     const bool restore_threed_npcs_;
     const SourceProfile *source_profile_;
     bool sprite_snapshots_enabled_{};
+    bool prayer_psi_saved_{};
+    std::array<std::uint8_t, 56> prayer_psi_{};
+    bool filter_psi_active_{};
+    unsigned filter_psi_animation_{};
     void capture_sprite_operation(std::uint32_t pc, std::uint16_t a, std::uint16_t x,
                                   std::uint16_t y, std::uint16_t stack, std::uint16_t direct);
     std::vector<uint8_t> cartridge_rom_;

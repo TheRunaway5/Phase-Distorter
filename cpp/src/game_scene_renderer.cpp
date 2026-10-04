@@ -8,11 +8,33 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 #include <stdexcept>
 
 #include "snes_ppu_constants.hpp"
 
 namespace eb {
+void GameSceneRenderer::capture_aperture(int x, int y, unsigned radius_x, unsigned radius_y) {
+    aperture_valid_ = x >= 0 && x <= 255 && y >= 0 && y <= 255 &&
+                      radius_x > 0 && radius_x <= 256 && radius_y > 0 && radius_y <= 256;
+    aperture_x_ = x; aperture_y_ = y;
+    aperture_radius_x_ = radius_x; aperture_radius_y_ = radius_y;
+}
+
+bool GameSceneRenderer::presentation_window_contains(const SceneReadView &view, unsigned layer,
+                                                      int x, unsigned y) const {
+    const unsigned selection = (view.ppu_registers[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
+    if (!presentation_aperture_ || (selection & 0x0a) != 2)
+        return view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
+    // Enlarge both radii equally around the source focus. Stretching only X
+    // would turn the circular opening into a wide oval.
+    const double scale = double(presentation_width_) / 256;
+    const double dx = (x - aperture_x_) / (aperture_radius_x_ * scale);
+    const double dy = (int(y) - aperture_y_) / (aperture_radius_y_ * scale);
+    const bool inside = dx * dx + dy * dy <= 1;
+    return selection & 1 ? !inside : inside;
+}
+
 namespace {
 bool scripted_world_camera(const SceneReadView &view) {
     // UNKNOWN_C46698/C466A8 direct the camera at a scripted entity and set
@@ -598,8 +620,8 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
         prepare_presentation_boundary(view);
     else {
         presentation_shift_x_ = 0;
-        presentation_clip_left_ = -384;
-        presentation_clip_right_ = 640;
+        presentation_clip_left_ = -448;
+        presentation_clip_right_ = 704;
         presentation_camera_ = {};
     }
     if (presentation_world_map_ && presentation_objects_frame_ != view.completed_frames) {
@@ -671,8 +693,8 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
 void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view) {
     const auto reset = [&] {
         presentation_shift_x_ = 0;
-        presentation_clip_left_ = -384;
-        presentation_clip_right_ = 640;
+        presentation_clip_left_ = -448;
+        presentation_clip_right_ = 704;
         presentation_camera_ = {};
         presentation_boundary_frame_ = view.completed_frames;
     };
@@ -690,27 +712,29 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
         presentation_clip_left_ = 0;
         presentation_clip_right_ = 256;
     };
-    // Scripted stages and raster apertures describe one authored screen.
-    // Adjacent storage can contain another room with the same tileset, and
-    // repeating an iris's edge membership leaks horizontal strips of it.
-    if (presentation_robot_ending_ || scripted_world_camera(view) || (regs[0x30] & 0xf0)) {
+    // Camera control does not change a map's presentation width. Ordinary
+    // story scenes (including the robot ending) use the same map borders as
+    // walking. Screen-space raster apertures still describe one authored
+    // canvas; repeating their membership leaks horizontal strips of scenery.
+    if (!presentation_aperture_ && (regs[0x30] & 0xf0)) {
         authored_canvas();
         return;
     }
     const unsigned masked_layers = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
     for (unsigned layer = 0; layer < 5; ++layer) {
         const unsigned selection = (regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
-        if ((masked_layers & (1u << layer)) && (selection & 0x0a)) {
+        if (!presentation_aperture_ && (masked_layers & (1u << layer)) && (selection & 0x0a)) {
             authored_canvas();
             return;
         }
     }
+    if (presentation_aperture_) { reset(); return; }
     const unsigned address = view.source_profile.wram_loaded_map_tile_combination;
     const unsigned combo = view.work_ram[address] | (view.work_ram[address + 1] << 8);
     // Sector storage edges are not camera walls in forests or around a cave's
     // black void. The existing map lookup still replaces unrelated sectors
     // with this area's own border metatile, never another area's artwork.
-    if (natural_presentation_border(combo)) {
+    if (presentation_robot_ending_ || natural_presentation_border(combo)) {
         reset();
         return;
     }
@@ -720,8 +744,8 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
         return;
     const auto previous_frame = presentation_boundary_frame_;
     presentation_boundary_frame_ = view.completed_frames;
-    presentation_clip_left_ = -384;
-    presentation_clip_right_ = 640;
+    presentation_clip_left_ = -448;
+    presentation_clip_right_ = 704;
     // The original camera itself is not clamped. This optional display policy
     // derives a horizontal region from the very same sector IDs that LOAD_MAP
     // uses to hide unrelated maps. Anchor at the native viewport center and
@@ -1040,7 +1064,7 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
                     objects[x] = world_objects[x];
         }
     }
-    if (presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
+    if (presentation_aperture_ || presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
         (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
         for (unsigned x = 0; x < presentation_width_; ++x)
             output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
@@ -1069,6 +1093,20 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
                 : 0.0;
         resize_presentation_width(view, presentation_frame_aspect_ ? 256 : requested_presentation_width_);
     }
+    const unsigned oval = view.game_version == GameVersion::JP ? 0x4356 : 0x3fd0;
+    const auto &regs = view.ppu_registers;
+    const unsigned masked = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
+    bool oval_window = (regs[0x30] & 0xf0) && ((regs[0x25] >> 4) & 0x0a) == 2;
+    for (unsigned layer = 0; layer < 5; ++layer)
+        oval_window |= (masked & (1u << layer)) &&
+            ((regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 0x0a) == 2;
+    const unsigned battle = view.source_profile.wram_battle_mode_flag;
+    presentation_aperture_ = aperture_valid_ && oval_window &&
+        (regs[5] & 0x37) == 1 && regs[7] == 0x39 && regs[8] == 0x59 &&
+        !view.work_ram[battle] && !view.work_ram[battle + 1] && presentation_width_ > 256 && y < 224 &&
+        !(view.ppu_registers[0] & 0x80) &&
+        view.ppu_registers[0x26] == view.work_ram[oval + y * 2] &&
+        view.ppu_registers[0x27] == view.work_ram[oval + y * 2 + 1];
     if (!y || presentation_width_ > 256)
         prepare_presentation_scene(view);
     refresh_host_artwork(view);

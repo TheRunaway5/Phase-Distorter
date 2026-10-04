@@ -41,11 +41,12 @@ saves. On Linux the default is
 game memory and artwork and stay local; they are not shipped with the project.
 Normal game saving on exit still uses the restored session's current SRAM.
 
-Snapshot format version 5 also preserves the uploaded ending soul departure
-progress, including when the display is resized after loading. Versions 1–4
-remain loadable; version 4 preserves the max-damage switch, and versions 1–3
-restore that switch as off. Snapshots require matching game content
-and a build supporting their format. Future machine-state changes may require
+Snapshot format version 7 preserves the captured story aperture. Version 6
+preserves an NPC column scan between its original and wider queries, and version
+5 preserves uploaded ending soul departure progress, including when the display
+is resized after loading. Versions 1–6 remain loadable; version 4 preserves the
+max-damage switch, and versions 1–3 restore that switch as off. Snapshots require
+matching game content and a build supporting their format. Future machine-state changes may require
 a new version.
 The panel queues operations for the application between simulation advances;
 it never receives mutable game hardware or file paths from display names.

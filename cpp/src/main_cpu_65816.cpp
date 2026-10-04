@@ -33,6 +33,7 @@ void MainCpu65816::snapshot_io(SnapshotArchive &archive) {
         archive(entity_preload_.guarded_world_);
     else if (archive.loading())
         entity_preload_.guarded_world_ = false;
+    entity_preload_.snapshot_columns(archive);
     const unsigned maximum_extension = archive.loading() && entity_preload_.guarded_world_
         ? RenderDistance(RenderDistance::maximum_width).activation_extension(preload_artwork(hardware_)) : 448;
     if (archive.loading() && (program_counter > 0xffffff || extra_budget_clock_remainder_ >= 8 ||
@@ -155,6 +156,7 @@ MainCpuTimingSnapshot MainCpu65816::timing_snapshot() const {
             extra_budget_clock_remainder_, entity_update_master_clocks_, memory_wait_master_clocks_};
 }
 void MainCpu65816::reset_from_vector() {
+    entity_preload_.reset_columns();
     native_gameplay_batches_ = 0;
     entity_update_active_ = instruction_uses_extra_budget_ = instruction_touches_io_ = false;
     interrupt_nesting_depth_ = extra_budget_clock_remainder_ = entity_update_master_clocks_ = 0;
@@ -293,10 +295,13 @@ bool MainCpu65816::prepare_instruction() {
     return true;
 }
 void MainCpu65816::execute_prepared_instruction() {
-    if (runtime_ == MainCpuRuntime::Ported && game::runtime::execute_ported_instruction(*this))
-        return;
-    if (!execute_translated_main_instruction(*this))
+    if (!(runtime_ == MainCpuRuntime::Ported && game::runtime::execute_ported_instruction(*this)) &&
+        !execute_translated_main_instruction(*this))
         throw std::runtime_error("No translated assembly instruction at " + describe_registers());
+    // Native register helpers can return without executing an RTL opcode.
+    // Observe the source call boundary regardless of who owns its epilogue.
+    if (entity_preload_.column_.phase)
+        entity_preload_.finish_column(*this);
 }
 void MainCpu65816::step_instruction() {
     if (prepare_instruction())
@@ -379,6 +384,8 @@ void MainCpu65816::execute_opcode_semantics(std::uint8_t opcode, std::uint32_t o
     memory_wait_master_clocks_ = 0;
     const auto [operation, addressing_mode] = main_cpu_opcode_table[opcode];
     const auto instruction_address = program_counter;
+    if (opcode == 0x22 && entity_preload_.enabled())
+        entity_preload_.begin_column(*this, opcode, length, operand, hardware_);
     if (entity_preload_.enabled() && (status_register & 0x30) == 0 &&
         (instruction_address & 0xff0000) == 0xc00000)
         entity_preload_.adapt(game_version, instruction_address, opcode, length, operand, accumulator,

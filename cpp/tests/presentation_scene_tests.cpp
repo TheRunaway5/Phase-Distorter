@@ -310,13 +310,13 @@ void run_forest_path(const eb::GameAssets &game, const eb::native::WorldMap &map
 }
 
 void run_cutscene_bounds(const eb::GameAssets &game, unsigned width) {
-    ForestPathFixture f(game, "Authored cutscene canvas", 6, width);
+    ForestPathFixture f(game, "Widescreen cutscene map", 6, width);
     f.frame(4368, 2048, true);
     const unsigned camera_mode = game.version == eb::GameVersion::JP ? 0x9b56 : 0x98a5;
     const int margin = int(width - 256) / 2;
     // UNKNOWN_C46698/C466A8 set mode 2 for an entity-directed story camera.
-    // The stage shares ordinary map storage with neighboring rooms: extending
-    // that storage must not reveal a cave alongside the authored black stage.
+    // Scripted camera control changes ownership, not the map's display width.
+    // Iris effects still keep their original scanline aperture.
     for (unsigned effect : {1u, 2u, 0u}) {
         store(*f.bus, camera_mode, effect == 0 ? 2 : 0);
         f.bus->write_byte(0x2123, effect == 1 ? 3 : 0); // inverted BG1 window
@@ -341,33 +341,38 @@ void run_cutscene_bounds(const eb::GameAssets &game, unsigned width) {
             f.renderer.capture_direct_scanline(f.view(), y);
             require(ram == f.bus->work_ram, "Cutscene presentation changed source scene state");
         }
+
         const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
         for (unsigned y = 0; y < 224; ++y)
-            for (unsigned x = 0; x < width; ++x)
-                require(pixels[y * width + x] ==
-                            (int(x) >= margin && int(x) < margin + 256
-                                 ? f.bus->native_framebuffer[y * 256 + x - margin] : 0xff000000),
-                        effect == 0 ? "Scripted stage exposes neighboring scenery"
+            for (unsigned x = 0; x < width; ++x) {
+                const auto expected = effect == 0
+                    ? rgb(shade(block_at(game, f.source, 6, 4368 - 128 - margin + int(x),
+                                        2048 - 112 + int(y) + 1) % 15 + 1))
+                    : int(x) >= margin && int(x) < margin + 256
+                        ? f.bus->native_framebuffer[y * 256 + x - margin] : 0xff000000;
+                require(pixels[y * width + x] == expected,
+                        effect == 0 ? "Scripted map cutscene is cropped to the original viewport"
                                     : "Prayer aperture leaks scenery beyond the authored screen");
+            }
         if (effect == 0) {
             const auto direct = f.renderer.direct_scene();
             require(direct && eb::rasterize_direct_scene({direct, {}}) ==
                                  std::vector<std::uint32_t>(pixels.begin(), pixels.end()),
-                    "Direct rendering does not preserve the authored cutscene canvas");
+                    "Direct rendering does not preserve the widescreen cutscene map");
             eb::DirectSceneMotion motion;
             motion.submit(direct);
-            f.frame(4372, 2048);
+            f.frame(4372, 2048, true);
             motion.submit(f.renderer.direct_scene());
             for (double fraction : {0.0, .25, .5, .75, 1.0}) {
                 const auto interpolated = eb::rasterize_direct_scene(motion.sample(fraction));
                 for (unsigned y = 0; y < 224; ++y)
                     for (unsigned x = 0; x < width; ++x)
-                        if (int(x) < margin || int(x) >= margin + 256)
-                            require(interpolated[y * width + x] == 0xff000000,
-                                    "Interpolated story camera leaks scenery outside its authored canvas");
+                        require(interpolated[y * width + x] != 0xff000000,
+                                "Interpolated story camera introduces a crop in the extended map");
             }
         }
     }
+
     store(*f.bus, camera_mode, 0);
     f.bus->write_byte(0x2123, 0); f.bus->write_byte(0x2125, 0);
     f.bus->write_byte(0x212e, 0); f.bus->write_byte(0x2130, 0);

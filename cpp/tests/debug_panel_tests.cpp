@@ -152,17 +152,17 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(!settings.reduce_flashing, "Photosensitivity filter could not be disabled");
         click(window, panel, draw, 43, 168 + menu_offset);
         require(settings.reduce_flashing, "Photosensitivity filter could not be re-enabled");
-        // The scoped-effects explanation wraps to three lines in this fixed
-        // 480-pixel panel; click the reset button below that explanatory text.
-        click(window, panel, draw, 100, 256 + menu_offset);
+        // The console-effects explanation wraps to two lines in this fixed
+        // 480-pixel panel; exercise the actual controls below that text.
+        click(window, panel, draw, 100, 243 + menu_offset);
         require(!settings.reduce_flashing && !settings.widescreen && settings.aspect == eb::AspectRatio::SixteenNine,
             "Restore game display did not reset the photosensitivity filter and aspect preferences");
-        click(window, panel, draw, 43, 295 + menu_offset);
+        click(window, panel, draw, 43, 282 + menu_offset);
         require(settings.variable_refresh, "VRR checkbox did not enable the saved display preference");
-        click(window, panel, draw, 43, 295 + menu_offset);
+        click(window, panel, draw, 43, 282 + menu_offset);
         require(!settings.variable_refresh, "VRR checkbox did not disable the saved display preference");
         const auto select_rate = [&](int row) {
-            click(window, panel, draw, 110, 333 + menu_offset);
+            click(window, panel, draw, 110, 320 + menu_offset);
             auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
             require(!popups.empty() && popups.back().Window, "Frame-rate picker did not open");
             const auto* popup = popups.back().Window;
@@ -174,13 +174,13 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(settings.frame_limit == 300, "Frame-rate picker did not select 300 FPS");
         require(settings.direct_rendering, "Direct scene rendering did not default to enabled");
         if (!prefix.empty()) save(prefix + "-crt-toggle.ppm", capture());
-        click(window, panel, draw, 43, 402 + menu_offset);
+        click(window, panel, draw, 43, 389 + menu_offset);
         require(settings.crt_filter, "CRT filter checkbox did not enable");
-        click(window, panel, draw, 43, 362 + menu_offset);
+        click(window, panel, draw, 43, 349 + menu_offset);
         require(!settings.direct_rendering, "Direct scene rendering could not be disabled");
         select_rate(7);
         require(settings.frame_limit == 0, "Frame-rate picker did not select uncapped FPS");
-        click(window, panel, draw, 100, 256 + menu_offset);
+        click(window, panel, draw, 100, 243 + menu_offset);
         require(settings.frame_limit == 60 && settings.direct_rendering && settings.interpolate_frames && !settings.variable_refresh && !settings.crt_filter,
             "Restore game display did not restore native presentation defaults");
         panel.process_event(key(window, SDLK_F1));

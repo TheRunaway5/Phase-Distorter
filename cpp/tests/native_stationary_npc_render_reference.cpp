@@ -1273,9 +1273,8 @@ void test_cutscene_npc_handoff(const eb::GameAssets &assets) {
             const auto direct = f.direct(); // compares every software/direct pixel
             for (const auto &quad : direct->quads)
                 if (quad.object)
-                    require(quad.clip.left == float((width - 256) / 2) &&
-                                quad.clip.right == float((width - 256) / 2 + 256),
-                            "Source cutscene actor can paint outside the stage during interpolation");
+                    require(std::isinf(quad.clip.left) && std::isinf(quad.clip.right),
+                            "Ordinary scripted camera crops a source-owned actor to the original viewport");
             f.put(f.profile.wram_entity_screen_coordinates.x, 128);
         }
         services.call(services.jp ? 0xc4442e : 0xc466b8);
@@ -1310,9 +1309,9 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
         f.renderer.set_native_stationary_sprites({});
         std::fill(f.bus->video_ram.begin(), f.bus->video_ram.end(), 0);
         const auto resources = f.bus->native_sprite_runtime()->resources();
-        std::array<StationaryNpcSprite, 2> people;
+        std::array<StationaryNpcSprite, 4> people;
         std::array<int, 2> body_centre{};
-        const std::array<NpcId, 2> ids{1269, 328};
+        const std::array<NpcId, 4> ids{1269, 328, 1269, 328};
         f.active(ids);
         for (unsigned person = 0; person < people.size(); ++person) {
             const auto place = f.ready->placement(ids[person]);
@@ -1323,7 +1322,7 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
             const auto &pose = *appearance.displayed();
             const auto image = resources->acquire(pose.sprite, pose.pose, pose.surface, pose.format);
             people[person] = {*place, image, resources->definition(definition.sprite).palette, 0};
-            f.create(people[person], person * 2, person ? (focus[0] < 128 ? 192 : 40) : focus[0], 112);
+            f.create(people[person], person * 2, person == 3 ? -32 : person == 2 ? 300 : person ? (focus[0] < 128 ? 192 : 40) : focus[0], 112);
             f.bus->native_sprite_runtime()->replace_image(person * 2, image);
             f.put(f.profile.wram_entity_spritemap_pointers.high + person * 2, 0x7e);
             f.put(f.profile.wram_entity_animation_frame + person * 2, 0);
@@ -1358,7 +1357,7 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
             f.put(f.profile.wram_entity_screen_coordinates.x, cx - body_centre[0]);
             f.put(f.profile.wram_entity_screen_coordinates.y, cy - body_centre[1]);
             f.renderer.begin_sprite_frame(1);
-            for (unsigned slot : {0u, 2u}) {
+            for (unsigned slot : {0u, 2u, 4u, 6u}) {
                 source.cpu.x_index = slot;
                 source.cpu.program_counter = 0xc0ff00;
                 source.cpu.execute_instruction<0x20>(jp ? 0xa383 : 0xa3a4, 3);
@@ -1371,6 +1370,7 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
             source.cpu.accumulator = cx; source.cpu.x_index = cy; source.cpu.y_index = radii[phase];
             f.put(0x1e0e, std::min(radii[phase] + 4, 240u));
             source.call(jp ? 0xc0b128 : 0xc0b149);
+            f.renderer.capture_aperture(cx, cy, radii[phase], std::min(radii[phase] + 4, 240u));
             require(f.bus->work_ram[oval_buffer + cy * 2] <= cx &&
                         f.bus->work_ram[oval_buffer + cy * 2 + 1] >= cx,
                     "Original oval routine did not include its authored focus");
@@ -1385,10 +1385,11 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
                     // Both source window forms must retain exactly the same
                     // people as the native image, throughout opening/closing.
                     f.bus->write_byte(0x2125, color_window ? 0x30 : 0x03);
-                    f.bus->write_byte(0x212e, color_window ? 0 : 16);
+                    f.bus->write_byte(0x2123, color_window ? 0 : 0x33);
+                    f.bus->write_byte(0x212e, color_window ? 0 : 0x13);
                     f.bus->write_byte(0x2130, color_window ? 0x80 : 0);
                     const auto logical = f.bus->work_ram;
-                    unsigned focused_pixels = 0;
+                    unsigned focused_pixels = 0, wide_visible = 0;
                     for (unsigned y = 0; y < 224; ++y) {
                         f.bus->write_byte(0x2126, f.bus->work_ram[oval_buffer + y * 2]);
                         f.bus->write_byte(0x2127, f.bus->work_ram[oval_buffer + y * 2 + 1]);
@@ -1412,13 +1413,18 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
                         const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
                         const unsigned margin = (width - 256) / 2;
                         for (unsigned x = 0; x < width; ++x) {
-                            const auto expected = x >= margin && x < margin + 256
-                                ? f.bus->native_framebuffer[y * 256 + x - margin] : 0xff000000;
-                            require(pixels[y * width + x] == expected,
-                                    "Widescreen prayer aperture changed its 4:3 focus or leaked outside its canvas");
+                            const double scale = double(width) / 256;
+                            const double dx = (int(x) - int(margin) - cx) / (radii[phase] * scale);
+                            const double dy = (int(y) - cy) / (std::min(radii[phase] + 4, 240u) * scale);
+                            if (dx * dx + dy * dy > 1)
+                                require(pixels[y * width + x] == 0xff000000,
+                                        "Circular widescreen aperture leaked outside its opening");
+                            if ((x < margin || x >= margin + 256) && pixels[y * width + x] != 0xff000000)
+                                ++wide_visible;
                             ++compared;
                         }
                     }
+                    if (radii[phase] == 240) require(wide_visible > 100, "Fully open aperture retains its native side crop");
                     require(focused_pixels > 10, "Prayer aperture lost the person at its authored focus");
                     require(f.bus->work_ram == logical, "Prayer framing changed source actors/camera/event state");
                     require(!f.renderer.direct_scene(), "Direct rendering bypassed the scanline prayer aperture");
@@ -1426,7 +1432,7 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
                 }
         }
     }
-    std::cout << assets.title << ": prayer aperture 4:3 focus PASS frames=" << cases
+    std::cout << assets.title << ": circular widescreen prayer aperture PASS frames=" << cases
               << " compared_pixels=" << compared << '\n';
 }
 
@@ -1443,6 +1449,7 @@ void test_robot_ending_departure(const eb::GameAssets &assets) {
         const bool jp = assets.version == eb::GameVersion::JP;
         const auto resources = f.bus->native_sprite_runtime()->resources();
         constexpr int camera_x = 72, camera_y = 5952;
+        f.bus->palette_ram[0] = 31; f.bus->palette_ram[1] = 0;
         f.renderer.set_presentation_width(f.view(), width);
         f.active(std::array<NpcId, 5>{1306, 1307, 1308, 1309, 0xffff});
         std::array<std::uint64_t, 4> body_ids{};
@@ -1509,6 +1516,9 @@ void test_robot_ending_departure(const eb::GameAssets &assets) {
             publish();
             const auto logical = f.bus->work_ram;
             const auto scene = f.direct(); // Complete software/direct pixel comparison.
+            const auto picture = eb::rasterize_direct_scene({scene, {}});
+            require(picture.front() == 0xffff0000 && picture[width - 1] == 0xffff0000,
+                    "Robot ending crops its world backdrop at the original viewport edges");
             require(f.bus->work_ram == logical, "Ending presentation changed the original soul path or camera");
             const auto identity = (std::uint64_t{1} << 63) | f.bus->native_sprite_runtime()->snapshot(8)->id;
             int right = -10000;

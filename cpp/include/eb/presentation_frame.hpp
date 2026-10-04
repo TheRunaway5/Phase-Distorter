@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <span>
 #include <memory>
+#include "eb/photosensitivity_filter.hpp"
 
 namespace eb {
 struct DirectSceneFrame;
@@ -18,6 +19,7 @@ struct PresentationFrame {
     std::span<const std::uint8_t> effect_mask;
     std::span<const std::uint32_t> effect_reference;
     std::shared_ptr<const DirectSceneFrame> scene;
+    FlashFilterContext flashing;
 };
 
 // Host-facing pixels with the aspect hint captured alongside that picture.
