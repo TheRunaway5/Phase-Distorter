@@ -33,7 +33,7 @@ void continuation(eb::GameVersion region, bool enhanced, bool partial) {
     const auto content = waiting_cartridge(region);
     eb::GameSession reference(content, region, enhanced);
     reference.configure_presentation(426, true);
-    reference.debug().configure({true, true, true, true});
+    reference.debug().configure({true, true, true, true, true});
     for (unsigned i = 0; i < reference.save_memory().size(); ++i)
         reference.save_memory()[i] = std::uint8_t(i * 17 + i / 256);
     reference.advance_frame(0x8090, partial ? 37 : 0);
@@ -49,6 +49,7 @@ void continuation(eb::GameVersion region, bool enhanced, bool partial) {
     unsigned callbacks = 0;
     restored.observe_completed_frames([&](eb::PresentationFrame) { ++callbacks; });
     restored.load_snapshot(captured);
+    require(restored.debug().settings().player_max_damage, "Snapshot lost the max-damage switch");
     require(callbacks == 0, "Restoring invoked a completed-frame observer");
     require(restored.save_snapshot() == captured, "Fresh session failed complete snapshot restoration");
     require(restored.take_audio_samples() == pending_audio, "Snapshot lost pending stereo audio");
@@ -84,7 +85,7 @@ void legacy_continuation(eb::GameVersion region, bool partial, unsigned legacy_f
     std::vector<std::uint8_t> payload;
     envelope(magic, format, stored_region, cartridge_hash, checksum);
     envelope.blob(payload); envelope.finish();
-    require(format == 3, "New snapshots did not declare guarded world preload schema 3");
+    require(format == 5, "New snapshots did not declare ending-presentation schema 5");
 
     // Re-encode real complete/partial state with each older positional layout,
     // rather than merely relabelling the current payload.
@@ -99,7 +100,7 @@ void legacy_continuation(eb::GameVersion region, bool partial, unsigned legacy_f
     eb::SnapshotArchive legacy_machine(legacy_format);
     legacy_machine(hardware, audio_cpu, audio_dsp, main_cpu, debug, steps);
     auto legacy_payload = legacy_machine.release_bytes();
-    require(legacy_payload.size() < payload.size(), "Legacy fixture did not omit newer snapshot fields");
+    require(legacy_payload.size() <= payload.size(), "Legacy fixture grew newer snapshot fields");
     format = legacy_format;
     checksum = eb::snapshot_checksum(legacy_payload);
     eb::SnapshotArchive legacy_file(legacy_format);
@@ -110,6 +111,7 @@ void legacy_continuation(eb::GameVersion region, bool partial, unsigned legacy_f
     restored.configure_presentation(640, false);
     restored.advance_frame(0);
     restored.load_snapshot(legacy_file.bytes());
+    require(!restored.debug().settings().player_max_damage, "Legacy snapshot enabled max damage");
     const auto a = reference.presentation_frame(), b = restored.presentation_frame();
     require(reference.frames() == restored.frames() && reference.steps() == restored.steps() &&
                 a.width == b.width && a.fixed_aspect == b.fixed_aspect &&
@@ -225,7 +227,7 @@ int main() {
             for (const bool enhanced : {false, true})
                 for (const bool partial : {false, true}) continuation(region, enhanced, partial);
             for (const bool partial : {false, true})
-                for (unsigned legacy_format : {1u, 2u}) legacy_continuation(region, partial, legacy_format);
+                for (unsigned legacy_format : {1u, 2u, 3u, 4u}) legacy_continuation(region, partial, legacy_format);
             atomic_rejections(region);
         }
         std::cout << "Complete session snapshot persistence, continuation and atomic rejection checks passed\n";

@@ -37,7 +37,8 @@ void write_file(const std::filesystem::path &path, const std::string &contents) 
     output << contents;
 }
 std::string read_file(const std::filesystem::path &path) {
-    std::ifstream input(path, std::ios::binary);
+    // Preferences are text; normalize the host's CRLF/LF encoding on read.
+    std::ifstream input(path);
     return {std::istreambuf_iterator<char>(input), {}};
 }
 void roundtrip(const std::filesystem::path &directory) {

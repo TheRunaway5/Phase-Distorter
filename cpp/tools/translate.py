@@ -867,6 +867,12 @@ def debug_profile(debug: Path, version: str, value) -> dict:
             'remove_party_character': 0xc00000 + value('REMOVE_CHAR_FROM_PARTY', 'rom'),
             'fade_out': 0xc00000 + value('FADE_OUT_WITH_MOSAIC', 'rom'),
             'wait_frames': 0xc00000 + value('UNKNOWN_C0878B', 'rom'),
+            # CALC_DAMAGE's fixed C prologue is ten bytes, followed by the
+            # two-byte STX VIRTUAL04. Store callbacks observe the advanced PC.
+            'damage_argument_store_end': 0xc00000 + value('CALC_DAMAGE', 'rom') + 12,
+        },
+        "battle_state": {
+            'current_attacker': value('CURRENT_ATTACKER', 'ram'),
         },
     }
 

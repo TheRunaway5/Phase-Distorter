@@ -11,7 +11,7 @@ namespace {
 using namespace interaction_reference;
 namespace story = eb::native::story;
 struct FormationCounts {
-    std::uint64_t complete{}, bicycle{}, unsupported{}, source_only{}, frames{}, sounds{}, snapshots{},
+    std::uint64_t complete{}, bicycle{}, us_width_hints{}, frames{}, sounds{}, snapshots{},
         original_updates{}, original_movement{}, original_palette{}, original_names{}, original_counts{},
         world_actor_seams{}, world_screen_seams{}, callbacks{}, palette_words{}, actor_words{}, list_bytes{},
         glyphs{}, input_calls{};
@@ -316,13 +316,20 @@ void american(const eb::GameAssets &input) {
         require(helper_calls==1&&!updates&&source.get32(source.expected_dp+6)==0xee1004,
                 "US selector11 is not its independent one-byte layout helper");
         dialogue::State state;
+        state.dummy.active.argument=0xabcd0166;
+        const auto before=state.dummy.active;
         auto program=std::make_shared<dialogue::Program>(assets.version,std::vector<dialogue::ContentBlock>{{1,0x1000,bytes}});
         dialogue::Runtime runtime(program,state);runtime.start(dialogue::Location{1,0x1000});
-        require(runtime.advance()==dialogue::Progress::Suspended&&runtime.request()->kind==dialogue::RequestKind::UnsupportedCommand&&
-                runtime.snapshot().consumed_bytes==2,"US selector11 acquired Japanese operandless semantics");
-        ++formation_counts.unsupported;++formation_counts.source_only;
+        require(runtime.advance()==dialogue::Progress::Suspended&&runtime.request()->kind==dialogue::RequestKind::WidthHint&&
+                runtime.request()->count==(operand?operand:0x166)&&runtime.snapshot().consumed_bytes==3&&
+                state.dummy.active==before,"US selector11 lost its source width operand or acquired Japanese semantics");
+        runtime.respond();
+        require(runtime.advance()==dialogue::Progress::Finished&&state.dummy.active==before&&
+                runtime.snapshot().returned_cursor==dialogue::Location{1,0x1004}&&runtime.snapshot().consumed_bytes==4,
+                "US width helper changed dialogue registers or consumed a different source stream extent");
+        ++formation_counts.us_width_hints;
     }
-    std::cout<<"US source-only layout diagnostics=5; native unsupported frontiers=5\n";
+    std::cout<<"US width-helper source operands and native continuations=5\n";
 }
 }
 int main(int argc,char **argv) {
@@ -333,8 +340,7 @@ int main(int argc,char **argv) {
             if(assets.version==eb::GameVersion::JP)japanese(assets);else american(assets);
         }
         std::cout<<"PASS formation reference: "<<formation_counts.complete<<" complete JP streams, "<<formation_counts.bicycle
-                 <<" real bicycle frontiers, "<<formation_counts.source_only<<" separate US original diagnostics, "
-                 <<formation_counts.unsupported<<" unchanged US unsupported frontiers.\n";
+                 <<" real bicycle frontiers, "<<formation_counts.us_width_hints<<" matched US width-helper operands and continuations.\n";
         std::cout<<"Original: "<<counts.instructions<<" instructions including setup/glyph/tick/input, "<<counts.caller_stack_checks
                  <<" caller-stack checks, "<<formation_counts.original_updates<<" UPDATE_PARTY, "<<formation_counts.original_movement
                  <<" movement-policy, "<<formation_counts.original_palette<<" palette, "<<formation_counts.original_names
@@ -342,6 +348,6 @@ int main(int argc,char **argv) {
         std::cout<<"Native: "<<formation_counts.snapshots<<" state snapshots, "<<formation_counts.frames<<" matched frames, "
                  <<formation_counts.sounds<<" text-audio boundaries, "<<formation_counts.callbacks<<" matched live callbacks, "
                  <<counts.pixels<<" original indexed pixels and "<<counts.ppu_pixels<<" original software-PPU pixels.\n";
-        std::cout<<"Scope: complete original JP DISPLAY/formation/non-bicycle movement/palette/name/glyph/tick/input paths; native real Scene with paused prepared actors. Original actors/world-screen, raw/demo input, frame delivery and text audio are explicit seams. JP font-DMA readiness clears A031 at C439E2/C43BE8. Bicycle lifecycle and US1C11 completion remain pending; US original diagnostics do not count as native parity. No natural activation, PCM, full NMI, full-world image or GPU claim.\n";
+        std::cout<<"Scope: complete original JP DISPLAY/formation/non-bicycle movement/palette/name/glyph/tick/input paths; native real Scene with paused prepared actors. Original actors/world-screen, raw/demo input, frame delivery and text audio are explicit seams. JP font-DMA readiness clears A031 at C439E2/C43BE8. US1C11 checks source operands and native parsing/continuation; width-helper output has a separate reference fixture. Bicycle lifecycle remains pending. No natural activation, PCM, full NMI, full-world image or GPU claim.\n";
     }catch(const std::exception &error){std::cerr<<error.what()<<'\n';return 1;}
 }

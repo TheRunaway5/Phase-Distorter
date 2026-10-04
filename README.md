@@ -7,22 +7,57 @@ native desktop application for Linux and Windows. It includes keyboard and
 controller input, audio, persistent saves, a Settings window, and
 widescreen presentation with offscreen actor preloading.
 
-Version **0.1** is a development release. Both games run their respective
+Version **0.2** is a development release. Both games run their respective
 compiled program and use assets imported from the player's own supported ROM.
 ROMs and extracted gameplay asset packs are not included. You must supply your
 own copy before playing. The launcher and window icons derive from the provided
 Saturn artwork.
 
-[Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
+[Draft v0.2 patch notes](releases/Phase-Distorter-0.2-patch-notes.md) · [Screenshots](#screenshots) · [Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
 [Controls](#controls-and-display) · [Building](#building-from-source) ·
 [Saves](#saves-settings-and-updating) · [Troubleshooting](#troubleshooting)
+
+## Screenshots
+
+Expanded scenery and original pixel art at **16:9, 21:9 and 32:9**, with the
+optional CRT filter switched off and on. Each pair captures the same gameplay
+frame. Click an image to see it at full resolution and compare the crisp pixels
+with CRT softness, scanlines and the aperture grille.
+
+### Widescreen · 16:9
+
+Threed's streets, signs and streetlights in a wider view.
+
+| CRT off | CRT on |
+| --- | --- |
+| [![Threed at 16:9 with CRT off](docs/screenshots/threed-16x9-no-crt.png)](docs/screenshots/threed-16x9-no-crt.png) | [![Threed at 16:9 with CRT on](docs/screenshots/threed-16x9-crt.png)](docs/screenshots/threed-16x9-crt.png) |
+
+### Ultrawide · 21:9
+
+Twoson's shops, riverside scenery and NPCs across an expanded town view.
+
+| CRT off | CRT on |
+| --- | --- |
+| [![Twoson at 21:9 with CRT off](docs/screenshots/twoson-21x9-no-crt.png)](docs/screenshots/twoson-21x9-no-crt.png) | [![Twoson at 21:9 with CRT on](docs/screenshots/twoson-21x9-crt.png)](docs/screenshots/twoson-21x9-crt.png) |
+
+### Super ultrawide · 32:9
+
+A sanctuary cave panorama, including the sparkling boss encounter marker.
+
+**CRT off**
+
+[![Sanctuary cave at 32:9 with CRT off](docs/screenshots/sanctuary-32x9-no-crt.png)](docs/screenshots/sanctuary-32x9-no-crt.png)
+
+**CRT on**
+
+[![Sanctuary cave at 32:9 with CRT on](docs/screenshots/sanctuary-32x9-crt.png)](docs/screenshots/sanctuary-32x9-crt.png)
 
 ## Installation
 
 ### Downloaded a release ZIP?
 
-1. Choose the [Windows ZIP](releases/Phase-Distorter-0.1-windows-x86_64.zip) or
-   [Linux ZIP](releases/Phase-Distorter-0.1-linux-x86_64.zip) from `releases/`.
+1. Choose the [Windows ZIP](releases/Phase-Distorter-0.2-windows-x86_64.zip) or
+   [Linux ZIP](releases/Phase-Distorter-0.2-linux-x86_64.zip) from `releases/`.
 2. Use **Extract All** or your archive manager to extract the entire application
    folder. **Do not run the application from inside the ZIP.** Keep its files
    together.
@@ -44,17 +79,24 @@ Platform archives are stored only in **`releases/`**:
 
 | Package | Contents |
 | --- | --- |
-| `releases/Phase-Distorter-0.1-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
-| `releases/Phase-Distorter-0.1-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
+| `releases/Phase-Distorter-0.2-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
+| `releases/Phase-Distorter-0.2-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
 
 Each ZIP contains one fresh application folder:
-`Phase-Distorter-0.1-windows-x86_64/` or
-`Phase-Distorter-0.1-linux-x86_64/`. Extract the entire ZIP and open the native
+`Phase-Distorter-0.2-windows-x86_64/` or
+`Phase-Distorter-0.2-linux-x86_64/`. Extract the entire ZIP and open the native
 application inside that folder. These runnable packages
 contain the required application files but no ROMs, imported gameplay asset
 packs, saves, or source/build trees. Supply your own supported ROM on first
 launch. Each ZIP includes `README.txt`, a file manifest and checksums;
-`releases/SHA256SUMS` records the two archive hashes.
+`releases/SHA256SUMS` records the archive hashes, including retained older versions.
+
+For the repository-style executable layout, download the
+[combined v0.2 launcher ZIP](releases/Phase-Distorter-0.2-launchers-x86_64.zip)
+or use the [versioned launcher folder](releases/Phase-Distorter-0.2-launchers-x86_64/README.txt).
+It includes both platforms, `launch.sh` / `launch.bat`, runtimes and shortcut
+setup. The canonical `launchers/` folder also contains the v0.2 binaries.
+Each v0.2 bundle includes `VERSION` and `PATCH-NOTES.md`.
 
 ### Running from the source repository
 
@@ -236,7 +278,9 @@ See [timing behavior and verification](cpp/docs/timing.md).
 
 **F1 → Debug** provides infinite health and PSI/PP at **999/999**, noclip, and
 an **Enemies ignore you** switch that prevents overworld pursuit and contact
-battles. Story battles still work. The searchable teleport picker includes all
+battles. **Player does max damage** uses the damage routine's 65,535 maximum
+for successful player attacks while preserving immunity and zero-damage rules.
+Story battles still work. The searchable teleport picker includes all
 **385 named map areas**, including interiors, dungeons and endgame locations,
 plus every scripted warp and door landing: **1,472 choices** in total.
 Select a destination and press **Teleport now**; the screen fades fully to black
@@ -255,15 +299,18 @@ survives restarts. Loading also restores its cheat switches. Snapshots are kept
 separately for EarthBound and Mother 2 and require matching game content.
 
 Widescreen renders additional scenery while preserving the original game
-camera, movement and collision. NPCs and enemies load in an offscreen band
-beyond the selected view and remain active past its edges, using the source
-event conditions and entity limits. This can change encounter timing.
+camera, movement and collision. NPC, enemy and prop artwork is prepared around
+the selected view independently of gameplay activation. Active actor graphics
+remain available past the original screen edges; gameplay keeps its original
+activation region and appearance conditions.
 PSI effects, including Rockin, fill the wider canvas while targeted effects stay
 aligned with their enemy. Battle backgrounds stay wide throughout the exit fade,
-and Lumine Hall's scrolling wall text adapts to the wider picture. The display
-camera stops at map-region boundaries, including the Fourside tunnel and desert
-road; areas narrower than the selected view use side borders. Menus and HUD
-remain centered.
+and Lumine Hall's scrolling wall text adapts to the wider picture. Forest borders
+and the void around caves and rooms extend naturally without forcing the display
+camera away from the player. Short road tunnels, including those to Threed and
+Fourside, and the desert traffic strip retain camera boundaries; constrained
+areas narrower than the selected view use side borders. Menus and HUD remain
+centered.
 
 Fixed intro artwork, including **The War Against Giygas!**, uses a centered 4:3
 view instead of repeating into the margins. The selected wider view returns
@@ -314,10 +361,17 @@ files are never deleted by these controls.
 ### Optional photosensitivity filter
 
 The **Photosensitivity filter** in **F1 → Display** is **disabled by default**
-and works independently of widescreen. It moderates identified flashing effects,
-including battle animations and Franklin Badge lightning, in both games.
-Ordinary scenery, sprites, text, and colors remain unchanged outside the affected
-effect pixels. Game execution, input, audio, and save data remain unchanged.
+and works independently of widescreen. It analyzes every completed picture in
+both games and immediately dims the whole screen when strong contrast changes
+or rapid pixel/color flicker cross its thresholds. Repeated flashes keep the
+screen dimmed; brightness returns gradually after the activity stops. Detection
+uses screen pixels without per-attack or per-scene lists. Game execution, input,
+audio, and save data remain unchanged.
+
+Coverage checks include the requested Kraken/Starman/Giygas backgrounds, every
+authored PSI animation and original poison/nausea/sunstroke flashes in both
+games. Lightning, white-out and warp flashes also have rendered mechanism
+fixtures; complete story cutscene playthroughs remain unverified.
 
 The setting is saved with your display preferences. To enable it before the
 first game frame, use:
@@ -381,17 +435,19 @@ ctest --test-dir build --output-on-failure
 The build script uses four parallel jobs by default. Set
 `CMAKE_BUILD_PARALLEL_LEVEL=2` before running it to use fewer jobs. It accepts
 additional CMake configuration arguments, such as `-DEB_BUILD_TESTS=OFF`.
+After a successful build, it also refreshes `launchers/linux/bin/eb_cpp` from
+`build/cpp/eb_cpp`, including when the compiled application is already up to date.
 
 The equivalent direct commands are:
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
+cmake --build build --target refresh_launchers
 ```
 
-The freshly built executable is `build/cpp/eb_cpp`. Run it directly to test your
-changes; `launchers/linux/bin/eb_cpp` remains the supplied snapshot until you
-update it explicitly. Other Linux distributions need the
+The freshly built executable is available in both `build/cpp/eb_cpp` and
+`launchers/linux/bin/eb_cpp`. Other Linux distributions need the
 equivalent compiler, CMake, SDL2, and OpenGL development packages.
 
 ### Windows build
@@ -416,13 +472,13 @@ Change to the extracted repository folder. For example, a Windows folder at
 cd /c/Games/PhaseDistorter
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
+cmake --build build --target refresh_launchers
 ctest --test-dir build --output-on-failure
 ./build/cpp/eb_cpp.exe
 ```
 
-Run `build/cpp/eb_cpp.exe` directly to use the freshly compiled version; the
-`launchers/windows/bin/eb_cpp.exe` remains the supplied snapshot. Keep its matching
-`SDL2.dll` beside the executable; CMake copies the DLL when SDL2 exposes a
+The `refresh_launchers` target copies `build/cpp/eb_cpp.exe` to
+`launchers/windows/bin/eb_cpp.exe` with its matching `SDL2.dll` when SDL2 exposes a
 shared-library target. A build made with a different toolchain may need that
 toolchain's runtime DLLs when launched outside its shell.
 
@@ -482,7 +538,7 @@ cmake --build build --parallel 4
 
 ## Saves, settings, and updating
 
-Version 0.1 retains the existing `ebsrc/EarthBoundCpp` application-data location:
+Version 0.2 retains the existing `ebsrc/EarthBoundCpp` application-data location:
 
 | Platform | Default directory |
 | --- | --- |
@@ -590,13 +646,16 @@ in `launchers/linux/lib/`, maintainers can validate and recreate the whitelisted
 runnable packages using Python 3:
 
 ```sh
-python3 cpp/tools/package_release.py --check
-python3 cpp/tools/package_release.py
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2-patch-notes.md --include-launchers --check
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2-patch-notes.md --include-launchers
 ```
 
-The packager writes versioned archives only to this snapshot's `releases/`
-directory. Each archive contains the branded native executable and its runtime
-dependencies together for direct launching. It preserves executable permissions
+The packager writes versioned archives and the combined launcher snapshot to
+this snapshot's `releases/` directory. Platform archives contain the branded
+native executable and its runtime dependencies together for direct launching.
+The combined folder retains `launchers/` and the root launch/shortcut scripts;
+it accepts repeat packaging with identical inputs and rejects changes to an
+existing versioned folder. It preserves executable permissions
 and records payload hashes relative to each archive's application folder. It excludes working-tree
 assets and rejects supported ROMs or imported packs even if renamed. `--check`
 validates the inputs without writing archives.

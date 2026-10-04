@@ -1,9 +1,80 @@
-# Phase Distorter — version 0.1 release snapshot
+# Phase Distorter — version 0.2 release bundle
+
+Prepared 2026-10-04 from the current source checkout, including the week of
+changes since the original September 27 v0.1 release. The complete
+[draft patch notes](releases/Phase-Distorter-0.2-patch-notes.md) cover shipped
+features, fixes, native-component work and remaining integration limits.
+
+| Artifact | Layout |
+| --- | --- |
+| [Linux x86-64 ZIP](releases/Phase-Distorter-0.2-linux-x86_64.zip) | Direct native application with bundled SDL2/GCC runtimes |
+| [Windows x86-64 ZIP](releases/Phase-Distorter-0.2-windows-x86_64.zip) | Direct native application with SDL2.dll |
+| [Combined launcher ZIP](releases/Phase-Distorter-0.2-launchers-x86_64.zip) | Both platforms in the repository-style launcher layout |
+| [Versioned launcher folder](releases/Phase-Distorter-0.2-launchers-x86_64/README.txt) | The same combined layout, already expanded |
+
+All v0.2 bundles include version identification, these draft patch notes,
+notices, payload manifests and checksums. The canonical `launchers/` inputs
+are refreshed for both platforms. Packages contain no ROMs, imported game
+packs, saves or personal settings. Existing external imports and normal saves
+are retained when extracting into a new folder.
+
+Rebuild with `cmake --build build --target refresh_launchers` for Linux and
+`cmake --build build-windows --target refresh_launchers` for the configured
+Windows cross-build. Then create the bundles with:
+
+```sh
+python3 cpp/tools/package_release.py --version 0.2 \
+  --patch-notes releases/Phase-Distorter-0.2-patch-notes.md --include-launchers
+```
+
+The versioned launcher folder is immutable: rerunning with identical inputs
+verifies it, and differing inputs require a new folder/version. Archive hashes
+are recorded in [releases/SHA256SUMS](releases/SHA256SUMS).
+
+Linux requires glibc 2.43 or newer and desktop OpenGL. Windows execution checks
+use Wine; native Windows hardware validation is outstanding. The full native
+engine migration is still in progress; the desktop uses `GameSession`.
+
+## v0.2 validation
+
+Both complete Release builds passed their registered suite: **227 passed and
+38 optional asset checks skipped per platform**, with zero failures. The five
+packager regression checks passed. The explicit source-backed scene fixture
+passed **3,770,369 checks per region on Linux and Windows under Wine**; the
+reduced-flashing asset probes passed for both games on Linux, including named
+backgrounds, all PSI setups, status routing and event-flash mechanisms.
+
+All three archives passed CRC, full manifest/checksum, payload, executable-mode
+and no-user-data audits. Their binaries equal the fresh builds and canonical
+launcher inputs. The expanded combined folder equals its archive byte for byte.
+Repeating packaging with identical inputs reproduces the same ZIP bytes.
+
+**28 exact extracted-package and launcher runs passed for both games:** eight
+1,200-frame headless runs (direct platform executables and combined launcher
+scripts), plus twenty 180-frame desktop runs at 32:9 with reduced flashing:
+Native CRT off/on, 300 FPS CRT on, Uncapped CRT on and VRR CRT on. Linux and Wine
+match game-state summaries, native/completed presentation pictures, generated
+WAV bytes and desktop OpenGL readbacks in each corresponding case. Native
+pixels/state/PCM also match across the tested desktop pacing modes.
+
+The recorded 2,168 application/header/generated/CMake source inputs remained
+unchanged through build and verification. This is bounded startup and fixture
+verification; it does not certify every gameplay route, physical VRR/controllers,
+a manual full playthrough or native Windows hardware. The machine-readable
+[build record](releases/Phase-Distorter-0.2-build-info.json) records scope, source
+identity, artifact sizes/hashes and validation totals. Detailed logs are in
+`build/verification/release-0.2/` in this workspace.
+
+## Historical v0.1 and development checkpoints
+
+Everything below records its stated earlier source/package checkpoint. Old
+binary hashes, pass counts and platform-lag statements are historical and do
+not describe the new v0.2 bundles above.
 
 Prepared 2026-09-27. Upload this directory's contents as the root of the fresh
 repository. No remote repository was created or changed.
 
-## Threed / Threek NPC restoration — current packages
+## Threed / Threek NPC restoration — historical package checkpoint
 
 Updated 2026-10-03. The Investigator (NPC 563) now appears at his original
 position after Master Belch. His original appearance flag 610 is never set by
@@ -34,7 +105,7 @@ headless startup checks. Windows validation uses Wine.
 
 The sections below record earlier checkpoints and their validation boundaries.
 
-## Controller mapping and settings — current local Linux checkpoint
+## Controller mapping and settings — historical local Linux checkpoint
 
 Updated 2026-10-02. The SNES Nintendo Switch Online controller now uses its
 printed A/B/X/Y labels correctly. Linux USB/Bluetooth mappings also preserve
@@ -52,7 +123,7 @@ reload after application restart in an isolated preference directory. Physical
 controller testing remains outstanding. `build/cpp/eb_cpp` and `launchers/linux/bin/eb_cpp` include this
 change; Windows and release ZIPs retain their earlier checkpoints.
 
-## Save state snapshots — current local Linux checkpoint
+## Save state snapshots — historical local Linux checkpoint
 
 Updated 2026-10-02. **F1 → Debug → Save state snapshots** now saves named
 snapshots, lists their creation dates and frame numbers, loads them immediately,
@@ -79,7 +150,7 @@ the same two previously established failures: `native_sprite_draw_tests` and
 `launchers/linux/bin/eb_cpp` include snapshots and the Paula fix below. Windows
 and release ZIPs remain their earlier checkpoints.
 
-## Paula party-join crash — current local Linux checkpoint
+## Paula party-join crash — historical local Linux checkpoint
 
 Updated 2026-10-02. The native sprite loader now accepts the source's hidden
 animation initialization marker (`0xffff`) without decoding it as a visible
@@ -97,7 +168,7 @@ skipped, and two failures that also reproduce on the original source snapshot:
 `build/cpp/eb_cpp` and `launchers/linux/bin/eb_cpp` include this fix. Windows and
 release ZIPs remain their separate checkpoints below.
 
-## Sprite exhaustion and CRT softness — current local Linux checkpoint
+## Sprite exhaustion and CRT softness — historical local Linux checkpoint
 
 Updated 2026-09-29. The local Linux launcher no longer widens the original engine's
 actor activation region: that consumed its fixed sprite pool and broke the
@@ -119,7 +190,7 @@ independently but are not yet used by GameSession; this is not a completed
 emulation-free engine. See
 `cpp/docs/native-engine.md` for the accepted migration scope and remaining work.
 
-## Debug teleport fades and widescreen intro static — current packages
+## Debug teleport fades and widescreen intro static — historical package checkpoint
 
 Debug teleportation fades to black before loading its destination, holds the
 blank screen through native frame synchronization, then uses the game's fade-in.
@@ -146,7 +217,7 @@ The platform launchers and release ZIPs include these changes and the existing
 audio/flat-CRT work described below. Earlier checkpoint sections retain their
 original verification scope.
 
-## Sustained-stutter repair — current local Linux checkpoint
+## Sustained-stutter repair — historical local Linux checkpoint
 
 Updated 2026-09-29. The Linux launcher bounds catch-up presentation starvation,
 uses scanline-local tile-row decoding, warms an enabled CRT shader before timed
@@ -175,7 +246,7 @@ hashes match; timing and limitations are recorded in `cpp/docs/timing.md`.
 This checkpoint updates `launchers/linux/bin/eb_cpp`; Windows and release ZIPs
 remain the gameplay-runtime package checkpoint described below.
 
-## Gameplay runtime checkpoint — current packages
+## Gameplay runtime checkpoint — historical package checkpoint
 
 Updated 2026-09-29. Both platform launchers and ZIPs now include the source-derived
 dialogue, cutscene, NPC, entity and enemy runtime: 808 US routines and 783 Japanese

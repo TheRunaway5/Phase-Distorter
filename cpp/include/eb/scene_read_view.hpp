@@ -74,6 +74,9 @@ struct SceneReadView {
     PpuPixel sample_mode7_pixel(unsigned layer, int x, unsigned y) const;
     bool layer_window_contains(unsigned layer, unsigned x) const;
     // Returns overflow bits. Only the bus's native pass may commit them.
-    uint8_t sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin) const;
+    // Presentation moves captured world sprites separately from unmatched UI
+    // indicators. The native hardware pass always uses the default zero shift.
+    uint8_t sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin,
+                                 int world_shift = 0) const;
 };
 } // namespace eb

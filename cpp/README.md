@@ -284,8 +284,8 @@ and timing information without allowing game-state edits.
 
 Widescreen adds picture on either side of the original 256×224 view. Map
 scenery uses data beyond the streamed tile buffer, battle patterns continue
-their existing layer transforms, and Lumine Hall uses its complete prepared
-text columns. Menus and HUD remain in the original view.
+their existing layer transforms, and Lumine Hall keeps its scrolling text on
+the authored wall patch. Menus and HUD remain in the original view.
 Photo Man's snapshot aperture and Carpainter's lightning each map their single
 authored overlay across the full display, including narrow rooms and side borders.
 Scene capture retains 64 pixels of artwork beyond all four viewport edges for
@@ -307,17 +307,19 @@ programs and fixed source pools still limit coverage. See
 [offscreen loading](docs/entity-preload.md). The ongoing [native engine migration](docs/native-engine.md)
 replaces the remaining fixed logical pools with host-owned world state.
 
-Near a map region's edge, the wider display camera stops at the matching
-tileset-sector boundary. This covers the Fourside tunnel and desert road
-regions without altering the game's camera or collision data. Regions narrower
-than the selected view are centered with side borders. HUD placement stays
-centered while world scenery and visible actors follow the display camera.
-When connected sector rows have different safe spans, the display keeps its
+Forested borders in Twoson, Threed, Saturn Valley, Peaceful Rest Valley and
+Winters, plus the void around caves and rooms, extend using the area's authored
+border artwork without correcting the display camera. Short road tunnels to
+Threed and Fourside and the desert traffic region retain the matching
+tileset-sector boundary, preserving their apparent length. Other unclassified
+regions retain that conservative policy. Constrained areas narrower than the
+selected view are centered with side borders. HUD placement stays centered
+while world scenery and visible actors follow the display camera.
+When constrained sector rows have different safe spans, the display keeps its
 previous target until the new span persists for eight logical frames, then
-eases the boundary correction by at most four pixels per frame. Walking across
-a forest seam no longer instantly replaces the framing, and brief movement
-back and forth across that seam does not keep reversing the camera. Ordinary
-source camera movement remains immediate. Teleports, scene/window changes,
+eases the boundary correction by at most four pixels per frame. Forest storage
+seams introduce no correction at all. Ordinary source camera movement remains
+immediate. Teleports, scene/window changes,
 and viewport resizing initialize fresh framing. New snapshots preserve an
 ongoing adjustment, and earlier snapshot files remain loadable.
 

@@ -16,6 +16,7 @@
 #include <iomanip>
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
+#include "generated_profile.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -506,6 +507,35 @@ struct RenderPair : ModelPair {
             visible+=rgb!=0xff000000u;++render_counts.ppu_pixels;
         }
         require(visible!=0,label+" original menu PPU comparison was blank");
+        // Use the actual selection-window artwork produced by the original
+        // routines. Expanding world/battle scenery must neither stretch these
+        // windows nor reveal repeated copies in the new margins.
+        for (bool battle : {false, true}) for (unsigned width : {360u, 400u, 522u, 1024u}) {
+            eb::SnesBus wide(display);
+            wide.set_presentation_width(width);
+            const auto &profile = eb::source_profile(source.version);
+            wide.work_ram[profile.wram_battle_mode_flag] = battle;
+            wide.work_ram[profile.wram_battle_mode_flag + 1] = 0;
+            if (battle) {
+                wide.work_ram[profile.wram_battle_backgrounds.layer1] = 1;
+                wide.work_ram[profile.wram_battle_backgrounds.layer1 + 1] = 4;
+            }
+            const auto ram = wide.work_ram;
+            const auto vram = wide.video_ram;
+            const auto end = wide.completed_frames + 2;
+            while (wide.completed_frames < end) wide.advance_cpu_cycles(1000);
+            const auto pixels = wide.presentation_pixels();
+            const unsigned margin = (width - 256) / 2;
+            require(wide.presentation_width() == width, label + " menu changed requested viewport");
+            for (unsigned y = 0; y < 224; ++y) for (unsigned x = 0; x < width; ++x) {
+                const auto expected = x >= margin && x < margin + 256
+                    ? display.native_framebuffer[y * 256 + x - margin] : 0xff000000u;
+                require(pixels[y * width + x] == expected,
+                    label + " selection window lost centered placement, width=" + std::to_string(width) +
+                    (battle ? " battle" : " overworld") + " xy=" + std::to_string(x) + "," + std::to_string(y));
+            }
+            require(wide.work_ram == ram && wide.video_ram == vram, label + " menu presentation mutated game data");
+        }
     }
     void establish_composition_history() {
         if(source.version!=eb::GameVersion::US)return;

@@ -244,9 +244,10 @@ PpuPixel SceneReadView::sample_mode7_pixel(unsigned background_layer, int x, uns
 // origin is the native-coordinate x represented by result[0]. OAM ordering,
 // signed nine-bit x, scanline wrap, and hardware object/tile limits are kept
 // separate from output clipping so the host viewport does not create sprites.
-uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin) const {
+uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin,
+                                           int world_shift) const {
     if (object_scene)
-        if (const auto status = object_scene->try_native_sprite_pixels(*this, y, result, origin))
+        if (const auto status = object_scene->try_native_sprite_pixels(*this, y, result, origin + world_shift))
             return *status;
     constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
                                          {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
@@ -278,6 +279,10 @@ uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> resu
         if ((origin || result.size() != 256) && (x + int(width) <= 0 || x >= 256))
             continue;
         const unsigned attributes = object_attributes[object_address + 3], level = (attributes >> 4) & 3;
+        const int object_origin = origin + (world_shift && object_scene &&
+            object_scene->owns_presentation_oam_part(x, object_attributes[object_address + 1],
+                object_attributes[object_address + 2], attributes, bool(extra_attributes >> 1), object_index)
+                ? world_shift : 0);
         const auto host = host_sprites && object_scene && width == 16 && height == 16
             ? object_scene->host_oam_part(x, object_attributes[object_address + 1],
                                           object_attributes[object_address + 2], attributes,
@@ -299,7 +304,7 @@ uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> resu
                 status |= 0x80;
                 break;
             }
-            const int output_x = px - origin;
+            const int output_x = px - object_origin;
             if (output_x < 0 || output_x >= int(result.size()))
                 continue;
             unsigned color = 0;
@@ -364,7 +369,7 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
         const bool scenery = presentation_layer_mask_ & (1 << layer);
         const bool screen_overlay = margin && (presentation_screen_overlay_layer_ & (1u << layer));
         if (margin && ((outside_native && !scenery && !screen_overlay) ||
-                       (outside_world && scenery && !screen_overlay)))
+                       (outside_world && scenery && !screen_overlay && !(layer == 4 && presentation_robot_ending_))))
             continue;
         // The Japanese logo's red field reaches the authored picture edges.
         // Extend those BG edge samples only; repeating tilemaps would duplicate

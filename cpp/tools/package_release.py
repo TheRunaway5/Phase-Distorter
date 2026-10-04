@@ -7,6 +7,7 @@ The optional --linux-runtime-dir accepts an independently prepared runtime tree;
 its file names and license records are still explicitly whitelisted below.
 Native binaries and runtime libraries live under launchers/<platform>/.
 Archives are written only to releases/; no root-level copies are created.
+--include-launchers also creates a versioned combined launcher folder and ZIP.
 """
 from __future__ import annotations
 
@@ -107,12 +108,16 @@ def template(name: str, version: str, output_name: str) -> Entry:
     return Entry(output_name, text.encode("utf-8"))
 
 
-def package_entries(platform: str, version: str, runtime: Path) -> list[Entry]:
+def package_entries(platform: str, version: str, runtime: Path,
+                    patch_notes: Path | None = None) -> list[Entry]:
     # No recursive source-tree copy: adding a file to a worktree cannot silently
     # add it to a release. Every artifact, dependency and notice is named here.
     entries = [file_entry(ROOT / source, name) for source, name in COMMON_NOTICES]
     entries.extend((template(f"release-readme-{platform}.txt", version, "README.txt"),
-                    template("release-notice.txt", version, "NOTICE.txt")))
+                    template("release-notice.txt", version, "NOTICE.txt"),
+                    Entry("VERSION", (version + "\n").encode())))
+    if patch_notes is not None:
+        entries.append(file_entry(patch_notes, "PATCH-NOTES.md"))
     if platform == "windows":
         for source, name in (("eb_cpp.exe", "Phase Distorter.exe"), ("SDL2.dll", "SDL2.dll")):
             entry = file_entry(ROOT / "launchers/windows/bin" / source, name, 0o755)
@@ -132,6 +137,10 @@ def package_entries(platform: str, version: str, runtime: Path) -> list[Entry]:
             entries.append(entry)
         for name in RUNTIME_NOTICES:
             entries.append(file_entry(runtime / name, "lib/" + name))
+    return finalize_entries(entries, platform, version)
+
+
+def finalize_entries(entries: list[Entry], platform: str, version: str) -> list[Entry]:
     names = [entry.name for entry in entries]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate package paths")
@@ -149,6 +158,62 @@ def package_entries(platform: str, version: str, runtime: Path) -> list[Entry]:
     sums = "".join(f"{sha256(entry.data)}  {entry.name}\n" for entry in sorted(entries, key=lambda entry: entry.name))
     entries.append(Entry("SHA256SUMS", sums.encode()))
     return sorted(entries, key=lambda entry: entry.name)
+
+
+def launcher_entries(packages: dict[str, list[Entry]], version: str) -> list[Entry]:
+    entries = {"README.txt": template("release-readme-launchers.txt", version, "README.txt")}
+    for platform, payload in packages.items():
+        for entry in payload:
+            name = entry.name
+            if name in {"README.txt", "MANIFEST.json", "SHA256SUMS"}:
+                continue
+            if name == "Phase Distorter":
+                name = "launchers/linux/bin/eb_cpp"
+            elif name == "Phase Distorter.exe":
+                name = "launchers/windows/bin/eb_cpp.exe"
+            elif name == "SDL2.dll":
+                name = "launchers/windows/bin/SDL2.dll"
+            elif platform == "linux" and name.startswith("lib/"):
+                name = "launchers/linux/" + name
+            mapped = Entry(name, entry.data, entry.mode)
+            if name in entries and entries[name] != mapped:
+                raise ValueError(f"Conflicting combined launcher input: {name}")
+            entries[name] = mapped
+    entries["launchers/VERSION"] = Entry("launchers/VERSION", (version + "\n").encode())
+    for name, mode in (("launch.sh", 0o755), ("launch.bat", 0o644)):
+        entries[name] = file_entry(ROOT / name, name, mode)
+    return finalize_entries(list(entries.values()), "linux+windows", version)
+
+
+def write_folder(destination: Path, entries: list[Entry]) -> None:
+    # A versioned folder is an immutable snapshot. Repeating the same package
+    # succeeds; never overwrite unrelated files or a user's modified folder.
+    if destination.exists():
+        if destination.is_symlink() or not destination.is_dir():
+            raise ValueError(f"Launcher destination is not a regular directory: {destination}")
+        actual = {path.relative_to(destination).as_posix()
+                  for path in destination.rglob("*") if path.is_file() or path.is_symlink()}
+        if actual != {entry.name for entry in entries}:
+            raise ValueError(f"Existing launcher folder has different contents: {destination}")
+        for entry in entries:
+            path = destination / entry.name
+            if path.is_symlink() or path.read_bytes() != entry.data or stat.S_IMODE(path.stat().st_mode) != entry.mode:
+                raise ValueError(f"Existing launcher snapshot differs: {path}")
+        return
+    temporary = Path(tempfile.mkdtemp(prefix=destination.name + ".", dir=destination.parent))
+    try:
+        temporary.chmod(0o755)
+        for entry in entries:
+            safe_name(entry.name)
+            path = temporary / entry.name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(entry.data)
+            path.chmod(entry.mode)
+        temporary.rename(destination)
+    finally:
+        if temporary.exists():
+            import shutil
+            shutil.rmtree(temporary)
 
 
 def write_zip(destination: Path, entries: list[Entry]) -> None:
@@ -192,27 +257,36 @@ def main() -> int:
     parser.add_argument("--version", default=(ROOT / "VERSION").read_text(encoding="utf-8").strip())
     parser.add_argument("--platform", choices=("all", "windows", "linux"), default="all")
     parser.add_argument("--linux-runtime-dir", type=Path, default=ROOT / "launchers/linux/lib")
+    parser.add_argument("--patch-notes", type=Path, help="Include this explicitly selected Markdown file in each bundle")
+    parser.add_argument("--include-launchers", action="store_true", help="Also create the combined versioned launcher folder and ZIP")
     parser.add_argument("--check", action="store_true", help="Validate whitelisted inputs without writing releases")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?", args.version):
         parser.error("Version must be a filename-safe release version such as 0.1 or 0.1.0")
     platforms = ("windows", "linux") if args.platform == "all" else (args.platform,)
+    if args.include_launchers and args.platform != "all":
+        parser.error("--include-launchers requires --platform all")
     # Validate all selected packages first; a missing runtime or notice should
     # fail before any previous release archive is replaced.
-    packages = {platform: package_entries(platform, args.version, args.linux_runtime_dir) for platform in platforms}
+    packages = {platform: package_entries(platform, args.version, args.linux_runtime_dir, args.patch_notes)
+                for platform in platforms}
+    if args.include_launchers:
+        packages["launchers"] = launcher_entries(packages, args.version)
     releases = ROOT / "releases"
     for platform, entries in packages.items():
         name = f"Phase-Distorter-{args.version}-{platform}-x86_64.zip"
         if not args.check:
             releases.mkdir(exist_ok=True)
+            if platform == "launchers":
+                write_folder(releases / Path(name).stem, entries)
             write_zip(releases / name, entries)
         print(f"{'Validated' if args.check else 'Packaged'} {name}: {len(entries)} files, "
               f"{sum(len(entry.data) for entry in entries):,} uncompressed bytes")
     if not args.check:
+        # Retain hashes for older versioned ZIPs as well as this release.
         # The enclosing checksum file hashes the ZIPs only. ZIP contents never
         # include this file or the repository checksum file, avoiding cycles.
-        archives = [releases / f"Phase-Distorter-{args.version}-{platform}-x86_64.zip"
-                    for platform in ("linux", "windows")]
+        archives = sorted(releases.glob("Phase-Distorter-*.zip"))
         text = "".join(f"{sha256(path.read_bytes())}  {path.name}\n" for path in archives if path.is_file())
         temporary = releases / "SHA256SUMS.tmp"
         temporary.write_text(text, encoding="utf-8")

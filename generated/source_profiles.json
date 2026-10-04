@@ -68,7 +68,11 @@
       "add_party_character": 12724472,
       "remove_party_character": 12724667,
       "fade_out": 12617748,
-      "wait_frames": 12617611
+      "wait_frames": 12617611,
+      "damage_argument_store_end": 12746427
+    },
+    "battle_state": {
+      "current_attacker": 43376
     },
     "dma_queue": {
       "write_index": 0,
@@ -239,7 +243,11 @@
       "add_party_character": 12724164,
       "remove_party_character": 12724403,
       "fade_out": 12617738,
-      "wait_frames": 12617601
+      "wait_frames": 12617601,
+      "damage_argument_store_end": 12746322
+    },
+    "battle_state": {
+      "current_attacker": 43890
     },
     "dma_queue": {
       "write_index": 0,

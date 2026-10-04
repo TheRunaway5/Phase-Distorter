@@ -110,7 +110,8 @@ int main(int argc, char **argv) {
       // regions. US has an explicit pre-loop preparation call; both install
       // the native follower tick callback before the actual animation loop.
       const bool jp = assets.version == eb::GameVersion::JP;
-      const unsigned expected_appearance_calls = 300;
+      // The implemented enemy owner services open six more pose sites.
+      const unsigned expected_appearance_calls = 306;
       bool startup_found = false, pose_found = false, us_prepare_found = false,
            follower_found = false, tick_found = false;
       for (unsigned token = 0; token < stats.operations; ++token) {

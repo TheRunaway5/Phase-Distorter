@@ -1,0 +1,59 @@
+{
+  "architecture": "x86_64",
+  "archives": {
+    "Phase-Distorter-0.2-launchers-x86_64.zip": {
+      "bytes": 22303294,
+      "sha256": "220b5e8b56f77ccd6b3ee1ea69cd35f6cb9c4817334251a218a736294cf6b23f"
+    },
+    "Phase-Distorter-0.2-linux-x86_64.zip": {
+      "bytes": 9483639,
+      "sha256": "cb0446479a515f97a70aba758e54f1b33bf443eaa68790e94a07de965bfbe347"
+    },
+    "Phase-Distorter-0.2-windows-x86_64.zip": {
+      "bytes": 12846209,
+      "sha256": "a1d2d06cb16593cf1a8af220eee2252151be62760344a5742dbc8e04d1958ce9"
+    }
+  },
+  "baseline_release_commit": "54b81a58e6047ba470751ea2e01b3495297cc4fd",
+  "builds": {
+    "linux": "Release; GCC; Linux execution",
+    "windows": "Release; MinGW-w64; Wine execution"
+  },
+  "checks": {
+    "aspect": "32:9",
+    "desktop_frames_per_run": 180,
+    "desktop_variants": [
+      "Native CRT off",
+      "Native CRT on",
+      "300 FPS CRT on",
+      "Uncapped CRT on",
+      "VRR CRT on"
+    ],
+    "extracted_package_and_launcher_runs": 28,
+    "headless_frames_per_run": 1200,
+    "optional_skips_per_platform": 38,
+    "packager_tests": 5,
+    "passed_tests_per_platform": 227,
+    "photosensitivity_assets": "Both regional packs; backgrounds, PSI, status and flash mechanisms; Linux",
+    "reduce_flashing": true,
+    "regional_linux_wine_comparisons": "Exact state, native/presentation pixels and PCM; desktop OpenGL captures also match",
+    "registered_tests_per_platform": 265,
+    "source_backed_scene_checks_per_region_per_platform": 3770369
+  },
+  "git_head": "ead9af81cdfb537d48dcdc3237e84e888aefea9a",
+  "includes_uncommitted_changes": true,
+  "limits": [
+    "Bounded startup and fixture checks; no manual full-game playthrough",
+    "Windows execution and graphics use Wine; native Windows hardware validation outstanding",
+    "Native component migration is unfinished; desktop uses GameSession"
+  ],
+  "prepared": "2026-10-04",
+  "project": "Phase Distorter",
+  "source_inputs": {
+    "count": 2168,
+    "scope": "cpp/include, cpp/src, generated, root CMakeLists.txt and cpp/CMakeLists.txt",
+    "sha256": "36bfa17c65ab6c3e9823b676184d4facaac8fd46fc03754a9d379e85edc57106",
+    "unchanged_during_build_and_validation": true
+  },
+  "version": "0.2"
+}

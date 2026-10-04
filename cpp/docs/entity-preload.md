@@ -6,10 +6,22 @@ Imported normal/mirrored sprite extents expand placement queries so a tall or
 wide sprite is prepared before its anchor enters the draw band. These paths work
 without frame interpolation, at every supported even width through 1024.
 
-Stationary Person/Object scripts 8, 605 and 606 have source-verified initial
-poses. Their dormant artwork is prepared and drawn without allocating source
-actors, running callbacks or advancing randomness. Active NPC identity hands
-that artwork back to the source actor. Water overlays, moving poses and other
+Stationary Person/Object scripts 7, 8, 605, 606 and 693, plus ItemBox
+script 9, have source-verified initial poses. Present and trash-container poses
+follow their opened flags; sanctuary markers follow their defeated flags. Their
+dormant artwork is prepared and drawn without allocating source actors, running
+callbacks or advancing randomness. A newly created actor keeps
+its prepared artwork until its first source draw, provided its initial pose,
+script and authored position still match and it is not explicitly hidden.
+Source draw submission then takes sole ownership of its current pose.
+Preparation also follows `C0222B`: after the initial map scan switches NPC
+spawn mode from 1 to -1, unowned placements inside the original 256 by 224
+viewport are excluded. An appearance flag cannot recreate a deleted body or
+invent a visible NPC without collision/dialogue. Entity-directed story cameras
+exclude unowned dormant previews, keeping scripted replacements and newly
+created source actors authoritative.
+Preview support leaves the existing source retention
+policy unchanged. Water overlays, moving poses and other
 scripted state remain owned by actual actors.
 
 The desktop native-sprite session enables the guarded world preloader for wider

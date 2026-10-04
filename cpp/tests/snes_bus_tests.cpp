@@ -968,33 +968,118 @@ void lumine_hall_presentation(eb::GameVersion version) {
     upload(20);
     const auto before = b->work_ram;
     until(*b, 2);
-    check(b->presentation_pixels()[64] == 0xffff0000 && b->presentation_pixels()[328] == 0xffff0000,
-          "Lumine Hall margins sample complete prepared text columns beyond the original30-column upload");
+    check(b->presentation_pixels()[64] == 0xff000000 && b->presentation_pixels()[328] == 0xff000000,
+          "Lumine Hall text stays inside the authored 30-column wall patch on both sides");
     check(b->presentation_pixels()[72] == b->native_framebuffer[0] && b->native_framebuffer[0] == 0xff00ff00,
           "Lumine Hall original text placement and centered pixels stay unchanged");
     check(b->work_ram == before, "Lumine Hall adaptation does not advance script text or write game state");
     ram_word(source.wram_entity_script_variable1, 22);
     until(*b, 3);
-    check(b->presentation_pixels()[400 + 64] == 0xffff0000,
+    check(b->presentation_pixels()[400 + 72] == 0xff00ff00,
           "Lumine Hall follows displayed VRAM phase when script progress leads DMA");
     upload(21);
     until(*b, 4);
-    check(b->presentation_pixels()[800 + 64] == 0xff00ff00, "Lumine Hall follows the next displayed half-tile phase");
+    check(b->presentation_pixels()[800 + 72] == 0xff0000ff, "Lumine Hall follows the next displayed half-tile phase");
     ram_word(source.wram_entity_script_ids, 0);
     until(*b, 5);
     check(b->presentation_pixels()[1200 + 64] == 0xff000000,
           "Prepared buffer from an inactive Lumine Hall event is ignored");
 }
 
+void lumine_hall_wall_bounds(eb::GameVersion version) {
+    const auto &source = eb::source_profile(version);
+    for (unsigned width : {256u, 398u, 522u, 1024u})
+        for (unsigned camera : {6400u, 6464u, 6528u})
+            for (unsigned phase : {20u, 21u}) {
+                std::vector<uint8_t> content(0x300000);
+                auto b = std::make_unique<eb::SnesBus>(content, version);
+                b->set_presentation_width(width);
+                b->set_direct_rendering_enabled(true);
+                b->write_byte(0x2100, 15);
+                b->write_byte(0x2105, 1);
+                b->write_byte(0x2107, 0x39);
+                b->write_byte(0x2108, 0x59);
+                b->write_byte(0x212c, 1);
+                const auto put = [&](unsigned at, unsigned value) {
+                    b->work_ram[at] = value; b->work_ram[at + 1] = value >> 8;
+                };
+                put(source.wram_first_entity, 0xffff);
+                put(source.wram_background_scroll.layer1_x, camera);
+                put(source.wram_background_scroll.layer1_y, 4608);
+                b->write_byte(0x210d, camera & 255);
+                b->write_byte(0x210d, (camera >> 8) & 3);
+                b->write_byte(0x210e, 0);
+                b->write_byte(0x210e, 2);
+                // Constant green authored wall, with the real C48A6D patch
+                // at world tiles (808,588). Text colors distinguish its phase.
+                for (unsigned i = 0; i < 16; ++i)
+                    put(source.wram_map_tile_arrangements + i * 2, 1);
+                for (unsigned i = 0; i < 2048; ++i)
+                    b->video_ram[0x7000 + i * 2] = 1;
+                color(*b, 1, 0x03e0);
+                color(*b, 49, 0x001f);
+                color(*b, 50, 0x7c00);
+                for (unsigned y = 0; y < 8; ++y) {
+                    b->video_ram[32 + y * 2] = 255;
+                    b->video_ram[17 * 32 + y * 2] = 255;
+                    b->video_ram[18 * 32 + y * 2 + 1] = 255;
+                }
+                b->work_ram[source.wram_lumine_text_header] = 8;
+                b->work_ram[source.wram_lumine_text_header + 1] = 30;
+                put(source.wram_entity_script_ids, source.lumine_text_script);
+                put(source.wram_entity_script_variable0, 200);
+                put(source.wram_entity_script_variable1, phase + 1);
+                for (unsigned odd = 0; odd < 2; ++odd)
+                    for (unsigned column = 0; column < 130; ++column)
+                        for (unsigned row = 0; row < 8; ++row)
+                            put((odd ? source.wram_lumine_text_maps.odd_columns
+                                     : source.wram_lumine_text_maps.even_columns) + column * 16 + row * 2,
+                                0x0c11 + odd);
+                for (unsigned column = 0; column < 30; ++column)
+                    for (unsigned row = 0; row < 8; ++row) {
+                        const unsigned mx = (40 + column) & 63,
+                                       at = 0x7000 + mx / 32 * 2048 + ((12 + row) * 32 + (mx & 31)) * 2;
+                        b->video_ram[at] = 0x11 + (phase & 1);
+                        b->video_ram[at + 1] = 0x0c;
+                    }
+                const auto memory = b->work_ram;
+                const auto video = b->video_ram;
+                until(*b, 225);
+                const auto pixels = b->presentation_pixels();
+                const int margin = int(width - 256) / 2;
+                bool bounded = true;
+                for (unsigned y = 0; y < 224; ++y)
+                    for (unsigned x = 0; x < width; ++x) {
+                        const int wx = int(camera) + int(x) - margin;
+                        const bool text = wx >= 808 * 8 && wx < (808 + 30) * 8 && y >= 95 && y < 159;
+                        const auto expected = text ? (phase & 1 ? 0xff0000ff : 0xffff0000) : 0xff00ff00;
+                        bounded &= pixels[y * width + x] == expected;
+                    }
+                check(bounded, "Lumine Hall keeps both scrolling phases on its wall at every width and camera position");
+                check(b->work_ram == memory && b->video_ram == video,
+                      "Lumine Hall wall clipping changes neither the script nor the uploaded map");
+                const auto scene = b->direct_scene();
+                check(bool(scene), "Lumine Hall wall clipping publishes a direct scene");
+                if (scene) {
+                    const auto rebuilt = eb::rasterize_direct_scene({scene, {}});
+                    check(std::equal(rebuilt.begin(), rebuilt.end(), pixels.begin()),
+                          "Direct Lumine Hall artwork matches the bounded scanline picture");
+                }
+            }
+}
+
 void world_map_presentation(eb::GameVersion version) {
     const auto& source = eb::source_profile(version);
-    const auto setup = [&](unsigned camera, unsigned width, unsigned first, unsigned last) {
+    const auto setup = [&](unsigned camera, unsigned width, unsigned first, unsigned last,
+                           unsigned combination = 5) {
         auto image = rom;
         // A source-shaped synthetic global map. Every 32-pixel block selects
         // one of three loaded arrangements; neighboring sectors are unrelated.
+        // Default to the constrained road-tunnel combination, since forest
+        // combinations now deliberately expose their natural border artwork.
         for (unsigned row = 0; row < 80; ++row)
             for (unsigned col = 0; col < 32; ++col)
-                image[source.rom_map_tileset_palette_sectors + row * 32 + col] = (col >= first && col < last ? 2 : 1)
+                image[source.rom_map_tileset_palette_sectors + row * 32 + col] = (col >= first && col < last ? combination : 1)
                                                                                  << 3;
         const auto& chunks = source.rom_map_tile_chunks;
         for (unsigned y = 0; y < 320; ++y)
@@ -1009,7 +1094,7 @@ void world_map_presentation(eb::GameVersion version) {
         b->write_byte(0x2100, 15);
         b->write_byte(0x210d, camera & 255);
         b->write_byte(0x210d, (camera >> 8) & 3);
-        b->work_ram[source.wram_loaded_map_tile_combination] = 2;
+        b->work_ram[source.wram_loaded_map_tile_combination] = combination;
         b->work_ram[source.wram_background_scroll.layer1_x] = camera;
         b->work_ram[source.wram_background_scroll.layer1_x + 1] = camera >> 8;
         color(*b, 1, 31);
@@ -1095,11 +1180,29 @@ void world_map_presentation(eb::GameVersion version) {
     hud->object_attributes[1] = 0;
     hud->object_attributes[2] = 4;
     hud->object_attributes[3] = 0x30;
+    // Give the world object its actual actor descriptor. Unmatched OAM is a
+    // stationary indicator and must not inherit the scenery's boundary shift.
+    const auto hud_word = [&](unsigned at, unsigned value) {
+        hud->work_ram[at] = value; hud->work_ram[at + 1] = value >> 8;
+    };
+    hud_word(source.wram_first_entity, 0);
+    hud_word(source.wram_entity_next, 0xffff);
+    hud_word(source.wram_entity_screen_coordinates.x, 100);
+    hud_word(source.wram_entity_screen_coordinates.y, 1);
+    hud_word(source.wram_entity_spritemap_pointers.low, 0x4800);
+    hud_word(source.wram_entity_spritemap_pointers.high, 0x7e);
+    hud_word(source.wram_entity_draw_callback, source.entity_draw_callbacks.screen_space);
+    const std::array<std::uint8_t, 5> world_part{0, 4, 0x30, 0, 0x80};
+    std::copy(world_part.begin(), world_part.end(), hud->work_ram.begin() + 0x4800);
+    hud->object_attributes[4] = 180; hud->object_attributes[5] = 0;
+    hud->object_attributes[6] = 4; hud->object_attributes[7] = 0x30;
     until(*hud, 2);
     check(hud->presentation_pixels()[192] == 0xffffffff && hud->native_framebuffer[120] == 0xffffffff,
           "Window background text stays centered when the display world camera shifts");
     check(hud->presentation_pixels()[100] == 0xffff00ff && hud->native_framebuffer[100] == 0xffff00ff,
           "Existing world object shifts with the displayed scenery without changing native OAM placement");
+    check(hud->presentation_pixels()[252] == 0xffff00ff && hud->native_framebuffer[180] == 0xffff00ff,
+          "Unmatched indicator stays centered with the menu while the world object follows scenery");
 
     auto narrow = setup(1024, 800, 4, 5);
     until(*narrow, 2);
@@ -1107,6 +1210,26 @@ void world_map_presentation(eb::GameVersion version) {
               narrow->presentation_pixels()[272] == narrow->native_framebuffer[0] &&
               narrow->presentation_pixels()[528] == 0xff000000,
           "A region narrower than the wide view is centered and pillarboxed");
+
+    for (unsigned combination : {2u, 3u, 6u, 13u, 26u}) {
+        auto natural = setup(1024, 800, 4, 5, combination);
+        // A visibly colored metatile zero distinguishes authored continuation
+        // from both black span clipping and recentering a narrow map segment.
+        for (unsigned tile = 0; tile < 16; ++tile)
+            natural->work_ram[source.wram_map_tile_arrangements + tile * 2] = 1;
+        auto canonical = std::make_unique<eb::SnesBus>(*natural);
+        canonical->set_presentation_width(256);
+        until(*natural, 2);
+        until(*canonical, 2);
+        const auto pixels = natural->presentation_pixels();
+        check(pixels[0] == 0xffff0000 && pixels[799] == 0xffff0000 &&
+                  std::equal(canonical->native_framebuffer.begin(), canonical->native_framebuffer.begin() + 256,
+                             pixels.begin() + 272),
+              "Natural forest/cave borders extend metatile zero with no camera correction or black span clipping");
+        check(natural->work_ram == canonical->work_ram &&
+                  natural->native_framebuffer == canonical->native_framebuffer,
+              "Natural-border camera policy preserves canonical pixels and source memory");
+    }
 
     auto mismatch = setup(1024, 400, 0, 32);
     mismatch->video_ram[0x7042] = 0;
@@ -1167,6 +1290,7 @@ int main() {
     for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
         wide_presentation(version);
         lumine_hall_presentation(version);
+        lumine_hall_wall_bounds(version);
         world_map_presentation(version);
         selective_effects(version);
         title_and_gas_effects(version);

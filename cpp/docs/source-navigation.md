@@ -27,7 +27,7 @@ behavior comes from the original game program.
 | OpenGL upload, scaling and frame display | [frame_presenter.cpp](../src/frame_presenter.cpp) | `FramePresenter` |
 | Host deadlines, completed-picture history, filtering and interpolation scheduling | [presentation_pipeline.cpp](../src/presentation_pipeline.cpp), [presentation_pipeline.hpp](../include/eb/presentation_pipeline.hpp) | `PresentationPipeline`, backed by `FramePacer` and `PresentationClock` |
 | Host deadline waiting | [presentation_wait.hpp](../include/eb/presentation_wait.hpp) | `wait_for_presentation` |
-| Intermediate display frames and selective flash filtering | [frame_interpolator.cpp](../src/frame_interpolator.cpp), [photosensitivity_filter.cpp](../src/photosensitivity_filter.cpp) | `FrameInterpolator`, `PhotosensitivityFilter` |
+| Intermediate display frames and automatic flash dimming | [frame_interpolator.cpp](../src/frame_interpolator.cpp), [photosensitivity_filter.cpp](../src/photosensitivity_filter.cpp) | `FrameInterpolator`, `PhotosensitivityFilter` |
 | Settings UI and opt-in gameplay tools | [debug_panel.cpp](../src/debug_panel.cpp), [game_debug.cpp](../src/game_debug.cpp) | `DebugPanel`, `GameDebug` |
 | ROM validation, asset-pack import and cache administration | [asset_store.cpp](../src/asset_store.cpp), [asset_cache.cpp](../src/asset_cache.cpp) | Asset import and cache APIs |
 

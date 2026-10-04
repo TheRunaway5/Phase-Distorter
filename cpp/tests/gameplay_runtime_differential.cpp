@@ -1,20 +1,28 @@
 // Asset-free entity/script differential by default. Optional story replays:
 // gameplay_runtime_differential --assets imported.ebpak --frames 1200 --input-script route.txt
 // Both timing policies run unless --original-timing or --enhanced-timing is selected.
+// --snapshot accepts a desktop .ebstate or raw GameSession snapshot and preserves its timing,
+// debug switches and presentation configuration. --frames is then relative
+// to the restored hardware frame; input-script frame numbers remain absolute.
 #include "eb/game/runtime/runtime.hpp"
 #include "eb/game_debug.hpp"
+#include "eb/game_session.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/spc700_audio_cpu.hpp"
+#include "eb/snapshot_archive.hpp"
+#include "eb/snapshot_store.hpp"
 #include "generated_assets.hpp"
 #include "generated_code.hpp"
 #include "generated_profile.hpp"
 #include "runtime_state_audit.hpp"
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -97,6 +105,20 @@ struct Machine {
         bus.set_presentation_width(width);
         cpu.set_entity_preload_width(width);
         bus.set_presentation_effects_enabled(effects);
+    }
+    void restore(std::span<const std::uint8_t> snapshot, eb::MainCpuRuntime runtime) {
+        eb::SnapshotArchive envelope(snapshot);
+        std::array<std::uint8_t, 8> magic{};
+        std::uint32_t format{};
+        eb::GameVersion version{};
+        std::uint64_t content{}, checksum{}, steps{};
+        std::vector<std::uint8_t> payload;
+        envelope(magic, format, version, content, checksum);
+        envelope.blob(payload); envelope.finish();
+        eb::SnapshotArchive machine(payload, format);
+        machine(bus, audio_cpu, dsp, cpu, debug, steps); machine.finish();
+        cpu.set_runtime(runtime);
+        events.clear(); pictures.clear();
     }
 };
 void compare_memory(const Machine& a, const Machine& b) {
@@ -265,26 +287,42 @@ std::vector<Input> input_script(const std::string& path) {
     return result;
 }
 void replay(const eb::GameAssets& assets, std::uint64_t frames, const std::vector<Input>& inputs,
-            bool enhanced, bool strict_memory) {
+            bool enhanced, bool strict_memory, std::span<const std::uint8_t> snapshot = {}) {
     auto a = std::make_unique<Machine>(assets.image, assets.version, eb::MainCpuRuntime::Legacy, enhanced);
     auto b = std::make_unique<Machine>(assets.image, assets.version, eb::MainCpuRuntime::Ported, enhanced);
+    if (!snapshot.empty()) {
+        // Validate the complete session envelope through the same production
+        // loader as the desktop before restoring either differential owner.
+        eb::GameSession validated(assets.image, assets.version);
+        validated.load_snapshot(snapshot);
+        const auto canonical = validated.save_snapshot();
+        a->restore(canonical, eb::MainCpuRuntime::Legacy);
+        b->restore(canonical, eb::MainCpuRuntime::Ported);
+    }
+    const auto first_frame = a->bus.completed_frames;
+    require(frames <= UINT64_MAX - first_frame, "Replay frame limit overflows");
     std::size_t next = 0;
     std::uint64_t configured_frame = UINT64_MAX;
     Proof proof;
-    while (a->bus.completed_frames < frames) {
+    while (a->bus.completed_frames < first_frame + frames) {
         if (configured_frame != a->bus.completed_frames) {
             configured_frame = a->bus.completed_frames;
-            constexpr std::array widths{256u, 400u, 640u, 320u, 256u};
-            const auto width = widths[(configured_frame / 173) % widths.size()];
-            const bool effects = (configured_frame / 137) % 2;
-            a->configure(width, effects); b->configure(width, effects);
+            if (snapshot.empty()) {
+                constexpr std::array widths{256u, 400u, 640u, 320u, 256u};
+                const auto width = widths[(configured_frame / 173) % widths.size()];
+                const bool effects = (configured_frame / 137) % 2;
+                a->configure(width, effects); b->configure(width, effects);
+            }
             while (next < inputs.size() && inputs[next].frame <= configured_frame) {
                 a->bus.set_buttons(inputs[next].buttons); b->bus.set_buttons(inputs[next++].buttons);
             }
         }
         compare_step(*a, *b, proof, strict_memory);
     }
-    std::cout << assets.title << " enhanced=" << enhanced << " frames=" << a->bus.completed_frames << ' ';
+    std::cout << assets.title;
+    if (snapshot.empty()) std::cout << " enhanced=" << enhanced;
+    else std::cout << " snapshot_frame=" << first_frame << " restored_timing=true";
+    std::cout << " frames=" << a->bus.completed_frames - first_frame << ' ';
     finish(*a, *b, proof);
 }
 } // namespace
@@ -292,20 +330,40 @@ int main(int argc, char** argv) {
     try {
         std::vector<std::string> packs;
         std::string script;
+        std::string snapshot_path;
         std::uint64_t frames = 1200;
         bool strict = false;
+        bool timing_override = false;
         std::vector<bool> policies{false, true};
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--strict-memory") strict = true;
-            else if (arg == "--original-timing") policies = {false};
-            else if (arg == "--enhanced-timing") policies = {true};
+            else if (arg == "--original-timing") { policies = {false}; timing_override = true; }
+            else if (arg == "--enhanced-timing") { policies = {true}; timing_override = true; }
             else if (arg == "--assets" && i + 1 < argc) packs.emplace_back(argv[++i]);
             else if (arg == "--frames" && i + 1 < argc) frames = std::stoull(argv[++i]);
             else if (arg == "--input-script" && i + 1 < argc) script = argv[++i];
-            else throw std::invalid_argument("Usage: gameplay_runtime_differential [--assets FILE] [--frames N] [--input-script FILE] [--strict-memory] [--original-timing|--enhanced-timing]");
+            else if (arg == "--snapshot" && i + 1 < argc) snapshot_path = argv[++i];
+            else throw std::invalid_argument("Usage: gameplay_runtime_differential [--assets FILE] [--frames N] [--input-script FILE] [--snapshot FILE] [--strict-memory] [--original-timing|--enhanced-timing]");
         }
         require(frames > 0, "Frame count must be positive");
+        std::vector<std::uint8_t> snapshot;
+        if (!snapshot_path.empty()) {
+            require(packs.size() == 1 && !timing_override,
+                    "Snapshot replay requires one asset pack and preserves the saved timing policy");
+            const std::u8string utf8(snapshot_path.begin(), snapshot_path.end());
+            const std::filesystem::path path(utf8);
+            if (path.extension() == ".ebstate") {
+                snapshot = eb::SnapshotStore(path.parent_path()).load(path.stem().string());
+            } else {
+                std::ifstream file(path, std::ios::binary | std::ios::ate);
+                require(bool(file) && file.tellg() > 0 && file.tellg() <= eb::SnapshotArchive::maximum_bytes,
+                        "Cannot read snapshot, or snapshot exceeds the size limit");
+                file.seekg(0);
+                snapshot.assign(std::istreambuf_iterator<char>(file), {});
+            }
+            policies = {true}; // The archive restores the actual saved policy.
+        }
         if (packs.empty()) {
             for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
                 multiple_dma_frame_callbacks(version);
@@ -316,7 +374,7 @@ int main(int argc, char** argv) {
             const auto inputs = input_script(script);
             for (const auto& pack : packs) {
                 const auto assets = eb::load_game_assets(pack, eb::asset_profiles());
-                for (bool enhanced : policies) replay(assets, frames, inputs, enhanced, strict);
+                for (bool enhanced : policies) replay(assets, frames, inputs, enhanced, strict, snapshot);
             }
         }
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

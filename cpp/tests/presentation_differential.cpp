@@ -149,22 +149,20 @@ int main(int argc, char** argv) {
         eb::DirectSceneMotion scene_motion;
         std::span<const uint32_t> filtered_picture = wide->presentation_pixels();
         unsigned filtered_width = wide->presentation_width();
-        uint64_t effect_frames = 0, effect_pixels = 0, changed_pixels = 0;
+        uint64_t filtered_frames = 0, changed_pixels = 0;
         if (reduce_flashing || interpolate || direct) {
-            wide->set_presentation_effects_enabled(reduce_flashing);
+            wide->set_presentation_effects_enabled(false);
             // Filter every completed game frame at its hardware boundary,
             // including multiple boundaries crossed by one CPU/DMA operation.
             // The other instance has neither metadata nor an observer enabled.
             wide->on_presentation_frame = [&](std::span<const uint32_t> pixels, unsigned width, uint64_t frame) {
-                const auto mask = wide->presentation_effect_mask();
                 filtered_picture =
-                    filter.apply(pixels, int(width), 224, reduce_flashing, mask, wide->presentation_effect_reference());
+                    filter.apply(pixels, int(width), 224, reduce_flashing);
                 filtered_width = width;
-                const auto marked = std::count_if(mask.begin(), mask.end(), [](uint8_t value) { return value != 0; });
-                effect_frames += marked != 0;
-                effect_pixels += marked;
-                for (std::size_t i = 0; i < pixels.size(); ++i)
-                    changed_pixels += filtered_picture[i] != pixels[i];
+                uint64_t changes = 0;
+                for (std::size_t i = 0; i < pixels.size(); ++i) changes += filtered_picture[i] != pixels[i];
+                filtered_frames += changes != 0;
+                changed_pixels += changes;
                 if (direct) {
                     scene_motion.submit(wide->direct_scene());
                     if (wide->direct_scene()) {
@@ -293,7 +291,7 @@ int main(int argc, char** argv) {
         if (interpolate || direct)
             std::cout << " generated_frames=" << generated_frames;
         if (reduce_flashing)
-            std::cout << " filtered_effect_frames=" << effect_frames << " masked_pixels=" << effect_pixels
+            std::cout << " filtered_frames=" << filtered_frames
                       << " changed_pixels=" << changed_pixels;
         std::cout << "; presentation preserves CPU/SPC state, all game/entity/PPU memory, clocks, writes, audio, "
                      "native pixels\n";

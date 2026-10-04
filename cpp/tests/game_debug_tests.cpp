@@ -3,6 +3,7 @@
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/spc700_audio_cpu.hpp"
+#include "eb/snapshot_archive.hpp"
 #include "generated_assets.hpp"
 #include "generated_profile.hpp"
 #include <algorithm>
@@ -30,6 +31,82 @@ void destinations() {
         doors+=std::string_view(place.name).starts_with("Entrance ");
     }
     check(areas==385 && warps==233 && doors==841 && ids.size()==1472,"Teleport catalogue lost area or entrance coverage");
+}
+void damage(eb::GameVersion version, eb::MainCpuRuntime runtime) {
+    auto bus = std::make_unique<eb::SnesBus>(std::array<std::uint8_t,1>{0}, version);
+    eb::MainCpu65816 cpu(*bus); cpu.set_runtime(runtime);
+    eb::GameDebug debug(*bus, cpu);
+    const auto& p = eb::source_profile(version);
+    const auto& b = p.battler_layout;
+    const auto player = b.table_address, enemy = player + 6 * b.entry_size;
+    bus->work_ram[p.party_state.count] = 4;
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        bus->work_ram[p.party_state.members + slot] = slot + 1;
+        put(*bus, player + slot * b.entry_size + b.id, slot + 1);
+    }
+    bus->work_ram[enemy + b.ally_or_enemy] = 1;
+    put(*bus, p.wram_battle_mode_flag, 1);
+    cpu.emulation_mode = false; cpu.program_counter = p.gameplay_routines.main_loop;
+    debug.before_step();
+    const auto stage = [&](unsigned attacker, unsigned target, unsigned amount, bool enabled) {
+        put(*bus, p.battle_state.current_attacker, attacker);
+        debug.configure({false,false,false,false,enabled});
+        cpu.status_register = 0; cpu.direct_page = 0x1800; cpu.stack_pointer = 0x17ff;
+        cpu.data_bank = 0x7e; cpu.accumulator = target; cpu.x_index = amount;
+        cpu.program_counter = p.gameplay_routines.damage_argument_store_end - 2;
+        cpu.step_instruction(); // Real regional STX VIRTUAL04, both backends.
+        return word(*bus, 0x1804);
+    };
+    for (unsigned slot = 0; slot < 4; ++slot)
+        check(stage(player + slot * b.entry_size, enemy, 17, true) == 65535,
+              "A playable party member did not do maximum damage");
+    // Continue through the original immunity and unsigned REDUCE_HP path.
+    put(*bus, enemy + b.hp_target, 40000); put(*bus, enemy + b.hp, 40000);
+    put(*bus, enemy + b.hp_max, 40000);
+    for (unsigned i = 0; i < 1000 && word(*bus, enemy + b.hp_target); ++i) cpu.step_instruction();
+    check(!word(*bus, enemy + b.hp_target), "Max damage wrapped or failed to reduce enemy HP");
+    check(word(*bus, 0x1804) == 65535, "Battle damage text lost the boosted amount");
+    check(stage(player, enemy, 17, false) == 17, "Disabling max damage did not restore ordinary damage");
+    check(!bus->debug_write_wram, "Disabled max damage retained its memory hook");
+    put(*bus, enemy + b.hp_target, 40000); put(*bus, enemy + b.hp, 40000);
+    for (unsigned i = 0; i < 1000 && word(*bus, enemy + b.hp_target) == 40000; ++i) cpu.step_instruction();
+    check(word(*bus, enemy + b.hp_target) == 39983, "Disabled max damage changed ordinary HP reduction");
+    stage(player, enemy, 17, true);
+    put(*bus, enemy + b.id, 93); // ENEMY::MASTER_BELCH_1 in the source constants.
+    put(*bus, enemy + b.hp_target, 40000); bus->work_ram[enemy + 72] = 0;
+    for (unsigned i = 0; i < 1000 && bus->work_ram[enemy + 72] != 21; ++i) cpu.step_instruction();
+    check(bus->work_ram[enemy + 72] == 21 && word(*bus, enemy + b.hp_target) == 40000,
+          "Max damage bypassed the source's special enemy immunity");
+    put(*bus, enemy + b.id, 0);
+    check(stage(player, enemy, 0, true) == 0, "Max damage converted a zero-damage hit into damage");
+    check(stage(enemy, player, 19, true) == 19, "Max damage boosted an enemy attack");
+    check(stage(player, player, 23, true) == 23, "Max damage boosted reflected or friendly damage");
+    put(*bus, player + b.id, 5);
+    check(stage(player, enemy, 29, true) == 29, "Max damage boosted a guest companion");
+    put(*bus, player + b.id, 1); bus->work_ram[player + b.npc_id] = 1;
+    check(stage(player, enemy, 31, true) == 31, "Max damage boosted an NPC companion");
+    bus->work_ram[player + b.npc_id] = 0;
+    check(stage(player + 1, enemy, 37, true) == 37, "Max damage accepted a misaligned attacker");
+    check(stage(player, enemy + 1, 41, true) == 41, "Max damage accepted a misaligned target");
+    put(*bus, p.wram_battle_mode_flag, 0);
+    check(stage(player, enemy, 43, true) == 43, "Max damage changed a write outside battle");
+    put(*bus, p.wram_battle_mode_flag, 1);
+    stage(player, enemy, 47, true);
+    cpu.program_counter = p.gameplay_routines.damage_argument_store_end + 1;
+    bus->write_byte(0x7e1804, 3); bus->write_byte(0x7e1805, 0);
+    check(word(*bus, 0x1804) == 3, "Max damage changed an unrelated direct-page write");
+    eb::SnapshotArchive saved; saved(debug);
+    debug.configure({});
+    eb::SnapshotArchive loaded(saved.bytes()); loaded(debug); loaded.finish();
+    check(debug.settings().player_max_damage && stage(player, enemy, 53, true) == 65535,
+          "Snapshot did not restore max damage and its hook");
+    for (unsigned format : {1u,2u,3u}) {
+        eb::SnapshotArchive legacy(format); legacy(debug);
+        eb::SnapshotArchive old(legacy.bytes(), format); old(debug); old.finish();
+        check(!debug.settings().player_max_damage && !bus->debug_write_wram,
+              "Older snapshots did not restore max damage as disabled");
+        debug.configure({false,false,false,false,true});
+    }
 }
 void fixtures(eb::GameVersion version) {
     auto bus=std::make_unique<eb::SnesBus>(std::array<std::uint8_t,1>{0},version);
@@ -203,6 +280,8 @@ void route(const std::string& assets,const std::string& input_path) {
 int main(int argc,char** argv) {
     try {
         destinations();fixtures(eb::GameVersion::US);fixtures(eb::GameVersion::JP);
+        for (auto version : {eb::GameVersion::US, eb::GameVersion::JP})
+            for (auto runtime : {eb::MainCpuRuntime::Ported, eb::MainCpuRuntime::Legacy}) damage(version, runtime);
         std::cout<<"PASS "<<checks<<" synthetic debug checks\n"<<std::flush;
         if(argc==4 && std::string(argv[1])=="--assets")route(argv[2],argv[3]);
     }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

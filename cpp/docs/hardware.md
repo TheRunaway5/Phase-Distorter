@@ -177,10 +177,11 @@ Scene adaptation follows [the original source contracts](presentation-scenes.md)
   The original camera, movement, collisions, map-loading calls, and spawns retain
   their original behavior. Other rows still use the original sector-mismatch
   rule (metatile zero), so irregular regions do not reveal an unrelated tileset.
-- Lumine Hall can display additional columns from the complete text maps already
-  prepared by its event. The adapter verifies all 240 uploaded tile words to
-  select the visible phase, including when script progress leads DMA. It never
-  changes the event's progress, player name, scroll rate, or generated text.
+- Lumine Hall keeps its text inside the authored 30-column wall patch, including
+  columns exposed in a widescreen margin. The adapter verifies all 240 uploaded
+  tile words to select the visible phase, including when script progress leads
+  DMA. It never changes the event's progress, player name, scroll rate, or
+  generated text.
 
 Focused hardware tests cover signed tile/affine sampling, sprite edge handling,
 static/title/menu policy, source-selected BG3 battle layers, map streaming-ring

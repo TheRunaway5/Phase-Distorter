@@ -7,6 +7,8 @@
 #include "eb/native/world_collision.hpp"
 #include "eb/native/world_map.hpp"
 #include "eb/overworld_sprite_runtime.hpp"
+#include "eb/overworld_sprite_draw.hpp"
+#include "eb/scene_snapshot_archive.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
 #include "generated_profile.hpp"
@@ -15,6 +17,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 unsigned prop_edge_failures{};
@@ -100,20 +103,31 @@ struct Fixture {
             put(profile.wram_entity_spritemap_pointers.high + slot, 0x807e);
         }
     }
-    void frame() {
+    void frame(bool source_draw = false) {
         const auto before = bus->work_ram;
         const auto diagnostics = bus->native_sprite_runtime()->diagnostics();
-        renderer.begin_sprite_frame(1); renderer.seal_sprite_frame(view());
+        renderer.begin_sprite_frame(1);
+        if (source_draw) {
+            eb::MainCpu65816 cpu(*bus);
+            cpu.emulation_mode = false; cpu.status_register = 0; cpu.stack_pointer = 0x1fff;
+            cpu.program_counter = 0xc0ff00; cpu.x_index = 0;
+            const unsigned entry = assets.version == eb::GameVersion::JP ? 0xc0a383 : 0xc0a3a4;
+            cpu.execute_instruction<0x20>(entry & 0xffff, 3);
+            require(eb::try_native_sprite_draw(cpu, *bus, *bus->native_sprite_runtime(), renderer),
+                    "Catalog edge fixture did not run the real ordinary draw");
+        }
+        renderer.seal_sprite_frame(view());
         renderer.capture_oam_upload(view(), 1); renderer.begin_scanline(view(), 0);
-        require(before == bus->work_ram, "Graphical readiness mutated logical actor/event/RNG state");
+        require(source_draw || before == bus->work_ram, "Graphical readiness mutated logical actor/event/RNG state");
         require(diagnostics.creations == bus->native_sprite_runtime()->diagnostics().creations &&
                 diagnostics.live_resources == bus->native_sprite_runtime()->diagnostics().live_resources,
                 "Graphical readiness activated a logical resource owner");
         ++frames;
     }
-    unsigned create(const eb::native::StationaryNpcSprite &sprite, unsigned slot, int x, int y) {
+    unsigned create(const eb::native::StationaryNpcSprite &sprite, unsigned slot, int x, int y,
+                    unsigned group_override = 0xffff) {
         const bool jp = assets.version == eb::GameVersion::JP;
-        const unsigned group = catalog.definition(sprite.placement.npc).sprite;
+        const unsigned group = group_override == 0xffff ? catalog.definition(sprite.placement.npc).sprite : group_override;
         put((jp ? 0x30d4 : 0x2cd6) + slot, group);
         eb::MainCpu65816 cpu(*bus); cpu.emulation_mode = false; cpu.status_register = 0;
         cpu.stack_pointer = 0x1e00; cpu.program_counter = jp ? 0xc01e5f : 0xc01e49;
@@ -522,11 +536,11 @@ void test_stationary_vertical_overscan(const eb::GameAssets &assets) {
             unsigned target_quads = 0;
             for (const auto &quad : picture->quads) {
                 if (!quad.object || quad.motion != motion) continue;
-                require(lower ? quad.y >= 224 && quad.clip.top == 224.f
-                              : quad.y + quad.height <= 0 && quad.clip.bottom == 0.f,
-                        "Prepared vertical quad lacks its offscreen position or canonical exclusion clip");
-                require(!std::isfinite(quad.clip.left) && !std::isfinite(quad.clip.right),
-                        "Vertically prepared canonical-X artwork acquired a horizontal exclusion clip");
+                require(lower ? quad.y >= 224 : quad.y + quad.height <= 0,
+                        "Prepared vertical quad lacks its authored offscreen position");
+                require(!std::isfinite(quad.clip.left) && !std::isfinite(quad.clip.right) &&
+                        !std::isfinite(quad.clip.top) && !std::isfinite(quad.clip.bottom),
+                        "Prepared artwork acquired an exclusion clip at the original viewport");
                 require(std::any_of(image.parts.begin(), image.parts.end(), [&](const auto &part) {
                     return quad.x - found->x == part.left && quad.y - found->y == part.top;
                 }), "Vertical quad differs from the imported stationary pose geometry");
@@ -661,8 +675,8 @@ void test_authored_prop_edges(const eb::GameAssets &assets) {
                 f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
                 f.put(assets.version == eb::GameVersion::JP ? 0x2ef4 : 0x2af6, definition.direction);
                 f.frame();
-                require(f.renderer.native_sprite_part_count() == 0 && f.renderer.stationary_sprite_part_count() == 0,
-                        "Unselected source CREATE fabricated a draw pose");
+                require(f.renderer.native_sprite_part_count() == 0 && f.renderer.stationary_sprite_part_count() > 0,
+                        "Source CREATE dropped prepared artwork before its first pose");
                 const auto selected = services.select(definition.direction, surface);
                 require(selected == image, "Actual native first-pose loader changed prepared prop artwork");
                 f.put(f.profile.wram_entity_screen_coordinates.x, stop);
@@ -912,7 +926,7 @@ void test(const eb::GameAssets &assets) {
             require(target_visible, "Stationary readiness vanished at source activation strip boundary");
         }
     }
-    // Exercise actual captured partial quads, not just a hand-authored clip.
+    // Exercise actual captured partial quads through fractional presentation.
     // The prepared identity has not activated, even though the camera exposes
     // a fraction of its artwork immediately adjacent to the canonical center.
     for (bool right : {false, true}) {
@@ -923,22 +937,29 @@ void test(const eb::GameAssets &assets) {
             const int x = right ? 260 + int(tick) : -4 - int(tick);
             f.put(f.profile.wram_background_scroll.layer1_x, int(place.x) - x); f.frame();
             const auto direct = f.direct();
-            require(std::any_of(direct->quads.begin(), direct->quads.end(), [](const auto &quad) {
-                return std::isfinite(quad.clip.left) || std::isfinite(quad.clip.right);
-            }), "Prepared partial quad did not retain a display clip");
+            const auto identity = (std::uint64_t{1} << 61) | place.identity;
+            const auto target = std::find_if(direct->motions.begin(), direct->motions.end(),
+                [&](const auto &entry) { return entry.identity == identity; });
+            require(target != direct->motions.end(), "Prepared partial actor lost its identity");
+            const unsigned index = unsigned(target - direct->motions.begin());
+            for (const auto &quad : direct->quads)
+                if (quad.object && quad.motion == index)
+                    require(!std::isfinite(quad.clip.left) && !std::isfinite(quad.clip.right),
+                            "Prepared partial actor is clipped at the original viewport");
             motion.submit(direct);
         }
         for (double phase : {.25, .5, .75}) {
             const auto pixels = eb::rasterize_direct_scene(motion.sample(phase), 4);
-            unsigned visible_margin = 0;
+            unsigned visible_margin = 0, visible_center = 0;
             for (unsigned y = 0; y < 224 * 4; ++y)
                 for (unsigned x = 0; x < 522 * 4; ++x) {
                     const auto pixel = pixels[y * 522 * 4 + x];
                     if (x >= 133 * 4 && x < 389 * 4)
-                        require(pixel == 0xff000000, "Fractional prepared actor leaked into canonical center");
+                        visible_center += pixel != 0xff000000;
                     else visible_margin += pixel != 0xff000000;
                 }
-            require(visible_margin > 0, "Partial clipped source scene contained no actual prepared art");
+            require(visible_margin > 0 && visible_center > 0,
+                    "Fractional prepared artwork disappears at the original viewport boundary");
         }
     }
     // Recentered authored map boundaries expose candidates beyond the usual
@@ -948,7 +969,9 @@ void test(const eb::GameAssets &assets) {
         const auto place = *f.ready->placement(right ? 328 : 1070);
         const unsigned boundary = right ? 2816 : 4096;
         require(place.tileset == (right ? 2u : 7u), "Boundary candidate content changed");
-        const int camera_x = right ? int(boundary) - 156 : int(boundary) - 100;
+        // Twoson's natural outdoor border follows the source camera; only
+        // the constrained left-hand area still needs adaptive reframing.
+        const int camera_x = right ? int(place.x) - 320 : int(boundary) - 100;
         f.active({}); f.put(f.profile.wram_loaded_map_tile_combination, place.tileset);
         f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
         f.put(f.profile.wram_background_scroll.layer1_y, place.y - 112); f.frame();
@@ -985,11 +1008,746 @@ void test(const eb::GameAssets &assets) {
               << " visible=" << visible << " area_preparations=" << f.renderer.stationary_area_preparations() << '\n';
 }
 }
+void test_catalog_actor_edges(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    Fixture f(assets);
+    f.renderer.set_native_stationary_sprites({}); // Isolate each actual actor's artwork.
+    unsigned placements = 0, cases = 0, pixels = 0, direct_checks = 0;
+    const auto resources = f.bus->native_sprite_runtime()->resources();
+    for (unsigned cy = 0; cy < 40; ++cy)
+        for (unsigned cx = 0; cx < 32; ++cx)
+            for (const auto &place : f.catalog.cell(cx, cy)) {
+                const auto &definition = f.catalog.definition(place.npc);
+                SpriteAppearance appearance(resources, definition.sprite);
+                appearance.select_four(definition.direction, 0, 0);
+                const auto &selection = *appearance.displayed();
+                const auto image = resources->acquire(selection.sprite, selection.pose, selection.surface, selection.format);
+                StationaryNpcSprite body{place, image, resources->definition(definition.sprite).palette, 0};
+                f.active(std::array<NpcId,1>{place.npc});
+                f.create(body, 0, 0, 112);
+                f.bus->native_sprite_runtime()->replace_image(0, image);
+                f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
+                f.put(f.profile.wram_entity_animation_frame, 0);
+                f.put(f.profile.wram_loaded_map_tile_combination, place.tileset);
+                for (unsigned width : {256u, 398u, 522u, 800u, 1024u}) {
+                    f.renderer.set_presentation_width(f.view(), width);
+                    const int margin = int(width - 256) / 2;
+                    for (int x : {-margin - 8, -margin + 8, -65, -64, -1, 0, 128, 255, 319, 320,
+                                  256 + margin - 8, 256 + margin + 8}) {
+                        const int y = 112;
+                        f.put(f.profile.wram_background_scroll.layer1_x, int(place.x) - x);
+                        f.put(f.profile.wram_background_scroll.layer1_y, int(place.y) - y);
+                        f.put(f.profile.wram_entity_screen_coordinates.x, x);
+                        f.put(f.profile.wram_entity_screen_coordinates.y, y);
+                        f.frame(x >= -64 && x < 320);
+                        for (const auto &part : image->parts)
+                            for (unsigned sy = 0; sy < 16; ++sy) {
+                                const int row = y + part.top - 1 + int(sy);
+                                if (row < 0 || row >= 224) continue;
+                                const auto actual = f.row(unsigned(row));
+                                for (unsigned sx = 0; sx < 16; ++sx) {
+                                    const int out = margin + x + part.left + int(sx);
+                                    const auto index = part.indices[sy * 16 + sx];
+                                    if (out < 0 || out >= int(width) || !index) continue;
+                                    if (actual[out].palette_index != 128 + body.palette * 16 + index) {
+                                        std::cerr << "Catalog edge npc=" << place.npc << " width=" << width << " x=" << x << '\n';
+                                        require(false, "Catalog actor loses visible artwork at a viewport/draw boundary");
+                                    }
+                                    ++pixels;
+                                }
+                            }
+                        if (x == 320) {
+                            const auto scene = f.direct();
+                            const auto direct = eb::rasterize_direct_scene({scene, {}});
+                            const auto scanline = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+                            require(std::equal(direct.begin(), direct.end(), scanline.begin()),
+                                    "Catalog actor edge differs between direct and scanline rendering");
+                            ++direct_checks;
+                        }
+                        ++cases;
+                    }
+                }
+                ++placements;
+            }
+    require(placements > 1000 && pixels > 1000000, "Catalog edge sweep was incomplete");
+    std::cout << assets.title << ": all catalog actor edges PASS placements=" << placements << " cases=" << cases
+              << " pixels=" << pixels << " direct=" << direct_checks << '\n';
+}
+
+void test_catalog_prepared_edges(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    Fixture f(assets);
+    unsigned placements = 0, cases = 0, pixels = 0, source_gates = 0;
+    for (unsigned pattern : {0u, 255u}) {
+        auto flags = std::span(f.bus->work_ram).subspan(f.flags, 128);
+        std::fill(flags.begin(), flags.end(), pattern);
+        for (unsigned tileset = 0; tileset < 32; ++tileset) {
+            StationaryNpcPreparation cache;
+            const auto bodies = f.ready->prepare({0,0,8192,10240}, {tileset, flags, {}}, cache);
+            f.put(f.profile.wram_loaded_map_tile_combination, tileset);
+            for (const auto &body : bodies) {
+                const auto &place = body.placement;
+                std::vector<NpcId> neighbours;
+                for (const auto &c : f.catalog.query({int(place.x)-128,int(place.y)-128,int(place.x)+129,int(place.y)+129},
+                         {tileset, flags, {}}))
+                    if (c.placement.npc != place.npc) neighbours.push_back(c.placement.npc);
+                f.active(neighbours);
+                for (unsigned width : {256u, 398u, 522u, 800u, 1024u}) {
+                    f.renderer.set_presentation_width(f.view(), width);
+                    const int margin = int(width - 256) / 2;
+                    for (int x : {-margin+8,-65,-1,128,256,320,256+margin-8}) {
+                        const int y = 112;
+                        f.put(f.profile.wram_background_scroll.layer1_x, int(place.x) - x);
+                        f.put(f.profile.wram_background_scroll.layer1_y, int(place.y) - y);
+                        f.frame();
+                        for (const auto &part : body.image->parts)
+                            for (unsigned sy = 0; sy < 16; ++sy) {
+                                const int row = y + part.top - 1 + int(sy);
+                                if (row < 0 || row >= 224) continue;
+                                const auto actual = f.row(unsigned(row));
+                                for (unsigned sx = 0; sx < 16; ++sx) {
+                                    const int out = margin + x + part.left + int(sx);
+                                    const auto index = part.indices[sy * 16 + sx];
+                                    if (out < 0 || out >= int(width) || !index) continue;
+                                    if (body.surface & 8) require(actual[out].priority < 0,
+                                        "Dormant water body fabricated an unscheduled overlay");
+                                    else if (actual[out].palette_index != 128 + body.palette * 16 + index) {
+                                        std::cerr << "Prepared catalog edge npc=" << place.npc << " width=" << width << " x=" << x << '\n';
+                                        require(false, "Eligible catalog prop pops in at a viewport edge");
+                                    }
+                                    ++pixels;
+                                }
+                            }
+                        ++cases;
+                        if (width == 522 && x == 128) {
+                            // Once the initial source scan has finished, an
+                            // eligible flag alone cannot create a center NPC.
+                            // Exercise every prepared placement/flag variant,
+                            // rather than treating Saturn Valley as a special map.
+                            f.put(f.enabled, 0xffff); f.frame();
+                            const auto picture = f.direct();
+                            const auto identity = (std::uint64_t{1} << 61) | place.identity;
+                            require(std::none_of(picture->motions.begin(), picture->motions.end(),
+                                        [&](const auto &motion) { return motion.identity == identity; }),
+                                    "Completed map scan fabricated a noninteractive center NPC");
+                            f.put(f.enabled, 1);
+                            const unsigned camera_mode = assets.version == eb::GameVersion::JP ? 0x9b56 : 0x98a5;
+                            f.put(camera_mode, 2); f.frame();
+                            require(f.renderer.stationary_sprite_part_count() == 0,
+                                    "Scripted scene acquired dormant catalog NPCs");
+                            f.put(camera_mode, 0);
+                            ++source_gates;
+                        }
+                    }
+                }
+                ++placements;
+            }
+        }
+    }
+    require(placements > 1500 && pixels > 1000000, "Prepared catalog edge sweep was incomplete");
+    std::cout << assets.title << ": all prepared catalog edges PASS flag_variants=" << placements
+              << " cases=" << cases << " pixels=" << pixels << " source_gates=" << source_gates << '\n';
+}
+
+void test_prop_creation_continuity(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0;
+    for (NpcId npc : {572, 1530, 1567, 1246, 676})
+      for (unsigned width : {398u, 522u, 800u, 1024u})
+        for (int x : {-65, 320}) {
+            Fixture f(assets);
+            const auto place = f.ready->placement(npc);
+            require(place.has_value(), "Missing authored prop continuity fixture");
+            f.renderer.set_presentation_width(f.view(), width);
+            f.put(f.profile.wram_loaded_map_tile_combination, place->tileset);
+            const int y = 112, camera_x = int(place->x) - x, camera_y = int(place->y) - y;
+            f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+            f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+            StationaryNpcPreparation cache;
+            std::optional<StationaryNpcSprite> expected;
+            std::vector<NpcId> others;
+            for (const auto &candidate : f.ready->prepare(f.footprint(camera_x, camera_y),
+                    {place->tileset, std::span(f.bus->work_ram).subspan(f.flags, 128), {}}, cache))
+                if (candidate.placement.npc == npc) expected = candidate;
+                else others.push_back(candidate.placement.npc);
+            require(expected.has_value(), "Prop not eligible before creation");
+            f.active(others); f.frame();
+            const auto before = eb::rasterize_direct_scene({f.direct(), {}});
+            AuthoredActorServices services(f);
+            const auto &definition = f.catalog.definition(npc);
+            services.create(definition.sprite, definition.script, place->x, place->y);
+            others.insert(others.begin(), npc); f.active(others);
+            f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
+            f.put(f.profile.wram_entity_screen_coordinates.x, x);
+            f.put(f.profile.wram_entity_screen_coordinates.y, y);
+            f.frame();
+            const auto during = eb::rasterize_direct_scene({f.direct(), {}});
+            require(before == during, "Prop disappears between source CREATE and its first selected pose");
+            f.put(f.profile.wram_entity_world_coordinates.x, place->x + 1); f.frame();
+            require(f.renderer.stationary_sprite_part_count() == 0, "Relocated actor acquired its old authored preview");
+            f.put(f.profile.wram_entity_world_coordinates.x, place->x);
+            f.put(f.profile.wram_entity_script_ids, 0xffff); f.frame();
+            require(f.renderer.stationary_sprite_part_count() == 0, "Changed actor script acquired an authored birth pose");
+            f.put(f.profile.wram_entity_script_ids, definition.script);
+            const auto image = services.select(definition.script == 693 ? 0 : definition.direction, expected->surface);
+            require(image == expected->image, "First source prop pose changed prepared artwork");
+            f.put(f.profile.wram_entity_draw_callback, f.profile.entity_draw_callbacks.screen_space);
+            f.put(f.profile.wram_entity_draw_priority, 1);
+            f.put(f.profile.wram_entity_animation_frame, 0); f.frame();
+            require(before == eb::rasterize_direct_scene({f.direct(), {}}),
+                    "Prop jumps at the first selected source pose");
+            f.put(f.profile.wram_entity_spritemap_pointers.high, 0x807e); f.frame();
+            require(f.renderer.stationary_sprite_part_count() == 0 && f.renderer.native_sprite_part_count() == 0,
+                    "Explicitly hidden active prop reappeared");
+            ++cases;
+        }
+    std::cout << assets.title << ": source creation continuity PASS cases=" << cases << '\n';
+}
+
+void test_cutscene_npc_handoff(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0;
+    for (NpcId npc : {1269, 1274, 1277})
+      for (unsigned width : {256u, 398u, 522u, 1024u}) {
+        Fixture f(assets);
+        const auto place = *f.ready->placement(npc);
+        const auto &definition = f.catalog.definition(npc);
+        require(definition.script == 8, "Cutscene fixture changed its authored stationary program");
+        const auto bit = definition.event_flag - 1;
+        f.bus->work_ram[f.flags + bit / 8] |= 1u << (bit & 7);
+        f.renderer.set_presentation_width(f.view(), width);
+        f.put(f.profile.wram_loaded_map_tile_combination, place.tileset);
+        const int camera_x = int(place.x) - 128, camera_y = int(place.y) - 112;
+        f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+        f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+        StationaryNpcPreparation cache;
+        std::vector<NpcId> others;
+        std::optional<StationaryNpcSprite> expected;
+        for (const auto &body : f.ready->prepare(f.footprint(camera_x, camera_y),
+                {place.tileset, std::span(f.bus->work_ram).subspan(f.flags, 128), {}}, cache))
+            if (body.placement.npc == npc) expected = body;
+            else others.push_back(body.placement.npc);
+        require(expected.has_value(), "Cutscene actor is not eligible for initial map loading");
+        f.active(others); f.frame();
+        const auto prepared_parts = f.renderer.stationary_sprite_part_count();
+        require(prepared_parts == expected->image->parts.size(), "Initial cutscene artwork is missing");
+        const unsigned camera_mode = assets.version == eb::GameVersion::JP ? 0x9b56 : 0x98a5;
+        f.put(camera_mode, 2); f.frame();
+        require(f.renderer.stationary_sprite_part_count() == 0,
+                "Scripted camera resurrects a dormant authored cutscene NPC");
+        f.put(camera_mode, 0); f.frame();
+        require(f.renderer.stationary_sprite_part_count() == prepared_parts,
+                "Restoring source control does not restore eligible map preparation");
+
+        AuthoredActorServices services(f);
+        services.create(definition.sprite, definition.script, place.x, place.y);
+        others.insert(others.begin(), npc); f.active(others);
+        f.put(f.profile.wram_entity_spritemap_pointers.high, 0x7e);
+        f.put(f.profile.wram_entity_screen_coordinates.x, 128);
+        f.put(f.profile.wram_entity_screen_coordinates.y, 112);
+        f.put(f.profile.wram_entity_animation_frame, 0);
+        f.put(f.profile.wram_entity_draw_priority, 1);
+        services.select(definition.direction, expected->surface);
+        f.put(f.enabled, 0xffff); // LOAD_MAP_AT_POSITION's completed-load mode.
+        f.frame();
+        require(f.renderer.stationary_sprite_part_count() == prepared_parts,
+                "Saturn Valley actor disappears after pose selection before its first source draw");
+        f.put(camera_mode, 2); f.frame();
+        require(f.renderer.stationary_sprite_part_count() == prepared_parts,
+                "Story camera drops an actual newly created NPC before its first source draw");
+        f.put(camera_mode, 0);
+        f.frame(true);
+        require(f.renderer.stationary_sprite_part_count() == 0 &&
+                    f.renderer.native_sprite_part_count() == prepared_parts,
+                "First source draw did not take sole ownership of the cutscene actor");
+        services.cpu.accumulator = npc;
+        services.call(services.jp ? 0xc4440e : 0xc46698);
+        require(f.bus->work_ram[camera_mode] == 2 && !f.bus->work_ram[camera_mode + 1],
+                "Original story camera did not select entity-directed control");
+        f.frame(true);
+        require(f.renderer.stationary_sprite_part_count() == 0 &&
+                    f.renderer.native_sprite_part_count() == prepared_parts,
+                "Scripted camera hides an actual source-owned cutscene actor");
+        if (width > 256) {
+            f.put(f.profile.wram_entity_screen_coordinates.x, 260); f.frame(true);
+            const auto direct = f.direct(); // compares every software/direct pixel
+            for (const auto &quad : direct->quads)
+                if (quad.object)
+                    require(quad.clip.left == float((width - 256) / 2) &&
+                                quad.clip.right == float((width - 256) / 2 + 256),
+                            "Source cutscene actor can paint outside the stage during interpolation");
+            f.put(f.profile.wram_entity_screen_coordinates.x, 128);
+        }
+        services.call(services.jp ? 0xc4442e : 0xc466b8);
+        // The original explicit release removes the NPC identity and artwork;
+        // its appearance flag can remain set until a later scene transition.
+        services.cpu.accumulator = 0;
+        services.call(services.jp ? 0xc0214e : 0xc02140);
+        f.frame();
+        require(f.renderer.stationary_sprite_part_count() == 0 &&
+                    f.renderer.native_sprite_part_count() == 0,
+                "Deleted cutscene NPC reappears as a noninteractive prepared sprite");
+        f.put(f.enabled, 1); f.frame();
+        require(f.renderer.stationary_sprite_part_count() == prepared_parts,
+                "A real room reload cannot prepare an eligible NPC again");
+        ++cases;
+      }
+    std::cout << assets.title << ": cutscene NPC birth/draw/deletion/reload PASS cases=" << cases << '\n';
+}
+
+void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0;
+    std::uint64_t compared = 0;
+    // Compare real imported people, including a second person away from the
+    // authored focus. The oval is generated by the original C0B149 routine,
+    // not a host approximation or an assumption that its centre is (128,112).
+    for (const auto focus : {std::array<int, 2>{56, 80}, {128, 112}, {208, 168}}) {
+        Fixture f(assets);
+        AuthoredActorServices source(f);
+        const bool jp = assets.version == eb::GameVersion::JP;
+        const unsigned oval_buffer = jp ? 0x4356 : 0x3fd0;
+        f.renderer.set_native_stationary_sprites({});
+        std::fill(f.bus->video_ram.begin(), f.bus->video_ram.end(), 0);
+        const auto resources = f.bus->native_sprite_runtime()->resources();
+        std::array<StationaryNpcSprite, 2> people;
+        std::array<int, 2> body_centre{};
+        const std::array<NpcId, 2> ids{1269, 328};
+        f.active(ids);
+        for (unsigned person = 0; person < people.size(); ++person) {
+            const auto place = f.ready->placement(ids[person]);
+            require(place.has_value(), "Missing imported prayer focus person");
+            const auto &definition = f.catalog.definition(ids[person]);
+            SpriteAppearance appearance(resources, definition.sprite);
+            appearance.select_four(definition.direction, 0, 0);
+            const auto &pose = *appearance.displayed();
+            const auto image = resources->acquire(pose.sprite, pose.pose, pose.surface, pose.format);
+            people[person] = {*place, image, resources->definition(definition.sprite).palette, 0};
+            f.create(people[person], person * 2, person ? (focus[0] < 128 ? 192 : 40) : focus[0], 112);
+            f.bus->native_sprite_runtime()->replace_image(person * 2, image);
+            f.put(f.profile.wram_entity_spritemap_pointers.high + person * 2, 0x7e);
+            f.put(f.profile.wram_entity_animation_frame + person * 2, 0);
+            if (!person) {
+                int left = 256, top = 256, right = -256, bottom = -256;
+                for (const auto &part : image->parts)
+                    for (unsigned y = 0; y < 16; ++y)
+                        for (unsigned x = 0; x < 16; ++x)
+                            if (part.indices[y * 16 + x]) {
+                                left = std::min(left, part.left + int(x));
+                                right = std::max(right, part.left + int(x));
+                                top = std::min(top, part.top - 1 + int(y));
+                                bottom = std::max(bottom, part.top - 1 + int(y));
+                            }
+                require(left <= right && top <= bottom, "Prayer focus person has no opaque artwork");
+                body_centre = {(left + right) / 2, (top + bottom) / 2};
+            }
+        }
+        f.put(f.enabled, 0xffff);
+        f.put(jp ? 0x9b56 : 0x98a5, 2);
+        f.put(f.profile.wram_loaded_map_tile_combination, people[0].placement.tileset);
+        f.put(f.profile.wram_background_scroll.layer1_x, int(people[0].placement.x) - focus[0]);
+        f.put(f.profile.wram_background_scroll.layer1_y, int(people[0].placement.y) - focus[1]);
+        std::array<std::uint16_t, 4> scroll_x{}, scroll_y{};
+        scroll_x[0] = (int(people[0].placement.x) - focus[0]) & 1023;
+        scroll_y[0] = (int(people[0].placement.y) - focus[1]) & 1023;
+        constexpr std::array<unsigned, 7> radii{16, 32, 96, 240, 96, 32, 16};
+        for (unsigned phase = 0; phase < radii.size(); ++phase) {
+            // A moving focus also exercises the source's centre offsets. Its
+            // position stays relative to the person, never the wider display.
+            const int cx = focus[0] + int(phase) - 3, cy = focus[1] + int(phase) - 3;
+            f.put(f.profile.wram_entity_screen_coordinates.x, cx - body_centre[0]);
+            f.put(f.profile.wram_entity_screen_coordinates.y, cy - body_centre[1]);
+            f.renderer.begin_sprite_frame(1);
+            for (unsigned slot : {0u, 2u}) {
+                source.cpu.x_index = slot;
+                source.cpu.program_counter = 0xc0ff00;
+                source.cpu.execute_instruction<0x20>(jp ? 0xa383 : 0xa3a4, 3);
+                require(eb::try_native_sprite_draw(source.cpu, *f.bus, *f.bus->native_sprite_runtime(), f.renderer),
+                        "Prayer fixture did not publish the real ordinary person draw");
+            }
+            f.renderer.seal_sprite_frame(f.view());
+            f.renderer.capture_oam_upload(f.view(), 1);
+            ++f.frames;
+            source.cpu.accumulator = cx; source.cpu.x_index = cy; source.cpu.y_index = radii[phase];
+            f.put(0x1e0e, std::min(radii[phase] + 4, 240u));
+            source.call(jp ? 0xc0b128 : 0xc0b149);
+            require(f.bus->work_ram[oval_buffer + cy * 2] <= cx &&
+                        f.bus->work_ram[oval_buffer + cy * 2 + 1] >= cx,
+                    "Original oval routine did not include its authored focus");
+            for (const unsigned width : {398u, 522u, 796u, 1024u})
+                for (const bool color_window : {false, true})
+                  for (const unsigned camera_mode : {0u, 2u}) {
+                    f.put(jp ? 0x9b56 : 0x98a5, camera_mode);
+                    f.renderer.set_presentation_width(f.view(), width);
+                    auto reference = f.renderer;
+                    reference.set_presentation_width(f.view(), 256);
+                    f.renderer.enable_direct_rendering(true);
+                    // Both source window forms must retain exactly the same
+                    // people as the native image, throughout opening/closing.
+                    f.bus->write_byte(0x2125, color_window ? 0x30 : 0x03);
+                    f.bus->write_byte(0x212e, color_window ? 0 : 16);
+                    f.bus->write_byte(0x2130, color_window ? 0x80 : 0);
+                    const auto logical = f.bus->work_ram;
+                    unsigned focused_pixels = 0;
+                    for (unsigned y = 0; y < 224; ++y) {
+                        f.bus->write_byte(0x2126, f.bus->work_ram[oval_buffer + y * 2]);
+                        f.bus->write_byte(0x2127, f.bus->work_ram[oval_buffer + y * 2 + 1]);
+                        auto native = f.view(); native.object_scene = &reference;
+                        native.background_scroll_x = scroll_x; native.background_scroll_y = scroll_y;
+                        reference.begin_scanline(native, y);
+                        std::array<eb::PpuPixel, 256> objects{};
+                        require(reference.try_native_sprite_pixels(native, y, objects, 0).has_value(),
+                                "Missing native prayer people");
+                        for (unsigned x = 0; x < 256; ++x) {
+                            const auto pixel = reference.compose_presentation_pixel(native, x, y, objects[x], false);
+                            f.bus->native_framebuffer[y * 256 + x] = pixel;
+                            if (std::abs(int(x) - cx) <= 12 && std::abs(int(y) - cy) <= 12 &&
+                                objects[x].priority >= 0 && pixel != 0xff000000)
+                                ++focused_pixels;
+                        }
+                        auto wide = f.view(); wide.background_scroll_x = scroll_x; wide.background_scroll_y = scroll_y;
+                        f.renderer.begin_scanline(wide, y);
+                        f.renderer.render_presentation_margins(wide, y);
+                        f.renderer.capture_direct_scanline(wide, y);
+                        const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+                        const unsigned margin = (width - 256) / 2;
+                        for (unsigned x = 0; x < width; ++x) {
+                            const auto expected = x >= margin && x < margin + 256
+                                ? f.bus->native_framebuffer[y * 256 + x - margin] : 0xff000000;
+                            require(pixels[y * width + x] == expected,
+                                    "Widescreen prayer aperture changed its 4:3 focus or leaked outside its canvas");
+                            ++compared;
+                        }
+                    }
+                    require(focused_pixels > 10, "Prayer aperture lost the person at its authored focus");
+                    require(f.bus->work_ram == logical, "Prayer framing changed source actors/camera/event state");
+                    require(!f.renderer.direct_scene(), "Direct rendering bypassed the scanline prayer aperture");
+                    ++cases;
+                }
+        }
+    }
+    std::cout << assets.title << ": prayer aperture 4:3 focus PASS frames=" << cases
+              << " compared_pixels=" << compared << '\n';
+}
+
+void test_robot_ending_departure(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0;
+    // EEVENT5 teleports to D7, centred at (200,6064), then uses sprite 258
+    // and EVENT_551..554. Their last legs head left to map X=0, with V5=2.
+    // That source endpoint is still inside a wide display unless presentation
+    // extends the departure. These fixtures keep the logical endpoint intact.
+    for (const unsigned width : {256u, 398u, 522u, 796u, 1024u})
+      for (const unsigned script : {551u, 552u, 553u, 554u}) {
+        Fixture f(assets);
+        const bool jp = assets.version == eb::GameVersion::JP;
+        const auto resources = f.bus->native_sprite_runtime()->resources();
+        constexpr int camera_x = 72, camera_y = 5952;
+        f.renderer.set_presentation_width(f.view(), width);
+        f.active(std::array<NpcId, 5>{1306, 1307, 1308, 1309, 0xffff});
+        std::array<std::uint64_t, 4> body_ids{};
+        std::array<int, 4> body_x{};
+        for (unsigned person = 0; person < 4; ++person) {
+            const auto place = f.ready->placement(1306 + person);
+            require(place.has_value(), "Missing authored robot corpse placement");
+            const auto &definition = f.catalog.definition(place->npc);
+            const auto bit = definition.event_flag - 1;
+            f.bus->work_ram[f.flags + bit / 8] |= 1u << (bit & 7);
+            body_ids[person] = (std::uint64_t{1} << 61) | place->identity;
+            body_x[person] = int(place->x) - camera_x;
+            SpriteAppearance appearance(resources, definition.sprite);
+            appearance.select_four(definition.direction, 0, 0);
+            const auto &pose = *appearance.displayed();
+            const auto image = resources->acquire(pose.sprite, pose.pose, pose.surface, pose.format);
+            StationaryNpcSprite body{*place, image, resources->definition(definition.sprite).palette, 0};
+            f.create(body, person * 2, int(place->x) - camera_x, int(place->y) - camera_y);
+            f.bus->native_sprite_runtime()->replace_image(person * 2, image);
+            f.put(f.profile.wram_entity_spritemap_pointers.high + person * 2, 0x7e);
+            f.put(f.profile.wram_entity_animation_frame + person * 2, 0);
+            f.put(f.profile.wram_entity_script_ids + person * 2, definition.script);
+            f.put(f.profile.wram_loaded_map_tile_combination, place->tileset);
+        }
+        SpriteAppearance appearance(resources, 258);
+        appearance.select_four(6, 0, 0);
+        const auto &pose = *appearance.displayed();
+        const auto image = resources->acquire(pose.sprite, pose.pose, pose.surface, pose.format);
+        StationaryNpcSprite soul{*f.ready->placement(1309), image, resources->definition(258).palette, 0};
+        f.create(soul, 8, 0, 0, 258);
+        f.bus->native_sprite_runtime()->replace_image(8, image);
+        f.put(f.profile.wram_entity_spritemap_pointers.high + 8, 0x7e);
+        f.put(f.profile.wram_entity_animation_frame + 8, 0);
+        f.put(f.profile.wram_entity_script_ids + 8, script);
+        f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+        f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+        f.put(f.enabled, 0xffff);
+        const unsigned variables = f.profile.wram_entity_script_variable0;
+        const unsigned starts[] = {0x98, 0xa8, 0xb8, 0xa0};
+        const unsigned ends_y[] = {0x1790, 0x1790, 0x1780, 0x1798};
+        f.put(variables + 5 * 60 + 8, 2);
+        f.put(variables + 6 * 60 + 8, 0);
+        f.put(variables + 7 * 60 + 8, ends_y[script - 551]);
+        const auto publish = [&] {
+            f.renderer.begin_sprite_frame(1);
+            eb::MainCpu65816 cpu(*f.bus);
+            cpu.emulation_mode = false; cpu.status_register = 0; cpu.stack_pointer = 0x1fff;
+            for (unsigned slot : {0u, 2u, 4u, 6u, 8u}) {
+                cpu.program_counter = 0xc0ff00; cpu.x_index = slot;
+                cpu.execute_instruction<0x20>(jp ? 0xa383 : 0xa3a4, 3);
+                require(eb::try_native_sprite_draw(cpu, *f.bus, *f.bus->native_sprite_runtime(), f.renderer),
+                        "Ending fixture did not draw its actual owned body/soul");
+            }
+            f.renderer.seal_sprite_frame(f.view()); f.renderer.capture_oam_upload(f.view(), 1); ++f.frames;
+        };
+        const unsigned margin = (width - 256) / 2;
+        int previous_right = int(width);
+        eb::DirectSceneMotion interpolation;
+        for (const unsigned x : {starts[script - 551], 96u, 72u, 48u, 47u, 24u, 1u}) {
+            f.put(f.profile.wram_entity_world_coordinates.x + 8, x);
+            f.put(f.profile.wram_entity_world_coordinates.y + 8, ends_y[script - 551]);
+            f.put(f.profile.wram_entity_screen_coordinates.x + 8, int(x) - camera_x);
+            f.put(f.profile.wram_entity_screen_coordinates.y + 8, int(ends_y[script - 551]) - camera_y);
+            publish();
+            const auto logical = f.bus->work_ram;
+            const auto scene = f.direct(); // Complete software/direct pixel comparison.
+            require(f.bus->work_ram == logical, "Ending presentation changed the original soul path or camera");
+            const auto identity = (std::uint64_t{1} << 63) | f.bus->native_sprite_runtime()->snapshot(8)->id;
+            int right = -10000;
+            unsigned bodies = 0;
+            for (const auto &quad : scene->quads) {
+                if (!quad.object) continue;
+                const auto &motion = scene->motions[quad.motion];
+                if (motion.identity == identity) {
+                    right = std::max(right, int(quad.x + quad.width));
+                    require(motion.x <= float(margin + int(x) - camera_x),
+                            "Departing soul moved towards the centre of the wide display");
+                } else if (const auto body = std::find(body_ids.begin(), body_ids.end(), motion.identity);
+                           body != body_ids.end()) {
+                    bodies |= 1u << (body - body_ids.begin());
+                    require(motion.x == float(margin + body_x[body - body_ids.begin()]),
+                            "Robot corpse group moved away from its centred 4:3 framing");
+                }
+            }
+            require(bodies == 15, "Ending picture lost an authored robot corpse");
+            if (x == starts[script - 551])
+                require(right > int(margin) && right < int(margin + 256),
+                        "Soul does not begin its departure inside the original stage");
+            require(right <= previous_right, "Soul departure reverses direction in widescreen");
+            previous_right = right;
+            if (x == 1 && width > 256)
+                require(right <= 0, "Soul disappears while still inside the widescreen picture");
+            interpolation.submit(scene);
+            if (x == 47) {
+                const auto spirit = std::find_if(scene->motions.begin(), scene->motions.end(),
+                    [&](const auto &motion) { return motion.identity == identity; });
+                require(spirit != scene->motions.end(), "Ending interpolation lost its soul identity");
+                const unsigned index = unsigned(spirit - scene->motions.begin());
+                float previous = spirit->x + 16;
+                require(interpolation.sample(0).offsets[index].x > 0,
+                        "Ending fixture did not exercise fractional soul movement");
+                for (double fraction : {0., .25, .5, .75, 1.}) {
+                    const auto &picture = interpolation.sample(fraction);
+                    const float position = spirit->x + picture.offsets[index].x;
+                    require(position <= previous && position >= spirit->x,
+                            "Fractional soul departure reverses or overshoots its source frame");
+                    previous = position;
+                    for (unsigned motion = 0; motion < scene->motions.size(); ++motion)
+                        if (std::find(body_ids.begin(), body_ids.end(), scene->motions[motion].identity) != body_ids.end())
+                            require(picture.offsets[motion].x == 0 && picture.offsets[motion].y == 0,
+                                    "Fractional ending presentation moves a robot corpse");
+                }
+            }
+            if (x == 72) {
+                const auto expected = eb::rasterize_direct_scene({scene, {}});
+                const auto native = f.bus->native_framebuffer;
+                const auto saved_renderer = f.renderer;
+                // A width change must not alter any original 4:3 pixel.
+                f.renderer.set_presentation_width(f.view(), 256);
+                f.direct();
+                require(f.bus->native_framebuffer == native, "Widescreen ending changed its native source picture");
+                f.renderer = saved_renderer;
+                eb::SnapshotArchive saved;
+                saved(f.renderer);
+                eb::GameSceneRenderer restored;
+                restored.set_native_stationary_sprites(f.ready);
+                eb::SnapshotArchive loaded(saved.bytes());
+                loaded(restored); loaded.finish();
+                f.renderer = std::move(restored);
+                // The game may prepare the following tick before presentation.
+                // Restoration and resizing must use the uploaded departure.
+                f.put(f.profile.wram_entity_world_coordinates.x + 8, starts[script - 551]);
+                f.put(f.profile.wram_entity_script_ids + 8, 558);
+                require(eb::rasterize_direct_scene({f.direct(), {}}) == expected,
+                        "Snapshot or following source tick changed the uploaded soul departure");
+                f.renderer.set_presentation_width(f.view(), 522);
+                const auto resized = f.direct();
+                const auto spirit = std::find_if(resized->motions.begin(), resized->motions.end(),
+                    [&](const auto &motion) { return motion.identity == identity; });
+                const int shift = int((1.f - 72.f / starts[script - 551]) * 133.f + .5f);
+                require(spirit != resized->motions.end() && spirit->x == 133.f - shift,
+                        "Resizing a restored ending lost its captured departure progress");
+                f.renderer.set_presentation_width(f.view(), width);
+                f.put(f.profile.wram_entity_world_coordinates.x + 8, x);
+                f.put(f.profile.wram_entity_script_ids + 8, script);
+            }
+            ++cases;
+        }
+        // Rising from the bodies and returning to Saturn Valley use the same
+        // artwork; only the outgoing scripts' final leg may extend sideways.
+        for (const auto phase : {std::array<unsigned, 2>{script, 1}, {558, 2}}) {
+            f.put(f.profile.wram_entity_world_coordinates.x + 8, 96);
+            f.put(f.profile.wram_entity_screen_coordinates.x + 8, 96 - camera_x);
+            f.put(f.profile.wram_entity_script_ids + 8, phase[0]);
+            f.put(variables + 5 * 60 + 8, phase[1]);
+            publish();
+            const auto scene = f.direct();
+            const auto identity = (std::uint64_t{1} << 63) | f.bus->native_sprite_runtime()->snapshot(8)->id;
+            const auto spirit = std::find_if(scene->motions.begin(), scene->motions.end(),
+                [&](const auto &motion) { return motion.identity == identity; });
+            require(spirit != scene->motions.end() && spirit->x == float(margin + 96 - camera_x),
+                    "Ending departure adjustment leaked into another soul movement phase");
+            ++cases;
+        }
+      }
+    std::cout << assets.title << ": robot ending centre/departure PASS frames=" << cases << '\n';
+}
+
+void test_world_prop_scroll_visibility(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0, pixels = 0;
+    // Real unopened/open presents, a trash can, sanctuary encounter markers,
+    // and lamps must already be visible before source activation reaches them.
+    for (NpcId npc : {1530, 1567, 1246, 676, 572})
+        for (unsigned width : {398u, 522u, 800u, 1024u})
+            for (bool right : {false, true})
+                for (bool flag_set : {false, true}) {
+                    Fixture f(assets);
+                    f.renderer.set_presentation_width(f.view(), width);
+                    const auto &definition = f.catalog.definition(npc);
+                    std::optional<NpcPlacement> place;
+                    for (unsigned y = 0; y < 40; ++y)
+                        for (unsigned x = 0; x < 32; ++x)
+                            for (const auto &p : f.catalog.cell(x, y)) if (p.npc == npc) place = p;
+                    require(place.has_value(), "Missing authored scrolling prop placement");
+                    auto flags = std::span(f.bus->work_ram).subspan(f.flags, 128);
+                    if (flag_set && definition.event_flag)
+                        flags[(definition.event_flag - 1) / 8] |= 1u << ((definition.event_flag - 1) & 7);
+                    f.put(f.profile.wram_loaded_map_tile_combination, place->tileset);
+                    const WorldMap maps(assets.image, world_map_layout(assets.version));
+                    const WorldCollision collision(assets.image, world_collision_layout(assets.version));
+                    const auto area = maps.prepare(place->tileset, flags);
+                    const auto resources = f.bus->native_sprite_runtime()->resources();
+                    const auto &sprite = resources->definition(definition.sprite);
+                    const auto origin = collision.origin({std::uint16_t(place->x), std::uint16_t(place->y)}, sprite.shape);
+                    const auto left = collision.edge(area, origin, sprite.shape, CollisionEdge::Left);
+                    const auto surface = collision.edge(area, origin, sprite.shape, CollisionEdge::Right, left);
+                    require(!(surface & 8), "Scrolling prop needs a dormant water overlay");
+                    SpriteAppearance appearance(resources, definition.sprite);
+                    appearance.select_four(definition.type == NpcType::ItemBox ? (flag_set ? 0 : 4) : definition.script == 693 ? 0 : definition.direction, 0, surface);
+                    const auto &selected = *appearance.displayed();
+                    const auto image = resources->acquire(selected.sprite, selected.pose, selected.surface, selected.format);
+                    const int margin = int(width - 256) / 2, y = 112;
+                    const int start = right ? 256 + margin + 24 : -margin - 24;
+                    const int stop = 128;
+                    for (int x = start; right ? x >= stop : x <= stop; x += right ? -4 : 4) {
+                        const int camera_x = int(place->x) - x, camera_y = int(place->y) - y;
+                        f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+                        f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+                        std::vector<NpcId> others;
+                        for (const auto &c : f.catalog.query(f.footprint(camera_x, camera_y), {place->tileset, flags, {}}))
+                            if (c.placement.npc != npc) others.push_back(c.placement.npc);
+                        f.active(others); f.frame();
+                        for (const auto &part : image->parts)
+                            for (unsigned sy = 0; sy < 16; ++sy) {
+                                const auto actual = f.row(unsigned(y + part.top - 1) + sy);
+                                for (unsigned sx = 0; sx < 16; ++sx) {
+                                    const int out = margin + x + part.left + int(sx);
+                                    const auto index = part.indices[sy * 16 + sx];
+                                    if (out < 0 || out >= int(width) || !index) continue;
+                                    const bool hidden = definition.appearance == NpcAppearance::FlagOff && flag_set;
+                                    if (hidden) require(actual[out].priority < 0, "Defeated sanctuary boss was previewed");
+                                    else if (actual[out].palette_index != 128 + sprite.palette * 16 + index) {
+                                        std::cerr << "Pop-in npc=" << npc << " width=" << width << " x=" << x
+                                                  << " flag=" << flag_set << "\n";
+                                        require(false, "Visible prop pops in after entering the widescreen picture");
+                                    }
+                                    ++pixels;
+                                }
+                            }
+                    }
+                    ++cases;
+                }
+    std::cout << assets.title << ": scrolling prop visibility PASS cases=" << cases << " pixels=" << pixels << '\n';
+}
+
+void test_prepared_viewport_visibility(const eb::GameAssets &assets) {
+    using namespace eb::native;
+    unsigned cases = 0, compared = 0;
+    // Imported props and people exercise the exact native/margin boundary,
+    // including the Threed streetlight from the reported scene.
+    for (NpcId npc : {350, 368, 572, 328, 311})
+        for (unsigned width : {256u, 398u, 522u, 1024u})
+            for (int x : {-8, 0, 128, 248, 256}) {
+                Fixture f(assets);
+                f.renderer.set_presentation_width(f.view(), width);
+                const auto placement = f.ready->placement(npc);
+                require(placement.has_value(), "Missing authored visibility fixture");
+                const int y = 112, camera_x = int(placement->x) - x,
+                          camera_y = int(placement->y) - y;
+                f.put(f.profile.wram_loaded_map_tile_combination, placement->tileset);
+                f.put(f.profile.wram_background_scroll.layer1_x, camera_x);
+                f.put(f.profile.wram_background_scroll.layer1_y, camera_y);
+                StationaryNpcPreparation preparation;
+                std::vector<NpcId> active;
+                std::optional<StationaryNpcSprite> expected;
+                for (const auto &candidate : f.ready->prepare(f.footprint(camera_x, camera_y),
+                         {placement->tileset, std::span(f.bus->work_ram).subspan(f.flags, 128), {}}, preparation))
+                    if (candidate.placement.npc == npc) expected = candidate;
+                    else active.push_back(candidate.placement.npc);
+                require(expected.has_value(), "Visibility fixture is not eligible");
+                f.active(active);
+                f.frame();
+                const auto direct = f.direct();
+                const auto rebuilt = eb::rasterize_direct_scene({direct, {}});
+                const auto presented = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+                require(std::equal(rebuilt.begin(), rebuilt.end(), presented.begin()),
+                        "Direct scene and scanline sprite visibility disagree");
+                const int margin = int(width - 256) / 2;
+                for (const auto &part : expected->image->parts)
+                    for (unsigned sy = 0; sy < 16; ++sy) {
+                        const auto pixels = f.row(unsigned(y + part.top - 1) + sy);
+                        for (unsigned sx = 0; sx < 16; ++sx) {
+                            const int out = margin + x + part.left + int(sx);
+                            const auto value = part.indices[sy * 16 + sx];
+                            if (out < 0 || out >= int(width) || !value) continue;
+                            require(pixels[out].palette_index == 128 + expected->palette * 16 + value,
+                                    "Prepared NPC/prop is occluded inside the original viewport");
+                            ++compared;
+                        }
+                    }
+                ++cases;
+            }
+    std::cout << assets.title << ": prepared viewport visibility PASS cases=" << cases
+              << " imported_pixels=" << compared << '\n';
+}
+
 int main(int argc, char **argv) {
     try {
         if (argc < 2) throw std::runtime_error("Pass one or more game asset packs");
-        for (int i = 1; i < argc; ++i) {
+        const bool prayer_only = std::string_view(argv[1]) == "--prayer-focus";
+        const bool ending_only = std::string_view(argv[1]) == "--robot-ending";
+        if ((prayer_only || ending_only) && argc < 3) throw std::runtime_error("Pass game asset packs after the focused selector");
+        for (int i = prayer_only || ending_only ? 2 : 1; i < argc; ++i) {
             const auto assets = eb::load_game_assets(argv[i], eb::asset_profiles());
+            if (!prayer_only) test_robot_ending_departure(assets);
+            if (ending_only) continue;
+            test_prayer_focus_matches_native(assets);
+            if (prayer_only) continue;
+            test_cutscene_npc_handoff(assets);
+            test_catalog_actor_edges(assets);
+            test_catalog_prepared_edges(assets);
+            test_prop_creation_continuity(assets);
+            test_world_prop_scroll_visibility(assets);
+            test_prepared_viewport_visibility(assets);
             test(assets); test_resource_readiness(assets); test_enemy_resource_readiness(assets);
             test_stationary_vertical_overscan(assets);
             test_authored_prop_edges(assets);

@@ -85,6 +85,9 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
     frame->frame = view.completed_frames + 1;
     const auto combo = view.source_profile.wram_loaded_map_tile_combination;
     frame->scene_identity = 1 + (view.work_ram[combo] | (view.work_ram[combo + 1] << 8));
+    const bool authored_canvas = renderer.presentation_clip_left_ == 0 &&
+                                 renderer.presentation_clip_right_ == 256;
+    if (authored_canvas) frame->scene_identity |= std::uint64_t{1} << 32;
     const unsigned plane_width = frame->width + padding * 2, plane_height = 224 + padding * 2;
     frame->atlas_width = plane_width > 1024 ? 2048 : 1024;
     const int margin = (int(frame->width) - 256) / 2, shift = renderer.presentation_shift_x_;
@@ -137,7 +140,13 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
                 for (unsigned x = 0; x < w;) {
                     const int wx = origin_x + int(x), tx = wx >= 0 ? wx / 8 : (wx - 7) / 8;
                     const unsigned px = unsigned(wx) & 7, cols = std::min(8 - px, w - x);
-                    const unsigned entry = renderer.presentation_map_tile(view, tx, ty, bg);
+                    // Authored world patches (Lumine Hall's scrolling wall)
+                    // can replace a map tile at this position. Cache the
+                    // displayed entry so wall and text never share a decode.
+                    const unsigned entry = renderer.presentation_tile(
+                        view, bg, tx * 8 - renderer.presentation_world_x_[bg],
+                        unsigned(ty * 8 - renderer.presentation_world_y_[bg]),
+                        renderer.presentation_map_tile(view, tx, ty, bg));
                     auto [cached, fresh] = tiles.try_emplace(entry);
                     auto &tile = cached->second;
                     if (fresh) {
@@ -187,15 +196,25 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
                     it->second[y * w + x] = color(view, pixel);
                 }
         }
-        for (const auto &[priority, pixels] : planes)
-            if (!atlas.append(pixels, {0, 0, w, h, world ? -float(padding) : screen_overlay ? 0.f : float(margin),
-                                       world ? -float(padding) : 0.f, priority, world ? bg + 1 : 0, false}))
+        for (const auto &[priority, pixels] : planes) {
+            DirectSceneFrame::Quad quad{0, 0, w, h,
+                world ? -float(padding) : screen_overlay ? 0.f : float(margin),
+                world ? -float(padding) : 0.f, priority, world ? bg + 1 : 0, false};
+            // Clip after motion too: a moving story camera must not slide the
+            // stage's black borders along with its interpolated background.
+            if (world && authored_canvas) {
+                quad.clip.left = float(margin);
+                quad.clip.right = float(margin + 256);
+            }
+            if (!atlas.append(pixels, quad))
                 return {};
+        }
     }
     if (!(regs[0x2c] & 16))
         return frame;
     const bool native_frame = view.native_sprites && renderer.native_sprite_frame_;
     auto objects = native_frame ? renderer.native_sprite_objects_ : renderer.presentation_objects_;
+    const auto world_object_count = objects.size();
     // Source actor descriptors include offscreen parts. Preserve unmatched
     // native OBJs (cursors, indicators, etc.) without inventing motion for them.
     const unsigned first = (regs[3] & 0x80) ? ((view.oam_reload >> 2) & 127) : 0;
@@ -213,25 +232,13 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         if (y + h > 256)
             y -= 256;
         const auto tile = view.object_attributes[at + 2], attributes = view.object_attributes[at + 3];
-        const auto matches = [&](const auto &object) {
-            return object.x >= -256 && object.x < 256 && object.y >= -32 &&
-                   object.y < 224 && ((object.x - x) & 511) == 0 && ((object.y - y) & 255) == 0 &&
-                   object.tile == tile && object.attributes == attributes &&
-                   object.large == bool(extra >> 1);
-        };
-        // Actual source emissions include overlays without actor identity.
-        // Their OAM ordinal, not a coincidentally equal actor tuple, owns them.
-        const auto &emitted = renderer.presentation_oam_[index];
-        const bool owned = renderer.presentation_oam_indexed_
-            ? emitted && matches(*emitted)
-            : std::any_of(objects.begin(), objects.end(), [&](const auto &object) {
-                  return object.identity && matches(object);
-              });
+        const bool owned = renderer.owns_presentation_oam_part(x, y, tile, attributes, bool(extra >> 1), index);
         if (!owned)
             objects.push_back({x, y, tile, attributes, bool(extra >> 1)});
     }
     std::map<std::uint64_t, unsigned> groups;
-    for (const auto &object : objects) {
+    for (std::size_t index = 0; index < objects.size(); ++index) {
+        const auto &object = objects[index];
         const unsigned w = object.fragment_pixels ? object.fragment_pixels->width :
                                object.native_owned ? 16 : sizes[regs[1] >> 5][object.large][0],
                        h = object.fragment_pixels ? object.fragment_pixels->height :
@@ -239,7 +246,8 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         const bool fragment = view.native_sprites && object.fragment_pixels;
         const bool host = (object.native_owned ? bool(view.native_sprites) : bool(view.host_sprites)) &&
                           object.host_image && w == 16 && h == 16;
-        const int output_x = object.x + margin - shift;
+        const int soul_shift = renderer.ending_soul_shift(object);
+        const int output_x = object.x + margin - soul_shift - (index < world_object_count ? shift : 0);
         if (output_x + int(w) < -int(padding) || output_x > int(frame->width + padding) ||
             object.y + int(h) < -int(padding) || object.y > 224 + int(padding))
             continue;
@@ -249,7 +257,7 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
             motion = it->second;
             if (inserted)
                 frame->motions.push_back(
-                    {object.identity, float(object.anchor_x + margin - shift), float(object.anchor_y)});
+                    {object.identity, float(object.anchor_x + margin - shift - soul_shift), float(object.anchor_y)});
         }
         const unsigned attr = object.attributes,
                        pal = host ? object.host_palette : (attr >> 1) & 7;
@@ -284,11 +292,9 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
                 visible = true;
             }
         DirectSceneFrame::Quad quad{0, 0, w, h, float(output_x), float(object.y), priority, motion, true};
-        if (object.stationary_prepared) {
-            if (object.x < 0) quad.clip.right = float(margin - shift);
-            else if (object.x + int(w) > 256) quad.clip.left = float(margin + 256 - shift);
-            else if (object.y < 0) quad.clip.bottom = 0.f;
-            else quad.clip.top = 224.f;
+        if (authored_canvas && index < world_object_count && !renderer.presentation_robot_ending_) {
+            quad.clip.left = float(margin);
+            quad.clip.right = float(margin + 256);
         }
         if (visible && !atlas.append(pixels, quad))
             return {};

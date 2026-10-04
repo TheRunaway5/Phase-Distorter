@@ -1,0 +1,178 @@
+{
+  "architecture": "x86_64",
+  "files": [
+    {
+      "mode": "0644",
+      "path": "NOTICE.txt",
+      "sha256": "c7d8b25c2b9d3491254449bcc00e74381c1139b8a35ab9432cbcb03f6bd9c742",
+      "size": 1750
+    },
+    {
+      "mode": "0644",
+      "path": "PATCH-NOTES.md",
+      "sha256": "1721569c0fff0a8e34ac0c80bb021f687822b89eee8374b571c00276c7db8a8b",
+      "size": 12551
+    },
+    {
+      "mode": "0644",
+      "path": "README.txt",
+      "sha256": "023d3514da6e190a31671c11391d90b28d28bad38bc0daa77d55c267907edc46",
+      "size": 2092
+    },
+    {
+      "mode": "0644",
+      "path": "VERSION",
+      "sha256": "88930bd051d214a973581b9492a5ca110aea3fdd5dc65a68bc444b6173877bbd",
+      "size": 4
+    },
+    {
+      "mode": "0644",
+      "path": "cpp/resources/phase-distorter.ico",
+      "sha256": "4d7384ae2eb89e59afe7c96d76897b7928bc5df6d3aa868b53d4f41c317ba866",
+      "size": 372526
+    },
+    {
+      "mode": "0644",
+      "path": "cpp/resources/phase-distorter.png",
+      "sha256": "31208542c1a857bf099c3fe38445e58ae47d30c686f7a8456cb973ec4c0bdc88",
+      "size": 618
+    },
+    {
+      "mode": "0755",
+      "path": "install-linux.sh",
+      "sha256": "0e4241998405fc48b5bf466660843d59168a40d0591b65c07f1cd0ea99e78469",
+      "size": 3681
+    },
+    {
+      "mode": "0644",
+      "path": "install-shortcuts.vbs",
+      "sha256": "e4817427b63f88a41bb39fdd97a4dca3b375f2534daa1e1dd3c67621bfc77736",
+      "size": 4676
+    },
+    {
+      "mode": "0644",
+      "path": "launch.bat",
+      "sha256": "d30fd27973310a7a83b5861f071fa00e9859918b55d32db44ba7e0a98ab5ee55",
+      "size": 572
+    },
+    {
+      "mode": "0755",
+      "path": "launch.sh",
+      "sha256": "a5b63ebecf5cb6fd05494eeec414c008065a3e40023b51ce2d0cb257bc8aa884",
+      "size": 632
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/VERSION",
+      "sha256": "88930bd051d214a973581b9492a5ca110aea3fdd5dc65a68bc444b6173877bbd",
+      "size": 4
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/linux/bin/eb_cpp",
+      "sha256": "918ffe0db5ef87fefd8b6e30fbc621dd6f99f80509f0e16ef106a3665e109a52",
+      "size": 23584680
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/linux/lib/PROVENANCE.md",
+      "sha256": "6c299c4e0016a7ee7af63946b6cce308d940a87f37ccb6dcca4c086b4f0955e4",
+      "size": 4528
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/linux/lib/libSDL2-2.0.so.0",
+      "sha256": "9e206fa4deae7f1ad07e0c1c11e0ebfdb120153045936d8560a86e753e511a32",
+      "size": 2887360
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/linux/lib/libgcc_s.so.1",
+      "sha256": "e618cb9c90c2eb3a1dad1cfea5b6c1eebcf2e799ad805976f4ae47bdd61c716a",
+      "size": 182512
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/linux/lib/libstdc++.so.6",
+      "sha256": "e3b0ac5568d29e4b8f16151c49133ec7fb09ecdef78f7d4f733d7f3f1f0854bd",
+      "size": 3297713
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/linux/lib/licenses/GCC-COPYING3.txt",
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+      "size": 34674
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/linux/lib/licenses/GCC-NOTICE.md",
+      "sha256": "7e3cba1d2e55b7b35e09406831f6339b7ed06d7b2175c327c556a413cdf9cb96",
+      "size": 1058
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/linux/lib/licenses/GCC-RUNTIME-LIBRARY-EXCEPTION.txt",
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+      "size": 3324
+    },
+    {
+      "mode": "0644",
+      "path": "launchers/linux/lib/licenses/SDL2-LICENSE.txt",
+      "sha256": "97f35b302b361680ec1e891e95d2d52097bb95abff361434916d99dc1305f127",
+      "size": 884
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/windows/bin/SDL2.dll",
+      "sha256": "53e8fa7e9ed43c30bd650c39396f0d9d2067d2fff0b926c9433b75202592e4aa",
+      "size": 1785344
+    },
+    {
+      "mode": "0755",
+      "path": "launchers/windows/bin/eb_cpp.exe",
+      "sha256": "673a8b56b75ee660292c961b5999f1f8bca22ee415ce8f65cf46b70749a9f148",
+      "size": 42432173
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/Dear-ImGui-LICENSE.txt",
+      "sha256": "c80c5789748d955c4a650562baa0d750494e2c7128c2ca66aaebe2e3c4e198bf",
+      "size": 1083
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/Dear-ImGui-PROVENANCE.md",
+      "sha256": "0f749b61a43e8445238180944574d20c5c51be536e2c0cf9f5ba03766a9b002a",
+      "size": 735
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/SDL2-LICENSE.txt",
+      "sha256": "97f35b302b361680ec1e891e95d2d52097bb95abff361434916d99dc1305f127",
+      "size": 884
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/SDL2-PROVENANCE.md",
+      "sha256": "3fe48f6c6cbb472f8b7ae25201ce14ae47307e9a551b3544be4862a01b7d4f89",
+      "size": 586
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/snes_spc-LICENSE.txt",
+      "sha256": "20c17d8b8c48a600800dfd14f95d5cb9ff47066a9641ddeab48dc54aec96e331",
+      "size": 26526
+    },
+    {
+      "mode": "0644",
+      "path": "licenses/snes_spc-PROVENANCE.md",
+      "sha256": "1f9796a94a55c3ed53d247d1623ff98d7f47cdf8504b76aa78e64968b1f57305",
+      "size": 839
+    }
+  ],
+  "platform": "linux+windows",
+  "project": "Phase Distorter",
+  "schema": 1,
+  "scope": "Payload files only; SHA256SUMS additionally covers this manifest. Neither record is a signature.",
+  "version": "0.2"
+}

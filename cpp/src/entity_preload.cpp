@@ -20,7 +20,7 @@ bool supported_preview(const SceneReadView &view, const NpcLayout &l, unsigned n
   if (npc >= 1584 || l.definitions + npc * 17 + 17 > view.cartridge_rom.size()) return false;
   const unsigned at = l.definitions + npc * 17;
   const unsigned type = view.cartridge_rom[at], script = word(view.cartridge_rom, at + 4);
-  return native::supports_stationary_npc_preview(static_cast<native::NpcType>(type), script);
+  return native::uses_native_stationary_retention(static_cast<native::NpcType>(type), script);
 }
 bool unsupported_npc(const SceneReadView &view, const NpcLayout &l, unsigned npc) {
   return npc < 1584 && l.definitions + npc * 17 + 17 <= view.cartridge_rom.size() &&

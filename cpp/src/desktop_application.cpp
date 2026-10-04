@@ -115,8 +115,10 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
         }
         if (!options.save.empty())
             load_save(options.save, session.save_memory());
+        // Flash detection consumes raw pictures; renderer effect masks are
+        // diagnostic metadata and are unnecessary for the automatic filter.
         session.configure_presentation(settings.render_width(width * options.scale, height * options.scale),
-                                       settings.reduce_flashing, settings.high_frame_rate() && settings.direct_rendering);
+                                       false, settings.high_frame_rate() && settings.direct_rendering);
         const double native_rate = display ? display->frame_rate() : FramePacer::frame_rate;
         std::unique_ptr<DeviceAudioQueue> audio;
         if (display && options.audio)
@@ -201,7 +203,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                                 // host reconfiguration can allocate or fail.
                                 presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
                                 if (audio) audio->clear();
-                                session.configure_presentation(display->render_width(), settings.reduce_flashing,
+                                session.configure_presentation(display->render_width(), false,
                                     settings.high_frame_rate() && settings.direct_rendering);
                                 presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
                                 display->adopt_debug(session.debug());
@@ -237,7 +239,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                 session.configure_presentation(
                     display ? display->render_width()
                             : settings.render_width(width * options.scale, height * options.scale),
-                    settings.reduce_flashing, settings.high_frame_rate() && settings.direct_rendering);
+                    false, settings.high_frame_rate() && settings.direct_rendering);
 
                 if (!presentation.simulation_due(std::chrono::steady_clock::now())) {
                     present_and_wait();

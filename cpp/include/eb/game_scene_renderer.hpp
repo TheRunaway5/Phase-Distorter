@@ -90,6 +90,8 @@ class GameSceneRenderer {
                                 int x, int y, unsigned priority);
     std::optional<std::uint8_t> try_native_sprite_pixels(
         const SceneReadView &view, unsigned y, std::span<PpuPixel> result, int origin) const;
+    bool owns_presentation_oam_part(int x, int y, std::uint8_t tile, std::uint8_t attributes,
+                                    bool large, unsigned oam_index) const;
     std::size_t native_sprite_part_count() const {
         std::size_t count = 0;
         for (const auto &object : native_sprite_objects_)
@@ -151,6 +153,7 @@ class GameSceneRenderer {
     int presentation_lumine_phase_ = -1;
     unsigned presentation_lumine_columns_ = 0;
     bool presentation_world_map_ = false;
+    bool presentation_robot_ending_ = false; // Derived from the source corpse actors each scanline.
     bool presentation_jp_title_ = false;
     bool presentation_intro_static_ = false;
     bool presentation_battle_scene_ = false;
@@ -172,6 +175,9 @@ class GameSceneRenderer {
         bool native_owned{};
         std::shared_ptr<const native::SpriteFragmentPixels> fragment_pixels{};
         bool stationary_prepared{};
+        // Latched at DRAW, independent of width. -1 is ordinary artwork;
+        // 0..1 extends only the ending soul's final leftward leg into margins.
+        float ending_departure = -1;
     };
     std::vector<PresentationObject> presentation_objects_;
     std::vector<PresentationObject> presentation_uploaded_objects_;
@@ -257,7 +263,8 @@ class GameSceneRenderer {
     std::vector<PresentationObject> source_sprite_parts(
         const SceneReadView &view, std::uint32_t map_address, int x, int y) const;
     void object_pixels(const SceneReadView &view, std::span<const PresentationObject> objects,
-                       unsigned y, std::span<Pixel> result, int origin) const;
+                       unsigned y, std::span<Pixel> result, int origin, bool presentation = false) const;
+    int ending_soul_shift(const PresentationObject &object) const;
     void presentation_object_pixels(const SceneReadView &view, unsigned y, std::span<Pixel> result,
                                     int origin) const;
     void prepare_presentation_boundary(const SceneReadView &view);

@@ -63,8 +63,10 @@ struct Oracle {
                 bus->work_ram[0xe000 + (y & 63) * 64 + (x & 63)] = area.collision(x,y);
             }
     }
-    void seed(const NpcPlacement &place, const NpcDefinition &definition, const WorldMapArea &area) {
+    void seed(const NpcPlacement &place, const NpcDefinition &definition, const WorldMapArea &area, std::span<const std::uint8_t> flags) {
         call(reset);
+        std::copy(flags.begin(), flags.end(), bus->work_ram.begin() + (assets.version == eb::GameVersion::JP ? 0x9eb3 : 0x9c08));
+        put(p.wram_entity_script_variable0, 0);
         // Each seed represents a fresh resource. Unwritten padding in rounded
         //16px source maps must not inherit another independent oracle seed.
         bus->video_ram.fill(0);
@@ -151,8 +153,9 @@ void run(const eb::GameAssets &assets) {
     for (unsigned id = 0; id < catalog.size(); ++id) {
         const auto &d = catalog.definition(NpcId(id));
         require(ready.supports(NpcId(id)) ==
-                    ((d.type == NpcType::Person || d.type == NpcType::Object) &&
-                     (d.script == 8 || d.script == 605 || d.script == 606)),
+                    ((d.type == NpcType::ItemBox && d.script == 9) ||
+                     ((d.type == NpcType::Person || d.type == NpcType::Object) &&
+                      (d.script == 7 || d.script == 8 || d.script == 605 || d.script == 606 || d.script == 693))),
                 "Readiness admitted an unsupported authored program");
     }
     for (unsigned pattern : {0u,255u}) {
@@ -191,8 +194,25 @@ void run(const eb::GameAssets &assets) {
                     twoson_facing[member] = true;
                 }
                 const bool animated = definition.script == 606;
-                oracle.seed(sprite.placement,definition,area); oracle.tick(sprite.placement, animated);
+                oracle.seed(sprite.placement,definition,area,flags); oracle.tick(sprite.placement, animated);
                 pixels += oracle.compare(sprite); ++candidates;
+                if (definition.script == 693) {
+                    std::array<bool,4> rotations{};
+                    for (unsigned tick = 0; tick < 40; ++tick) {
+                        oracle.tick(sprite.placement);
+                        const unsigned direction = oracle.get(oracle.direction);
+                        require(direction < 8 && !(direction & 1), "Sanctuary marker selected an unexpected direction");
+                        rotations[direction / 2] = true;
+                        SpriteAppearance appearance(resources, definition.sprite);
+                        appearance.select_four(direction, 0, sprite.surface);
+                        const auto &selected = *appearance.displayed();
+                        auto current = sprite;
+                        current.image = resources->acquire(selected.sprite, selected.pose, selected.surface, selected.format);
+                        pixels += oracle.compare(current);
+                    }
+                    require(std::all_of(rotations.begin(), rotations.end(), [](bool seen) { return seen; }),
+                            "Sanctuary marker rotation was not source-verified");
+                }
                 const unsigned kind = animated ? 2 : definition.script == 605;
                 if (!long_cases[kind][definition.direction & 7]) {
                     long_cases[kind][definition.direction & 7] = true;
@@ -241,7 +261,7 @@ void run(const eb::GameAssets &assets) {
     std::cout << "PASS stationary NPC source proof " << assets.title << ": candidates=" << candidates
               << " exact_source_pixels=" << pixels << " source_ticks=" << oracle.ticks
               << " active_exclusions=" << exclusions
-              << "; fixed-position scripts8/605/606, Twoson benches350/351 and people304/311, no activation\n";
+              << "; fixed-position scripts7/8/9/605/606/693, Twoson benches350/351 and people304/311, no activation\n";
 }
 }
 int main(int argc, char **argv) {

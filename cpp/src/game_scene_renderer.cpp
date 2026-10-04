@@ -14,6 +14,44 @@
 
 namespace eb {
 namespace {
+bool scripted_world_camera(const SceneReadView &view) {
+    // UNKNOWN_C46698/C466A8 direct the camera at a scripted entity and set
+    // GAME_STATE::unknownB0 to 2. C466B8 restores ordinary control. Other
+    // nonzero modes include ordinary camera adjustment and are not cutscenes.
+    const unsigned at = view.game_version == GameVersion::JP ? 0x9b56 : 0x98a5;
+    return (unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8) == 2;
+}
+
+bool robot_ending_scene(const SceneReadView &view) {
+    // EEVENT5's D7 stage contains these four source-owned corpse NPCs.
+    // Check the active list and authored region, never a sprite/palette guess.
+    const auto word = [&](unsigned at) { return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8; };
+    const auto &source = view.source_profile;
+    const unsigned ids = view.game_version == GameVersion::JP ? 0x3098 : 0x2c9a;
+    unsigned found = 0;
+    std::array<bool, 30> seen{};
+    for (unsigned slot = word(source.wram_first_entity); slot < 60 && !(slot & 1) && !seen[slot / 2];
+         slot = word(source.wram_entity_next + slot)) {
+        seen[slot / 2] = true;
+        const auto npc = word(ids + slot), x = word(source.wram_entity_world_coordinates.x + slot),
+                   y = word(source.wram_entity_world_coordinates.y + slot);
+        if (npc >= 1306 && npc <= 1309 && x >= 160 && x <= 224 && y >= 6060 && y <= 6120)
+            found |= 1u << (npc - 1306);
+    }
+    return found == 15;
+}
+
+bool natural_presentation_border(unsigned combination) {
+    // Authored combination IDs from TILESET_TABLE / the sector grid, shared
+    // by US and JP. Twoson/Threed (2/3), Peaceful Rest/Saturn Valley (6) and
+    // Winters (13) have natural outdoor borders; 10-12, 14-17 and 19-26 use
+    // room/cave voids. Keep the short road
+    // tunnels (5), desert traffic (8), and unclassified scenery constrained.
+    return combination == 2 || combination == 3 || combination == 6 ||
+           (combination >= 10 && combination <= 17) ||
+           (combination >= 19 && combination <= 26);
+}
+
 bool intro_interference(const SceneReadView &view) {
     // GAS_STATION_LOAD mixes its procedural BG2 static into the BG1 card.
     // UNKNOWN_C0F21E later disables that subscreen/color math for the still card.
@@ -333,6 +371,24 @@ std::optional<std::uint32_t> GameSceneRenderer::append_presentation_entity(
     return map_address;
 }
 
+bool GameSceneRenderer::owns_presentation_oam_part(int x, int y, std::uint8_t tile,
+                                                  std::uint8_t attributes, bool large,
+                                                  unsigned oam_index) const {
+    const auto matches = [&](const PresentationObject &object) {
+        return object.x >= -256 && object.x < 256 && object.y >= -32 && object.y < 224 &&
+            ((unsigned(object.x) - unsigned(x)) & 511) == 0 &&
+            ((unsigned(object.y) - unsigned(y)) & 255) == 0 && object.tile == tile &&
+            object.attributes == attributes && object.large == large;
+    };
+    // Emitted overlays can have no actor identity. Only their actual OAM
+    // ordinal owns them; an equal actor tuple must not claim a UI indicator.
+    if (presentation_oam_indexed_)
+        return oam_index < presentation_oam_.size() && presentation_oam_[oam_index] &&
+               matches(*presentation_oam_[oam_index]);
+    return std::any_of(presentation_objects_.begin(), presentation_objects_.end(),
+        [&](const auto &object) { return object.identity && matches(object); });
+}
+
 std::optional<GameSceneRenderer::HostObjectPart>
 GameSceneRenderer::host_oam_part(int x, int y, std::uint8_t tile, std::uint8_t attributes, bool large,
                                 unsigned oam_index) const {
@@ -364,12 +420,18 @@ GameSceneRenderer::host_oam_part(int x, int y, std::uint8_t tile, std::uint8_t a
 void GameSceneRenderer::presentation_object_pixels(const SceneReadView &view, unsigned y,
                                                    std::span<Pixel> result, int origin) const {
     object_pixels(view, view.native_sprites && native_sprite_frame_ ? native_sprite_objects_ : presentation_objects_,
-                  y, result, origin);
+                  y, result, origin, true);
+}
+
+int GameSceneRenderer::ending_soul_shift(const PresentationObject &object) const {
+    if (!presentation_robot_ending_ || object.ending_departure < 0)
+        return 0;
+    return int(object.ending_departure * float((presentation_width_ - 256) / 2) + 0.5f);
 }
 
 void GameSceneRenderer::object_pixels(const SceneReadView &view,
                                       std::span<const PresentationObject> objects, unsigned y,
-                                      std::span<Pixel> result, int origin) const {
+                                      std::span<Pixel> result, int origin, bool presentation) const {
     constexpr unsigned sizes[8][2][2] = {{{8, 8}, {16, 16}},   {{8, 8}, {32, 32}},   {{8, 8}, {64, 64}},
                                          {{16, 16}, {32, 32}}, {{16, 16}, {64, 64}}, {{32, 32}, {64, 64}},
                                          {{16, 32}, {32, 64}}, {{16, 32}, {32, 32}}};
@@ -394,9 +456,7 @@ void GameSceneRenderer::object_pixels(const SceneReadView &view,
         const unsigned base = (view.ppu_registers[1] & 7) * 16384 +
                               ((attr & 1) ? (((view.ppu_registers[1] >> 3) & 3) + 1) * 8192 : 0);
         for (unsigned col = 0; col < width; ++col) {
-            if (object.stationary_prepared && object.x + int(col) >= 0 && object.x + int(col) < 256)
-                continue;
-            const int out = object.x + int(col) - origin;
+            const int out = object.x + int(col) - origin - (presentation ? ending_soul_shift(object) : 0);
             if (out < 0 || out >= int(result.size()) || result[out].priority >= 0)
                 continue;
             unsigned color = 0;
@@ -533,6 +593,7 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
         if (matches)
             presentation_layer_mask_ = 0x13;
     }
+    presentation_robot_ending_ = presentation_world_map_ && robot_ending_scene(view);
     if (presentation_world_map_)
         prepare_presentation_boundary(view);
     else {
@@ -604,9 +665,9 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
     }
 }
 
-// A wider view may fit within a connected run of authored sectors even when
-// the native camera is centered near an edge. Shift only its rendered scenery;
-// narrow runs receive black margins instead of exposing neighboring map data.
+// Natural borders follow the source camera and extend using authored block
+// zero. Constrained scenery fits within its connected sector run; narrow runs
+// receive black margins instead of exposing the short road/tunnel endpoints.
 void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view) {
     const auto reset = [&] {
         presentation_shift_x_ = 0;
@@ -620,17 +681,38 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
     // its subject out of the opening. Keep the source framing for both layer
     // masks and color windows; map sampling still handles out-of-area tiles.
     const auto &regs = view.ppu_registers;
-    if (presentation_width_ == 256 || (regs[0] & 0x80) || !(regs[0] & 15) || (regs[0x30] & 0xf0)) {
+    if (presentation_width_ == 256 || (regs[0] & 0x80) || !(regs[0] & 15)) {
         reset();
+        return;
+    }
+    const auto authored_canvas = [&] {
+        reset();
+        presentation_clip_left_ = 0;
+        presentation_clip_right_ = 256;
+    };
+    // Scripted stages and raster apertures describe one authored screen.
+    // Adjacent storage can contain another room with the same tileset, and
+    // repeating an iris's edge membership leaks horizontal strips of it.
+    if (presentation_robot_ending_ || scripted_world_camera(view) || (regs[0x30] & 0xf0)) {
+        authored_canvas();
         return;
     }
     const unsigned masked_layers = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
     for (unsigned layer = 0; layer < 5; ++layer) {
         const unsigned selection = (regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
         if ((masked_layers & (1u << layer)) && (selection & 0x0a)) {
-            reset();
+            authored_canvas();
             return;
         }
+    }
+    const unsigned address = view.source_profile.wram_loaded_map_tile_combination;
+    const unsigned combo = view.work_ram[address] | (view.work_ram[address + 1] << 8);
+    // Sector storage edges are not camera walls in forests or around a cave's
+    // black void. The existing map lookup still replaces unrelated sectors
+    // with this area's own border metatile, never another area's artwork.
+    if (natural_presentation_border(combo)) {
+        reset();
+        return;
     }
     // Window eligibility can change mid-frame. Honor the authored aperture
     // immediately, but advance ordinary camera history only once per frame.
@@ -650,9 +732,7 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
         reset();
         return;
     }
-    const unsigned row = unsigned(center_y) / 128,
-                   address = view.source_profile.wram_loaded_map_tile_combination;
-    const unsigned combo = view.work_ram[address] | (view.work_ram[address + 1] << 8);
+    const unsigned row = unsigned(center_y) / 128;
     const auto valid = [&](int column) {
         return column >= 0 && column < 32 &&
                (view.cartridge_rom[view.source_profile.rom_map_tileset_palette_sectors + row * 32 +
@@ -764,9 +844,9 @@ uint16_t GameSceneRenderer::presentation_tile(const SceneReadView &view, unsigne
     const unsigned row = ((y + view.background_scroll_y[0]) & 255) / 8;
     if (row < 12 || row >= 20)
         return original;
-    // Select the native 240-pixel patch's occurrence nearest the centered
-    // viewport. Additional columns come from the prebuilt text, not from the
-    // 64-column tilemap ring wrapping back into an earlier word of the message.
+    // Select the authored 240-pixel patch's occurrence nearest the centered
+    // viewport. BUFFER contains the entire scrolling message, but C48A6D
+    // displays only 30 columns on the wall at a time.
     int start = 40 * 8;
     while (start + 120 - int(view.background_scroll_x[0]) > 384)
         start -= 512;
@@ -774,6 +854,8 @@ uint16_t GameSceneRenderer::presentation_tile(const SceneReadView &view, unsigne
         start += 512;
     const int relative = x + int(view.background_scroll_x[0]) - start;
     const int column = relative >= 0 ? relative / 8 : (relative - 7) / 8;
+    if (column < 0 || column >= 30)
+        return original;
     // This also covers authored patch columns that lie outside the native
     // viewport. The world-map extension above must not replace those letters
     // with the underlying wall when the map camera exposes them in a margin.
@@ -948,17 +1030,17 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
     std::array<Pixel, 1024> objects{};
     if ((view.ppu_registers[0x2c] | view.ppu_registers[0x2d]) & 16) {
         view.sample_sprite_pixels(y, std::span<Pixel>(objects.data(), presentation_width_),
-                                  -int(margin) + presentation_shift_x_);
+                                  -int(margin), presentation_shift_x_);
         if (presentation_world_map_) {
             std::array<Pixel, 1024> world_objects{};
             presentation_object_pixels(view, y, std::span<Pixel>(world_objects.data(), presentation_width_),
                                        -int(margin) + presentation_shift_x_);
             for (unsigned x = 0; x < presentation_width_; ++x)
-                if (world_objects[x].priority >= 0)
+                if (presentation_robot_ending_ || world_objects[x].priority >= 0)
                     objects[x] = world_objects[x];
         }
     }
-    if (presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
+    if (presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
         (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
         for (unsigned x = 0; x < presentation_width_; ++x)
             output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
@@ -1253,6 +1335,21 @@ void GameSceneRenderer::tag_native_actor_draw(const SceneReadView &view, std::si
                                           source.wram_entity_screen_coordinates.x) + byte_slot)),
               anchor_y = std::int16_t(word((custom ? source.wram_entity_world_coordinates.y :
                                           source.wram_entity_screen_coordinates.y) + byte_slot)) - 1;
+    float departure = -1;
+    const auto script = word(source.wram_entity_script_ids + byte_slot);
+    const unsigned variables = source.wram_entity_script_variable0;
+    if (ordinary && word((view.game_version == GameVersion::JP ? 0x30d4 : 0x2cd6) + byte_slot) == 258 &&
+        script >= 551 && script <= 554 && word(variables + 5 * 60 + byte_slot) == 2 &&
+        word(variables + 6 * 60 + byte_slot) == 0) {
+        // EVENT_551..554 retain the source endpoint X=0 and frame count. The
+        // presentation reaches the display edge by that endpoint at any width.
+        constexpr unsigned starts[]{0x98, 0xa8, 0xb8, 0xa0}, ends_y[]{0x1790, 0x1790, 0x1780, 0x1798};
+        if (word(variables + 7 * 60 + byte_slot) == ends_y[script - 551]) {
+            const auto x = word(source.wram_entity_world_coordinates.x + byte_slot);
+            const auto start = starts[script - 551];
+            departure = float(start - std::min(x, start)) / float(start);
+        }
+    }
     for (auto it = queued.begin() + mark; it != queued.end(); ++it) {
         it->actor_order = order;
         // An overlay and body share one motion anchor, independent of which
@@ -1261,6 +1358,7 @@ void GameSceneRenderer::tag_native_actor_draw(const SceneReadView &view, std::si
         for (auto &object : it->objects)
             if ((ordinary || custom) && object.native_owned && (object.host_image || object.fragment_pixels)) {
                 object.identity = identity;
+                object.ending_departure = departure;
                 if (object.fragment_pixels) {
                     object.anchor_x = anchor_x;
                     object.anchor_y = anchor_y;
@@ -1289,14 +1387,31 @@ void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) 
         native_stationary_preparation_.clear_resources();
         return;
     }
+    const bool story_camera = scripted_world_camera(view) || robot_ending_scene(view);
     const unsigned combination = word(source.wram_loaded_map_tile_combination);
     if (combination >= 32) { native_stationary_preparation_.clear_resources(); return; }
-    std::vector<native::NpcId> active;
+    std::vector<native::NpcId> active, awaiting_first_draw;
     std::array<bool, 30> seen{};
     for (unsigned slot = word(source.wram_first_entity); slot < 60 && !(slot & 1) && !seen[slot / 2];
          slot = word(source.wram_entity_next + slot)) {
         seen[slot / 2] = true;
-        active.push_back(std::uint16_t(word(npc_ids + slot)));
+        const auto npc = std::uint16_t(word(npc_ids + slot));
+        const auto actor = view.native_sprites->snapshot(slot);
+        const auto place = native_stationary_sprites_->placement(npc);
+        // CREATE and pose selection can precede the first source draw. Keep
+        // the verified birth artwork until a draw actually takes ownership,
+        // including a selected image waiting for that first submission.
+        const bool selecting_first_pose = actor && place &&
+            (!actor->image || native_actor_overlays_[slot / 2].generation != actor->id) &&
+            native_stationary_sprites_->supports(npc, word(source.wram_entity_script_ids + slot)) &&
+            !view.native_sprites->custom_descriptor(slot) &&
+            !(word(source.wram_entity_spritemap_pointers.high + slot) & 0x8000) &&
+            (word(source.wram_entity_animation_frame + slot) == 0xffff ||
+             word(source.wram_entity_animation_frame + slot) == 0) &&
+            word(source.wram_entity_world_coordinates.x + slot) == place->x &&
+            word(source.wram_entity_world_coordinates.y + slot) == place->y;
+        if (!selecting_first_pose) active.push_back(npc);
+        else awaiting_first_draw.push_back(npc);
     }
     // These are the same logical-frame camera coordinates used by C0A023.
     // The resulting commands travel with that frame's ordinary draw snapshot.
@@ -1323,6 +1438,15 @@ void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) 
         if (candidate.surface & 8) continue;
         const int x = int(candidate.placement.x) - camera_x,
                   y = int(candidate.placement.y) - camera_y;
+        // LOAD_MAP_AT_POSITION uses mode 1 for its initial actor scan, then
+        // restores -1. C0222B intentionally excludes unowned center placements
+        // in every other mode: cutscenes may delete/replace them while leaving
+        // their appearance flags set. Drawing them would invent NPCs with no
+        // collision or dialogue and resurrect removed cutscene bodies.
+        if ((story_camera || (word(enabled) != 1 && unsigned(x) < 256 && unsigned(y) < 224)) &&
+            std::find(awaiting_first_draw.begin(), awaiting_first_draw.end(), candidate.placement.npc) ==
+                awaiting_first_draw.end())
+            continue;
         // Actual active identity, not a geometric threshold, ends readiness:
         // source strip loading can lag the activation boundary by one strip.
         QueuedSpriteDraw draw;
@@ -1332,9 +1456,9 @@ void GameSceneRenderer::queue_stationary_npc_sprites(const SceneReadView &view) 
         for (unsigned index = 0; index < candidate.image->parts.size(); ++index) {
             const auto &part = candidate.image->parts[index];
             const int left = x + part.left, top = y + part.top - 1;
-            // Canonical pixels are clipped by both rasterizers; partial edge
-            // parts remain intact until actual source activation takes over.
-            if (left >= 0 && left + 16 <= 256 && top >= 0 && top + 16 <= 224) continue;
+            // Eligibility and active NPC identity above decide whether this
+            // authored placement exists. Keep its whole visible artwork even
+            // when source strip loading has not activated it in the center.
             if (left >= bounds.right || left + 16 <= bounds.left ||
                 top >= bounds.bottom || top + 16 <= bounds.top)
                 continue;

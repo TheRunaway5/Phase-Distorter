@@ -11,7 +11,7 @@ class MainCpu65816;
 class SnapshotArchive;
 struct SourceProfile;
 struct GameDebugSettings {
-    bool infinite_hp{}, infinite_pp{}, noclip{}, enemies_ignore{};
+    bool infinite_hp{}, infinite_pp{}, noclip{}, enemies_ignore{}, player_max_damage{};
     bool operator==(const GameDebugSettings&) const = default;
 };
 struct DebugDestination { const char* name; unsigned id,x,y; };
@@ -72,6 +72,7 @@ private:
     void write_word(unsigned address,unsigned value);
     void refresh_stats();
     std::uint8_t filter_stat_write(unsigned address,std::uint8_t value) const;
+    std::uint8_t filter_damage_write(unsigned address,std::uint8_t value) const;
     bool can_apply_world_action() const;
     void advance_party_change();
     void call_game_routine(unsigned address, unsigned accumulator, unsigned x, unsigned y, CallContinuation continuation);

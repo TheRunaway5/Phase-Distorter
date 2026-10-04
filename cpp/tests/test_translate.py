@@ -77,8 +77,11 @@ class PresentationProfileTests(unittest.TestCase):
                 def offset(name, kind):
                     return {"PARTY_CHARACTERS": 0x9800, "BATTLERS_TABLE": 0x9900,
                             "GAME_STATE": 0x9700, "WAIT_UNTIL_NEXT_FRAME": 0x8756,
+                            "CALC_DAMAGE": 0x27eaf - shift * 0x69, "CURRENT_ATTACKER": 0xa970 + shift * 0x202,
                             "ADD_CHAR_TO_PARTY": 0x228f8, "REMOVE_CHAR_FROM_PARTY": 0x229bb}.get(name, 0x1234)
                 profile = translate.debug_profile(debug, region, offset)
+                self.assertEqual(profile["gameplay_routines"]["damage_argument_store_end"], 0xc27ebb - shift * 0x69)
+                self.assertEqual(profile["battle_state"]["current_attacker"], 0xa970 + shift * 0x202)
                 self.assertEqual(profile["character_layout"], {"table_address": 0x9800,
                     "entry_size": record_size, **{key: value - shift for key, value in character_members.items()}})
                 self.assertEqual(profile["battler_layout"], {"table_address": 0x9900,

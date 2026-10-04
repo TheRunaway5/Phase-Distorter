@@ -1,9 +1,11 @@
 Phase Distorter @VERSION@ - Linux x86-64
 EarthBound / Mother 2 PC port
 
-Threed/Threek restores the Investigator after Master Belch and keeps the Ghost
-Enthusiast available afterward, using their original sprites and dialogue.
-Existing supported ROM imports and saves continue to work.
+This update improves widescreen/ultrawide rendering, frame pacing, audio delivery,
+CRT effects, reduced flashing, controllers and debugging. It fixes Paula
+recruitment, wall text and missing/pop-in props, and restores two Threed NPCs.
+PATCH-NOTES.md has the complete draft notes, including native component work
+and remaining migration limits. Existing supported imports and saves work.
 
 Extract this entire ZIP, then open its Phase-Distorter-@VERSION@-linux-x86_64
 folder and run the native Phase Distorter executable directly. Do not run it
@@ -39,7 +41,8 @@ Right Shift=Select. Controllers are supported. F11 toggles fullscreen.
 Once a game loads, the top bar has Settings (F1) and Fullscreen (F11) buttons.
 Windowed mode fits the picture below it. Fullscreen hides the bar until the
 pointer reaches the top edge; it then overlays the picture without resizing.
-Settings opens a floating window with Display, Assets, Diagnostics and Debug tabs. Its Display tab includes widescreen
+The Controller tab shows connected devices/live inputs and saves button remaps
+and stick deadzone. Settings opens a floating window with Display, Controller, Assets, Diagnostics and Debug tabs. Its Display tab includes widescreen
 and the default-off Photosensitivity filter. Escape closes Settings or exits.
 The game continues while Settings captures physical game input. The initial
 ROM import view has no gameplay bar.
@@ -47,14 +50,19 @@ Fixed intro artwork uses a centered 4:3 view. Animated Giygas static fills the
 selected wide view while the original intro card stays centered.
 The Mother 2 logo screen extends its background into widescreen margins while
 keeping the original logo and copyright centered.
-The filter moderates identified flashing effects, including battle animations
-and Franklin Badge lightning, while preserving ordinary picture pixels. It is
-an independent implementation, not Nintendo's exact filter, and cannot guarantee
+The filter analyzes every completed picture for contrast and rapid color/pattern
+changes, dims the entire picture immediately, then gradually restores brightness
+after a quiet period. It is an independent implementation, with no verified
+Nintendo parity, and cannot guarantee
 seizure safety or eliminate every trigger. Enable it before play with:
   "./Phase Distorter" --reduce-flashing
 
 Settings -> Debug offers infinite health and PSI/PP at 999/999, noclip, and
 Enemies ignore you (overworld pursuit/contact only; story battles still work).
+Player does max damage applies the source routine's maximum to successful player
+damage, preserving immunity and zero-damage rules. Save state snapshots lets you
+save named moments, load or refresh per-game lists and confirm deletion. Snapshot
+loads validate format, game content and checksums before replacing play.
 Search the teleport picker for any of 385 named areas, including interiors,
 dungeons and endgame maps; all scripted warps and door landings are also listed
 (1,472 choices). Select a place and press Teleport now. It fades fully to black

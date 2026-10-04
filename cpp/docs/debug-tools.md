@@ -4,6 +4,12 @@ Open **F1 → Debug**. All switches start off when a new game session starts;
 loading a snapshot restores its switches. Health and PSI/PP stay at 999/999, including the rolling battle targets.
 Noclip bypasses terrain and NPC collision. Enemies ignore you suppresses ordinary
 overworld pursuit/contact; story-triggered battles remain available.
+**Player does max damage** raises successful damage from Ness, Paula, Jeff or
+Poo against enemies to 65,535, the damage routine's unsigned 16-bit maximum.
+Physical, PSI and damaging item attacks use the same routine. Zero-damage hits,
+enemy attacks, guest companions, reflected hits against allies and the game's
+special enemy immunity rules retain their ordinary behavior. Character stats
+are unchanged, and turning the switch off immediately restores normal damage.
 
 The party editor chooses Ness, Paula, Jeff and Poo, retains guest companions,
 and requires one playable member. It runs the game's own add/remove routines so
@@ -35,8 +41,12 @@ saves. On Linux the default is
 game memory and artwork and stay local; they are not shipped with the project.
 Normal game saving on exit still uses the restored session's current SRAM.
 
-Snapshot format version 1 requires matching game content and a build supporting
-that format. Future changes to machine-state layout may require a new version.
+Snapshot format version 5 also preserves the uploaded ending soul departure
+progress, including when the display is resized after loading. Versions 1–4
+remain loadable; version 4 preserves the max-damage switch, and versions 1–3
+restore that switch as off. Snapshots require matching game content
+and a build supporting their format. Future machine-state changes may require
+a new version.
 The panel queues operations for the application between simulation advances;
 it never receives mutable game hardware or file paths from display names.
 
@@ -93,7 +103,10 @@ are modified, and the override is removed when the transition finishes.
 
 `game_debug_tests` checks catalogue coverage, both regional layouts, write-time
 HP/PP protection, enemy exclusion, timer/flag preservation, disabled behavior,
-party validation, transition gating and temporary-coordinate cleanup. Optional
+party validation, transition gating and temporary-coordinate cleanup. Max-damage
+checks run the actual regional damage store and HP reduction through both CPU
+backends, verify player/enemy/guest/reflection and disabled boundaries, and check
+snapshot restoration including older formats. Optional
 asset-backed routes in both games change the party to all four characters,
 Jeff alone, and all four again; teleport to Fourside, Threed, Fourside's hotel
 lobby, Stonehenge Base, Magicant, the Cave of the Past and Ness's room; then
@@ -126,3 +139,49 @@ widescreen/direct pictures and PCM at complete and partial-step captures:
 build/cpp/game_session_snapshot_reference --assets /path/to/game.ebpak \
   --replay cpp/tests/new_game.input --frames 14500 --require-gameplay
 ```
+
+`gameplay_runtime_differential --snapshot FILE` compares a saved desktop
+`.ebstate` (or a raw session snapshot) against the frozen original instruction
+runtime. It preserves the snapshot's timing policy, debug switches and viewport,
+and compares processor/hardware state, ordered writes, completed pictures and
+PCM. `--frames` counts additional hardware frames; input-script frame numbers
+remain absolute. Supply exactly one matching asset pack and omit timing overrides.
+The checker reads snapshots and never updates player saves.
+
+```sh
+build/cpp/gameplay_runtime_differential --assets /path/to/earthbound.ebpak \
+  --snapshot /path/to/snapshot-0123456789abcdef0123456789abcdef.ebstate \
+  --frames 3600 --input-script /path/to/recorded-input.txt
+```
+
+## Lost Underworld content route
+
+`lost_underworld_reference` is an optional imported-content regression, built
+with `EB_BUILD_TESTS`. It creates a synthetic save in memory and never reads or
+writes player save files. Both supported regional asset packs are accepted.
+
+```sh
+cmake --build build --target lost_underworld_reference
+build/cpp/lost_underworld_reference --assets /path/to/earthbound.ebpak \
+  --width 426 --output build/lost-underworld/us-native
+build/cpp/lost_underworld_reference --assets /path/to/mother2.ebpak \
+  --width 522 --output build/lost-underworld/jp-native
+```
+
+Add `--source --width 256` to use the original sprite-resource path. `--output`
+is optional and writes PPM captures beneath the supplied filename prefix.
+`--geyser 1303`, `--geyser 1304`, or `--geyser 1305` limits a diagnostic run to
+one geyser; `--interactions` runs only the village event and NPC/sign checks.
+The complete default route exercises all three geysers, five gifts, every
+local enemy species and all 20 talk/check interactions. The first blue geyser
+and southwest blue geyser restore HP/PP targets; the red geyser cures the tested
+ailments. A second eruption after the source lift's landing must leave a
+damaged party outside the strict contact radius unchanged.
+
+The actual source scheduler, map loaders, NPC activation, text parser, item
+awards and event flags run throughout. Enemy avoidance prevents unrelated
+battles from interrupting these assertions; temporary noclip keeps terrain
+from trapping traversal and approaches to wandering NPCs. Source-oracle tests
+separately cover terrain collision, ordinary enemy behavior/contact and battle
+entry. See [the verification record](../STATUS.md#lost-underworld-content-route--2026-10-04)
+for tested modes and evidence boundaries.

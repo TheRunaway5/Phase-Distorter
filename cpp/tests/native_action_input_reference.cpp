@@ -37,16 +37,19 @@ constexpr std::array contracts{
     Contract{0xc0a98b, 0xc0a96a, ActionRequestKind::CallEngine,
              NativeAction::CreateActor, 4},
     Contract{0xc0aa6e, 0xc0aa4d},
-    Contract{0xc0c48f, 0xc0c471},
+    Contract{0xc0c48f, 0xc0c471, ActionRequestKind::CallEngine,
+             NativeAction::EnemyDistanceBand},
     Contract{0xc0c6b6, 0xc0c698, ActionRequestKind::CallEngine,
              NativeAction::WithinLoadingArea},
     Contract{0xc0c7db, 0xc0c7bd, ActionRequestKind::CallEngine,
              NativeAction::SurfaceAtCurrentPosition},
-    Contract{0xc0d59b, 0xc0d563},
+    Contract{0xc0d59b, 0xc0d563, ActionRequestKind::CallEngine,
+             NativeAction::EnemyContactActive},
     Contract{0xc40015, 0xc40015, ActionRequestKind::CallEngine,
              NativeAction::RefreshFirstAndWithinArea},
     Contract{0xc46adb, 0xc44857},
-    Contract{0xc46b65, 0xc448e1},
+    Contract{0xc46b65, 0xc448e1, ActionRequestKind::CallEngine,
+             NativeAction::CaptureEnemyLeaderTarget},
     Contract{0xc46e46, 0xc44bca},
     Contract{0xc46e74, 0xc44bf8},
     Contract{0xc4ece7, 0xc4bf42},
@@ -208,7 +211,7 @@ int main(int argc, char **argv) {
           ++cases;
         }
       }
-      require(owner_services == 6 && opaque_services == 19 && cases == 100,
+      require(owner_services == 9 && opaque_services == 16 && cases == 100,
               "Exact input-contract inventory changed");
       const unsigned partial =
           assets.version == eb::GameVersion::JP ? 0xc424ca : 0xc4258c;

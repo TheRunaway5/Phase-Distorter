@@ -22,6 +22,11 @@ PresentationPipeline::PresentationPipeline(Time now, const DisplaySettings& sett
       presentation_clock_(now, presentation_rate),
       current_picture_{initial_frame.pixels, initial_frame.width, initial_frame.fixed_aspect} {
     last_presented_ = now;
+    if (reduce_flashing_ && !initial_frame.pixels.empty()) {
+        current_picture_.pixels = photosensitivity_filter_.apply(initial_frame.pixels, int(initial_frame.width),
+                                                                 DisplaySettings::native_height, true);
+        filtered_frame_ = initial_frame.frame;
+    }
 }
 
 bool PresentationPipeline::configure(const DisplaySettings& settings, double native_rate, double presentation_rate,
@@ -43,6 +48,8 @@ bool PresentationPipeline::configure(const DisplaySettings& settings, double nat
         reduce_flashing_ = settings.reduce_flashing;
         interpolator_.reset(); // Never mix filtered and unfiltered endpoints.
         scene_motion_.reset();
+        photosensitivity_filter_.reset();
+        filtered_frame_.reset();
     }
     interpolate_frames_ = settings.interpolate_frames;
     if (direct_rendering_ != settings.direct_rendering) {
@@ -82,17 +89,16 @@ void PresentationPipeline::restored_frame(PresentationFrame frame, Time now) {
 void PresentationPipeline::completed_frame(PresentationFrame frame) {
     if (reduce_flashing_) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, true, frame.effect_mask,
-                                                           frame.effect_reference),
+                                                           DisplaySettings::native_height, true),
                             frame.width, frame.fixed_aspect};
         filtered_frame_ = frame.frame;
     }
     if (high_rate_) {
         interpolator_.submit(reduce_flashing_ ? current_picture_.pixels : frame.pixels, frame.width,
                              DisplaySettings::native_height, frame.frame, frame.fixed_aspect, interpolate_frames_ && !direct_rendering_);
-        // A filtered flash must remain filtered on every host redraw. Return to
-        // direct artwork only after its canonical frame equals the safe picture.
-        const bool clean = !reduce_flashing_ || std::equal(frame.pixels.begin(), frame.pixels.end(), current_picture_.pixels.begin());
+        // Even a black phase must stay on the filtered path while exposure is
+        // reduced; identical black RGB doesn't mean the reduction has ended.
+        const bool clean = !reduce_flashing_ || !photosensitivity_filter_.dimmed();
         scene_motion_.submit(direct_rendering_ && clean ? frame.scene : nullptr);
     }
 }
@@ -100,8 +106,7 @@ void PresentationPipeline::completed_frame(PresentationFrame frame) {
 void PresentationPipeline::refresh_current_picture(PresentationFrame frame, bool force) {
     if (force) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, reduce_flashing_,
-                                                           frame.effect_mask, frame.effect_reference),
+                                                           DisplaySettings::native_height, reduce_flashing_),
                             frame.width, frame.fixed_aspect};
     } else if (!reduce_flashing_) {
         current_picture_ = {
@@ -110,8 +115,7 @@ void PresentationPipeline::refresh_current_picture(PresentationFrame frame, bool
         filtered_frame_.reset();
     } else if (filtered_frame_ != frame.frame) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, true, frame.effect_mask,
-                                                           frame.effect_reference),
+                                                           DisplaySettings::native_height, true),
                             frame.width, frame.fixed_aspect};
         filtered_frame_ = frame.frame;
     }

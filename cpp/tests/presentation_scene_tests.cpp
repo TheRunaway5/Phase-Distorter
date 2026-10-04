@@ -50,7 +50,7 @@ uint32_t rgb(unsigned color) {
     return 0xff000000 | (c(color & 31) << 16) | (c((color >> 5) & 31) << 8) | c((color >> 10) & 31);
 }
 void run_case(const eb::GameAssets& game, const char* name, unsigned combo, unsigned row, unsigned first, unsigned end,
-              int camera, unsigned width) {
+              int camera, unsigned width, bool natural_border = false) {
     const auto& source = eb::source_profile(game.version);
     const unsigned sector = source.rom_map_tileset_palette_sectors + row * 32;
     require((game.image[sector + first] >> 3) == combo &&
@@ -101,14 +101,15 @@ void run_case(const eb::GameAssets& game, const char* name, unsigned combo, unsi
     while (native->scanline_index() != 225)
         native->advance_cpu_cycles(1);
     const int left = int(first) * 256, right = int(end) * 256, span = right - left, margin = (int(width) - 256) / 2;
-    const int origin =
-        span >= int(width) ? std::clamp(camera - margin, left, right - int(width)) : left - (int(width) - span) / 2;
+    const int origin = natural_border ? camera - margin
+        : span >= int(width) ? std::clamp(camera - margin, left, right - int(width))
+                            : left - (int(width) - span) / 2;
     const auto pixels = bus->presentation_pixels();
     for (unsigned y = 0; y < 224; ++y)
         for (unsigned x = 0; x < width; ++x) {
             const int world_x = origin + int(x);
             const auto expected =
-                world_x < left || world_x >= right
+                !natural_border && (world_x < left || world_x >= right)
                     ? 0xff000000
                     : rgb(shade(block_at(game, source, combo, world_x, camera_y + int(y) + 1) % 15 + 1));
             if (pixels[y * width + x] != expected)
@@ -247,7 +248,6 @@ struct ForestPathFixture {
                 std::string(name) + ": camera path did not publish exact direct scene reconstruction");
         const int origin = int(std::lround(-direct->motions[1].x)) - int(width - 256) / 2;
         if (verify_pixels) {
-            const auto bounds = span(center_x, center_y);
             const auto pixels = renderer.presentation_pixels(bus->native_framebuffer);
             const auto raster = eb::rasterize_direct_scene({direct, {}});
             require(raster.size() == pixels.size() && std::equal(raster.begin(), raster.end(), pixels.begin()),
@@ -255,13 +255,11 @@ struct ForestPathFixture {
             for (unsigned y = 0; y < 224; ++y)
                 for (unsigned x = 0; x < width; ++x) {
                     const int wx = origin + int(x);
-                    const auto expected = wx < bounds[0] || wx >= bounds[1]
-                                              ? 0xff000000
-                                              : rgb(shade(block_at(game, source, combo, wx,
-                                                                   camera_y + int(y) + 1) % 15 + 1));
+                    const auto expected = rgb(shade(block_at(game, source, combo, wx,
+                                                             camera_y + int(y) + 1) % 15 + 1));
                     if (pixels[y * width + x] != expected)
-                        throw std::runtime_error(std::string(name) + ": eased frame sampled outside its authored map "
-                                                 "or clipped incorrectly at " + std::to_string(x) + "," +
+                        throw std::runtime_error(std::string(name) + ": natural map border sampled or clipped "
+                                                 "incorrectly at " + std::to_string(x) + "," +
                                                  std::to_string(y));
                 }
             ++checks;
@@ -286,15 +284,16 @@ void run_forest_path(const eb::GameAssets &game, const eb::native::WorldMap &map
     const int before_target = fixture.target(center_x, seam_y - 1), after_target = fixture.target(center_x, seam_y);
     const int old_jump = std::abs(after_target - before_target);
     require(old_jump > 4, std::string(name) + ": source path no longer reproduces the old sector camera snap");
+    const int natural_origin = center_x - 128 - int(width - 256) / 2;
     int origin = fixture.frame(center_x, seam_y - 1, true);
-    require(origin == before_target, std::string(name) + ": fresh forest camera did not start at its source target");
+    require(origin == natural_origin, std::string(name) + ": forest border forced a camera correction");
     int largest_step = 0;
     // Repeatedly crossing one sector edge must hold its accepted framing;
     // merely limiting each jump would still make the camera hunt left/right.
     for (unsigned i = 0; i < 12; ++i) {
         const int next = fixture.frame(center_x, seam_y - int(i & 1), i == 0 || i == 11);
         largest_step = std::max(largest_step, std::abs(next - origin));
-        require(next == before_target, std::string(name) + ": brief forest seam dither changed camera framing");
+        require(next == natural_origin, std::string(name) + ": brief forest seam dither changed camera framing");
         origin = next;
     }
     for (unsigned i = 0; i < 128; ++i) {
@@ -304,9 +303,76 @@ void run_forest_path(const eb::GameAssets &game, const eb::native::WorldMap &map
     }
     require(largest_step <= 4,
             std::string(name) + ": one-pixel forest movement produced a correction above 4 pixels");
-    require(origin == after_target, std::string(name) + ": stable forest camera never settled at its authored target");
+    require(origin == natural_origin && largest_step == 0,
+            std::string(name) + ": forest storage seam changed camera framing");
     std::cout << name << ": width=" << width << ", old one-pixel seam jump=" << old_jump
-              << "px, largest correction=" << largest_step << "px, settled origin=" << origin << '\n';
+              << "px, largest correction=" << largest_step << "px, natural origin=" << origin << '\n';
+}
+
+void run_cutscene_bounds(const eb::GameAssets &game, unsigned width) {
+    ForestPathFixture f(game, "Authored cutscene canvas", 6, width);
+    f.frame(4368, 2048, true);
+    const unsigned camera_mode = game.version == eb::GameVersion::JP ? 0x9b56 : 0x98a5;
+    const int margin = int(width - 256) / 2;
+    // UNKNOWN_C46698/C466A8 set mode 2 for an entity-directed story camera.
+    // The stage shares ordinary map storage with neighboring rooms: extending
+    // that storage must not reveal a cave alongside the authored black stage.
+    for (unsigned effect : {1u, 2u, 0u}) {
+        store(*f.bus, camera_mode, effect == 0 ? 2 : 0);
+        f.bus->write_byte(0x2123, effect == 1 ? 3 : 0); // inverted BG1 window
+        f.bus->write_byte(0x2125, effect == 2 ? 0x30 : 0); // inverted color window
+        f.bus->write_byte(0x212e, effect == 1 ? 1 : 0);
+        f.bus->write_byte(0x2130, effect == 2 ? 0x80 : 0);
+        ++f.bus->completed_frames;
+        for (unsigned y = 0; y < 224; ++y) {
+            // A scanline aperture opens to both native edges at its equator,
+            // reproducing the unwanted horizontal strips in the prayer scene.
+            const unsigned inset = effect ? unsigned(std::abs(int(y) - 112)) / 2 : 0;
+            f.bus->write_byte(0x2126, inset);
+            f.bus->write_byte(0x2127, 255 - inset);
+            const auto current = f.view();
+            f.renderer.begin_scanline(current, y);
+            const eb::PpuPixel empty{};
+            for (unsigned x = 0; x < 256; ++x)
+                f.bus->native_framebuffer[y * 256 + x] =
+                    f.renderer.compose_presentation_pixel(current, int(x), y, empty, false);
+            const auto ram = f.bus->work_ram;
+            f.renderer.render_presentation_margins(f.view(), y);
+            f.renderer.capture_direct_scanline(f.view(), y);
+            require(ram == f.bus->work_ram, "Cutscene presentation changed source scene state");
+        }
+        const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+        for (unsigned y = 0; y < 224; ++y)
+            for (unsigned x = 0; x < width; ++x)
+                require(pixels[y * width + x] ==
+                            (int(x) >= margin && int(x) < margin + 256
+                                 ? f.bus->native_framebuffer[y * 256 + x - margin] : 0xff000000),
+                        effect == 0 ? "Scripted stage exposes neighboring scenery"
+                                    : "Prayer aperture leaks scenery beyond the authored screen");
+        if (effect == 0) {
+            const auto direct = f.renderer.direct_scene();
+            require(direct && eb::rasterize_direct_scene({direct, {}}) ==
+                                 std::vector<std::uint32_t>(pixels.begin(), pixels.end()),
+                    "Direct rendering does not preserve the authored cutscene canvas");
+            eb::DirectSceneMotion motion;
+            motion.submit(direct);
+            f.frame(4372, 2048);
+            motion.submit(f.renderer.direct_scene());
+            for (double fraction : {0.0, .25, .5, .75, 1.0}) {
+                const auto interpolated = eb::rasterize_direct_scene(motion.sample(fraction));
+                for (unsigned y = 0; y < 224; ++y)
+                    for (unsigned x = 0; x < width; ++x)
+                        if (int(x) < margin || int(x) >= margin + 256)
+                            require(interpolated[y * width + x] == 0xff000000,
+                                    "Interpolated story camera leaks scenery outside its authored canvas");
+            }
+        }
+    }
+    store(*f.bus, camera_mode, 0);
+    f.bus->write_byte(0x2123, 0); f.bus->write_byte(0x2125, 0);
+    f.bus->write_byte(0x212e, 0); f.bus->write_byte(0x2130, 0);
+    f.frame(4368, 2048, true); // ordinary wide map returns immediately
+    std::cout << "Cutscene camera/layer iris/color iris: width=" << width << " PASS\n";
 }
 } // namespace
 int main(int argc, char** argv) {
@@ -314,11 +380,34 @@ int main(int argc, char** argv) {
         if (argc != 3 || std::string(argv[1]) != "--assets")
             throw std::runtime_error("Usage: presentation_scene_tests --assets FILE");
         const auto game = eb::load_game_assets(argv[2], eb::asset_profiles());
+        for (unsigned width : {398u, 522u, 796u, 1024u}) run_cutscene_bounds(game, width);
         run_case(game, "Fourside tunnel left", 5, 26, 22, 25, 5632, 400);
         run_case(game, "Fourside tunnel right", 5, 26, 22, 25, 6144, 400);
         run_case(game, "Fourside tunnel ultrawide", 5, 26, 22, 25, 5888, 1024);
         run_case(game, "Desert road row77 west", 8, 77, 1, 23, 256, 800);
         run_case(game, "Desert road row78 east", 8, 78, 1, 23, 5632, 1024);
+        for (unsigned width : {398u, 522u, 796u, 1024u}) {
+            for (const bool east : {false, true}) {
+                run_case(game, "Threed northern tunnel", 5, 0, 24, 27,
+                         east ? 6656 : 6144, width);
+                run_case(game, "Threed southern tunnel", 5, 79, 23, 31,
+                         east ? 7680 : 5888, width);
+                run_case(game, "Threed to desert tunnel", 5, 79, 17, 22,
+                         east ? 5376 : 4352, width);
+                run_case(game, "Fourside tunnel", 5, 26, 22, 25,
+                         east ? 6144 : 5632, width);
+                run_case(game, "Fourside bridge tunnel", 5, 67, 30, 32,
+                         east ? 7936 : 7680, width);
+                run_case(game, "Desert traffic row77", 8, 77, 1, 23,
+                         east ? 5632 : 256, width);
+                run_case(game, "Desert traffic row78", 8, 78, 1, 23,
+                         east ? 5632 : 256, width);
+                run_case(game, "Sanctuary cave natural border", 26, 1, 12, 16,
+                         east ? 3840 : 3072, width, true);
+                run_case(game, "Threed forest natural border", 3, 70, 18, 26,
+                         east ? 6400 : 4608, width, true);
+            }
+        }
         const eb::native::WorldMap map(game.image, eb::native::world_map_layout(game.version));
         for (unsigned width : {400u, 448u, 512u, 800u, 1024u}) {
             run_forest_path(game, map, "Peaceful Rest Valley forest", 6, 4368, 2048,

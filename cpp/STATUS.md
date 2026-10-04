@@ -1,9 +1,157 @@
 # Port verification record
 
-This records the independent C++ port's evidence, updated 2026-09-30. Build and
+This records the independent C++ port's evidence, updated 2026-10-04. Build and
 launch instructions are in the standalone [project README](../README.md). The implementation and all
 new tests live in `cpp/`; the pre-existing C runtime and decompilation tools are
 not inputs to this build.
+
+## Scene-aware widescreen borders — 2026-10-04
+
+Forested borders in Twoson, Threed, Saturn Valley, Peaceful Rest Valley and
+Winters, and authored cave/room voids, now follow the source camera without
+sector-span correction or clipping. Out-of-area tiles still use the current
+area's metatile zero. Road tunnels to Threed/Fourside, desert traffic and
+unclassified combinations retain their existing boundaries and easing. Screen
+windows keep their authored framing, and the snapshot layout is unchanged.
+
+The camera-path suite passes 27,568 checks across both regional profiles and
+eight widths from 258 to 1024 columns, including every natural-border
+combination, both edges, narrow spans, repeated captures and the existing
+snapshot/window/arrival checks. Imported map fixtures pass 4,437 checks per
+region: both ends of five road tunnels, both desert traffic rows, Threed forest
+and sanctuary cave borders, and real Peaceful Rest/Winters forest seams at
+widescreen and ultrawide widths. Forest seams introduce zero correction.
+Linux and Windows binaries under Wine pass both suites. All 11 related Linux
+rendering, sprite, hardware and snapshot CTests pass; the hardware fixture now
+uses the constrained tunnel combination and separately verifies visible natural
+metatile-zero continuation without changing the canonical center or memory.
+
+Six deterministic US sessions compare the prior and current renderer after
+2,182 frames each, with real OpenGL captures at 2560×720, CRT off/on. Forest and
+cave framing changes; Threed/Fourside tunnel and desert traffic pictures remain
+pixel-identical. Native-picture, audio and SRAM hashes, CPU/SPC register text,
+instruction counts and clocks match between each pair. The imported assets and
+user save are read only; temporary scene coordinates/flags and debug traversal
+settings exist only in memory. These are software-rendered captures and bounded
+replays, not a manual full-game playthrough or native Windows GPU verification.
+
+Both desktop applications and release ZIPs are refreshed. Each extracted
+package passes a 1,200-frame 32:9 headless boot for both imported games;
+Windows runs use Wine. ZIP integrity and packaged executable identity checks
+pass, and the README's sanctuary CRT off/on pair reflects the new framing.
+
+## Lost Underworld content route — 2026-10-04
+
+The optional `lost_underworld_reference` uses the user's imported game assets
+and a synthetic four-character save held only in memory. It runs the current
+source-derived gameplay scheduler with both original and host-owned sprite
+resources; it is not a standalone native-engine scene. Coverage includes:
+
+- All 29 authored placements, duplicate suppression, the village gate's
+  appearance flag, five encounter tables, and small sprites for all four party
+  members.
+- All three geysers over 5,000 hardware frames each: idle/eruption poses,
+  visible native artwork, repeated eruptions, quake and party-lift tasks, blue
+  HP/PP target recovery, red ailment recovery, and a later eruption outside the
+  strict four-pixel contact radius that must not heal or cure the party.
+- All five gift boxes: the actual authored reward, opened flag, and no second
+  reward after reloading the area and checking the opened box.
+- Natural spawn-strip traversal that admits Wetnosaur, Chomposaur and Ego Orb,
+  with observed changes in live enemy coordinates.
+- The cage-opening event, Tendakraut consumption, permanent gate/boss flags,
+  and all 20 remaining Tenda, talking-stone, phone, hotel/shop and sign
+  interactions. Each must read its authored dialogue entry and close its
+  window; the talking stone must set its first-conversation flag.
+
+The route passes in EarthBound and Mother 2, using original sprites at 256
+columns and native sprite resources at 426 and 522 columns respectively.
+Software captures of all three geyser eruptions and roaming enemies were
+inspected. No production gameplay defect was reproduced on these paths.
+Independent original-code comparisons also pass in both regions for NPC
+placement/talk/check/map text, sprite poses, terrain collision, doors, enemy
+spawning/behavior/contact and battle entry. The 12 related registered CTests
+pass.
+
+Debug teleports retain the game's fade/map-loading/activation sequence. The
+fixture uses enemy avoidance to keep unrelated battles from interrupting its
+interaction assertions, and temporarily uses noclip for traversal/approach.
+Ordinary collision, pursuit, contact and battle entry are covered by the
+separate source comparisons. This is automated software-rendering and bounded
+interaction evidence, not a full manual playthrough, every shop/save/story
+branch, or native Windows GPU validation. Reproduction commands are in
+[the debug-tool guide](docs/debug-tools.md#lost-underworld-content-route).
+
+## Wall text and prepared sprite visibility — 2026-10-04
+
+Lumine Hall displays the source's 30-column scrolling wall patch without
+extending the rest of the prepared message beyond its sides. The direct scene
+cache uses the displayed tile entry, including that patch. Prepared stationary
+NPCs and props retain their complete artwork through the original viewport;
+active identities, appearance flags, scene gates and water-overlay requirements
+continue to suppress ineligible previews. Neither repair advances game scripts
+or changes source memory.
+
+The pop-in follow-up adds source-verified previews for fixed-surface props,
+present/trash containers and sanctuary boss markers. Opened and defeated flags
+remain authoritative. Source CREATE can publish an NPC identity one frame before
+selecting its image; the preview now bridges that exact birth state while
+selected, explicitly hidden, relocated and changed-script actors keep ownership.
+Adding preview families does not change the existing source retention policy.
+
+The 548-check bus fixture covers both regions, both half-tile text phases, four
+widths and three camera positions, with exact direct-scene reconstruction. The
+imported renderer fixture checks all 1,582 authored placements per region at
+widths 256, 398, 522, 800 and 1024, both outer edges, native viewport seams and
+source draw limits. It exercises selected artwork through the ordinary draw
+callback or far-edge continuation, plus every eligible dormant flag variant:
+297,150 catalog edge cases across the two regions. Further checks cover gifts,
+trash containers, streetlights and two sanctuary markers while scrolling,
+actual CREATE/first-pose handoff, opened/defeated states, hiding, relocation,
+resource-only readiness, vertical overscan and fractional-frame rendering.
+The source oracle compares 1,533 first-pose candidates and all four boss marker
+rotations per region. Resource readiness compares 4,290 source selector calls,
+296 sprite groups and 210,834 shared authored variants per region. Existing NPC
+and enemy preload source references also pass in both regions.
+
+Linux and Windows launchers and all test targets rebuild successfully. Both
+platforms pass all 227 non-optional CTests; the 38 optional CTest references are
+then explicitly run with US and Japanese packs and pass. An additional 87
+unregistered reference programs, four native asset/catalog programs, the
+presentation scene fixture and nine runtime/GPU probes are exercised. All
+rendering, sprite, resource-readiness and preload checks pass on Linux and the
+Windows build under Wine, including 9,000-frame ultrawide demo, gameplay, tick
+and host-resource comparisons. The source-backed presentation fixture passes
+3,583 checks per region and the native world scene passes GPU readback.
+Broad testing corrected stale expectations for the implemented US dialogue
+width helper, three implemented enemy owner services, the current reachable
+appearance-site inventory and Windows text line endings. Gameplay implementation
+did not change for those checks. Windows test-only compiler DLLs are staged in
+the ignored build directory; release executables do not require them.
+
+The broader run still has two unresolved results. The independent native-engine
+`native_world_map_load_reference` fails in both regions at map (4096,5120),
+flags zero and flavor 1: source loading creates two enemies while native loading
+creates none, and RNG state differs. Its fixture and implementation are unchanged
+by this rendering repair. The Japanese `native_sprite_steady_reference`
+`--same-clock-state` route cannot reach its source-ready event within 18,000
+frames, with either the existing save or a valid temporary regional save; that
+route remains unverified. The US route passes. The 900-frame session-composition
+probe passes in both regions/timing modes but covers title/menu state with zero
+native gameplay batches; longer host-resource probes provide separate gameplay
+evidence. These results prevent a claim that every repository check passes.
+
+Both launcher binaries and release ZIPs are refreshed. ZIP CRCs, every payload
+hash and extracted executable identity pass; extracted packages each complete
+1,200 headless frames with both regional packs and a configured 32:9 aspect,
+with save and preferences persistence disabled. Root and release checksum
+manifests verify successfully.
+
+An asset-backed runtime capture places the first sanctuary marker in a
+1024-column margin, and a native-width Threed capture retains the streetlight.
+The user confirmed the post-boss Lumine Hall wall repair. This covers imported
+artwork, bounded scripted paths and captures; it does not establish every story
+branch, moving-actor lifetime, natural boss playthrough or native Windows GPU
+behavior. Unsupported dormant programs still require actual source actors.
 
 The latest Linux launcher now selects host-owned overworld sprite resources and
 an independent actor-clock policy. Both regional demo cycles and same-clock
@@ -363,8 +511,9 @@ See [source navigation](docs/source-navigation.md).
   pixels. Reference gamma is 100; doubled reference columns were verified
   identical before reduction. Mother 2's original fonts and language execute
   through its own compiled source profile.
-- Presentation clamps use the contiguous matching tileset-sector interval.
-  They shift only the wider rendered view; narrow regions receive side borders.
+- Presentation clamps in constrained scenes use the contiguous matching
+  tileset-sector interval. Natural forest/cave borders follow the source camera.
+  Clamps shift only the wider rendered view; narrow regions receive side borders.
   This is a new presentation policy, not an original game-camera restriction.
   Source analysis and named tunnel/desert coordinates are documented in
   [docs/presentation-scenes.md](docs/presentation-scenes.md).

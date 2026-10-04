@@ -29,16 +29,16 @@ void require(bool pass, const std::string &message) {
     if (!pass) throw std::runtime_error(message);
 }
 
-std::vector<std::uint8_t> sectors(eb::GameVersion region) {
+std::vector<std::uint8_t> sectors(eb::GameVersion region, unsigned combination = 1) {
     std::vector<std::uint8_t> bytes(0x300000);
     const auto base = eb::source_profile(region).rom_map_tileset_palette_sectors;
     // Same map spans shift one sector to the right across a forest seam.
-    bytes[base + 32 + 1] = bytes[base + 32 + 2] = 8;
-    bytes[base + 64 + 2] = bytes[base + 64 + 3] = 8;
+    bytes[base + 32 + 1] = bytes[base + 32 + 2] = combination << 3;
+    bytes[base + 64 + 2] = bytes[base + 64 + 3] = combination << 3;
     // A broad outdoor area, then a corridor that narrows from both sides.
     for (unsigned row : {12u, 13u})
         for (unsigned column = row == 12 ? 4 : 6; column < (row == 12 ? 16u : 14u); ++column)
-            bytes[base + row * 32 + column] = 8;
+            bytes[base + row * 32 + column] = combination << 3;
     // Distant same-map and distinct-map rooms exercise arrival resets.
     for (unsigned row : {20u, 21u})
         for (unsigned column = 20; column < 24; ++column)
@@ -50,9 +50,9 @@ struct Fixture {
     unsigned width;
     std::unique_ptr<eb::SnesBus> bus;
     eb::GameSceneRenderer renderer;
-    Fixture(eb::GameVersion version, unsigned presentation_width)
+    Fixture(eb::GameVersion version, unsigned presentation_width, unsigned combination = 1)
         : region(version), width(presentation_width),
-          bus(std::make_unique<eb::SnesBus>(sectors(version), version)) {
+          bus(std::make_unique<eb::SnesBus>(sectors(version, combination), version)) {
         bus->write_byte(0x2100, 15);
         bus->write_byte(0x2105, 1);
         bus->write_byte(0x2107, 0x39);
@@ -61,7 +61,7 @@ struct Fixture {
         // pixels equal; the captured background motion exposes camera framing.
         bus->write_byte(0x212c, 1);
         bus->native_framebuffer.fill(0xff000000);
-        word(eb::source_profile(region).wram_loaded_map_tile_combination, 1);
+        word(eb::source_profile(region).wram_loaded_map_tile_combination, combination);
         word(eb::source_profile(region).wram_first_entity, 0xffff);
         camera(384, 140);
         renderer.set_presentation_width(view(), width);
@@ -161,6 +161,26 @@ struct Fixture {
     }
 };
 
+void natural_borders(eb::GameVersion region, unsigned width) {
+    for (unsigned combination : {2u, 3u, 6u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u,
+                                 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u}) {
+        Fixture f(region, width, combination);
+        const int margin = int(width - 256) / 2;
+        // Both forest edges, a narrowing span, and repeated vertical seam
+        // crossings must follow the source camera even outside the map span.
+        for (const auto xy : std::array<std::array<int, 2>, 8>{{
+                 {384, 143}, {384, 144}, {385, 150}, {384, 143},
+                 {1024, 1472}, {3840, 1472}, {1408, 1548}, {1408, 1568}}}) {
+            const int origin = f.frame(xy[0], xy[1]);
+            check(origin == xy[0] - margin,
+                  "Natural border forced camera correction, combination=" + std::to_string(combination) +
+                      ": " + f.context());
+            check(f.render() == origin,
+                  "Repeated natural-border capture changed camera position: " + f.context());
+        }
+    }
+}
+
 void row_boundary(eb::GameVersion region, unsigned width) {
     Fixture f(region, width);
     int previous = f.frame(384, 140), largest_step = 0;
@@ -225,6 +245,90 @@ void ordinary_edges(eb::GameVersion region, unsigned width) {
         }
         check(largest_step <= 4,
               "Ordinary map edge moved the displayed world by " + std::to_string(largest_step) + "px: " + f.context());
+    }
+}
+
+void centered_selection(eb::GameVersion region, unsigned width, bool in_battle) {
+    for (int camera : {4 * 256, 16 * 256 - 256}) {
+        Fixture f(region, width);
+        const auto &source = eb::source_profile(region);
+        f.word(source.wram_battle_mode_flag, in_battle);
+        if (in_battle) {
+            f.bus->work_ram[source.wram_battle_backgrounds.layer1] = 1;
+            f.bus->work_ram[source.wram_battle_backgrounds.layer1 + 1] = 4;
+        }
+        f.bus->write_byte(0x2109, 0x70); // Centered BG3 menu/HP panel.
+        f.bus->write_byte(0x210c, 2);
+        f.bus->write_byte(0x212c, 0x15);
+        f.bus->palette_ram[2] = 0xe0; f.bus->palette_ram[3] = 3;
+        f.bus->palette_ram[258] = 31; f.bus->palette_ram[259] = 0;
+        for (unsigned row = 0; row < 8; ++row) {
+            f.bus->video_ram[0x4010 + row * 2] = 255;
+            f.bus->video_ram[row * 2] = 255;
+        }
+        f.bus->video_ram[0xe000 + (6 * 32 + 15) * 2] = 1;
+        for (unsigned i = 0; i < 128; ++i) f.bus->object_attributes[i * 4 + 1] = 240;
+        // An unmatched OAM indicator belongs to the native UI aperture. It
+        // must stay with BG3 while the world alone shifts at either boundary.
+        f.bus->object_attributes[0] = 124; f.bus->object_attributes[1] = 52;
+        f.bus->object_attributes[3] = 0x30;
+        for (unsigned row = 48; row < 56; ++row)
+            for (unsigned x = 120; x < 128; ++x) f.bus->native_framebuffer[row * 256 + x] = 0xff00ff00;
+        for (unsigned row = 52; row < 60; ++row)
+            for (unsigned x = 124; x < 132; ++x) f.bus->native_framebuffer[row * 256 + x] = 0xffff0000;
+        f.camera(camera, 12 * 128 - 64);
+        if (!in_battle) {
+            f.word(source.wram_first_entity, 0);
+            f.word(source.wram_entity_next, 0xffff);
+            f.word(source.wram_entity_draw_callback, source.entity_draw_callbacks.screen_space);
+            f.word(source.wram_entity_screen_coordinates.x, 72);
+            f.word(source.wram_entity_screen_coordinates.y, 81);
+            f.word(source.wram_entity_spritemap_pointers.low, 0x4800);
+            f.word(source.wram_entity_spritemap_pointers.high, 0x7e);
+            for (unsigned row = 0; row < 8; ++row) f.bus->video_ram[32 + row * 2 + 1] = 255;
+            f.bus->palette_ram[260] = 0; f.bus->palette_ram[261] = 0x7c;
+            const std::array<std::uint8_t, 5> part{0, 1, 0x30, 0, 0x80};
+            std::copy(part.begin(), part.end(), f.bus->work_ram.begin() + 0x4800);
+            std::copy(part.begin(), part.end(), f.bus->work_ram.begin() + 0x4820);
+            f.bus->object_attributes[4] = 72; f.bus->object_attributes[5] = 80;
+            f.bus->object_attributes[6] = 1; f.bus->object_attributes[7] = 0x30;
+            f.bus->object_attributes[8] = 200; f.bus->object_attributes[9] = 96;
+            f.bus->object_attributes[10] = 1; f.bus->object_attributes[11] = 0x30;
+            f.renderer.begin_sprite_frame(1);
+            f.renderer.capture_entity_draw(f.view(), 0);
+            f.renderer.capture_sprite_emit(f.view(), 0x7e4800, 72, 81, 1, 2);
+            // A captured ripple/overlay has no actor identity, but it still
+            // owns its emitted OAM ordinal and follows the scenery.
+            f.renderer.capture_sprite_emit(f.view(), 0x7e4820, 200, 97, 2, 3);
+            f.renderer.seal_sprite_frame(f.view());
+            f.renderer.capture_oam_upload(f.view(), 1);
+        }
+        const auto frame = f.capture();
+        if (!in_battle)
+            require(bool(frame), "Selection fixture could not capture direct scene: " + f.context());
+        const unsigned margin = (width - 256) / 2;
+        const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+        bool centered = true;
+        for (unsigned x = 0; x < width; ++x)
+            centered &= (pixels[52 * width + x] == 0xffff0000) == (x >= margin + 124 && x < margin + 132);
+        check(centered, "Selection indicator shifted away from centered UI in " +
+            std::string(in_battle ? "battle" : "overworld") + ": " + f.context());
+        check(pixels[48 * width + margin + 120] == 0xff00ff00,
+              "BG3 selection panel moved with world framing: " + f.context());
+        if (!in_battle) check(std::any_of(frame->quads.begin(), frame->quads.end(), [&](const auto &quad) {
+            return quad.object && quad.motion == 0 && quad.x == float(margin + 124) && quad.y == 52;
+        }), "Direct selection indicator shifted away from centered UI: " + f.context());
+        if (!in_battle) {
+            const int shift = int(std::lround(-frame->motions[1].x)) - camera;
+            for (const auto [x, y] : {std::pair{72, 80}, std::pair{200, 96}}) {
+                const int output = x + int(margin) - shift;
+                check(pixels[y * width + output] == 0xff0000ff,
+                      "Centering UI detached a captured world sprite from scenery: " + f.context());
+                check(std::any_of(frame->quads.begin(), frame->quads.end(), [&](const auto &quad) {
+                    return quad.object && quad.x == float(output) && quad.y == y;
+                }), "Direct world sprite stopped following map framing: " + f.context());
+            }
+        }
     }
 }
 
@@ -372,9 +476,12 @@ int main() {
     try {
         for (auto region : {eb::GameVersion::US, eb::GameVersion::JP})
             for (unsigned width : {258u, 296u, 360u, 400u, 448u, 512u, 800u, 1024u}) {
+                natural_borders(region, width);
                 row_boundary(region, width);
                 seam_dither_and_settle(region, width);
                 ordinary_edges(region, width);
+                centered_selection(region, width, false);
+                centered_selection(region, width, true);
                 native_movement(region, width);
                 corridor_width_change(region, width);
                 arrivals_reset(region, width);

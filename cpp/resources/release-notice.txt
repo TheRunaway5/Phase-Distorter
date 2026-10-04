@@ -6,7 +6,7 @@ disassembly maintained at https://github.com/Herringway/ebsrc, upstream revision
 tools, hardware model, importer and frontend come from this independent port.
 No blanket license is assigned to upstream or third-party work by this package.
 
-This binary ZIP contains no retail ROM, extracted gameplay asset pack, save, or
+This runnable bundle contains no retail ROM, extracted gameplay asset pack, save, or
 map artwork or dialogue. The debug teleport picker contains place names and
 landing coordinates; its source references are documented in the full source
 snapshot at cpp/docs/debug-tools.md. The supplied Saturn icon is application artwork.
@@ -21,7 +21,8 @@ Third-party licenses included here:
   source is in cpp/external/spc_dsp/ in the full source snapshot, with the port's
   build configuration for rebuilding with modifications.
 - SDL2: zlib license; licenses/SDL2-LICENSE.txt and corresponding provenance.
-  Linux runtime provenance and additional GCC runtime notices are in lib/.
+  Linux runtime provenance and additional GCC runtime notices are in lib/
+  (launchers/linux/lib/ in the combined launcher bundle).
 
 EarthBound and Mother 2 identify the supported original games. Phase Distorter
 is independent and does not claim affiliation with their rights holders.

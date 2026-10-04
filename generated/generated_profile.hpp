@@ -78,7 +78,11 @@ struct SourceProfile {
         std::uint32_t remove_party_character;
         std::uint32_t fade_out;
         std::uint32_t wait_frames;
+        std::uint32_t damage_argument_store_end;
     } gameplay_routines;
+    struct BattleState {
+        std::uint32_t current_attacker;
+    } battle_state;
     struct DmaQueue {
         std::uint32_t write_index;
         std::uint32_t last_completed_index;

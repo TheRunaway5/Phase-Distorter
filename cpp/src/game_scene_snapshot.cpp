@@ -1,5 +1,6 @@
 #include "eb/game_scene_renderer.hpp"
 #include "eb/scene_snapshot_archive.hpp"
+#include <cmath>
 
 namespace eb {
 void DirectSceneCapture::snapshot_io(SnapshotArchive &ar) {
@@ -23,6 +24,7 @@ void GameSceneRenderer::bind_snapshot_resources(std::shared_ptr<native::SpriteRe
 }
 
 void GameSceneRenderer::snapshot_io(SnapshotArchive &ar) {
+    if (ar.loading()) presentation_robot_ending_ = false; // Derived from the restored source actors.
     ar(direct_capture_, direct_world_tiles_, presentation_width_, requested_presentation_width_,
        presentation_frame_aspect_, presentation_framebuffer_, presentation_effects_enabled_,
        presentation_effect_mask_, presentation_effect_reference_, presentation_reference_palette_,
@@ -37,6 +39,10 @@ void GameSceneRenderer::snapshot_io(SnapshotArchive &ar) {
         a(v.x, v.y, v.tile, v.attributes, v.large, v.identity, v.anchor_x, v.anchor_y,
           v.host_image, v.host_part, v.host_palette, v.host_generation, v.host_orientation,
           v.native_owned, v.fragment_pixels, v.stationary_prepared);
+        if (a.format_version() >= 5) a(v.ending_departure);
+        else if (a.loading()) v.ending_departure = -1;
+        if (a.loading() && (!std::isfinite(v.ending_departure) || v.ending_departure < -1 || v.ending_departure > 1))
+            throw std::runtime_error("Invalid snapshot ending departure");
         if (a.loading() && v.host_image && v.host_part >= v.host_image->parts.size())
             throw std::runtime_error("Invalid snapshot sprite part");
     };

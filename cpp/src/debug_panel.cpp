@@ -225,7 +225,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     // This is independent of widescreen and never changes game
                     // timing. The frontend applies it to the completed picture.
                     ImGui::Checkbox("Photosensitivity filter", &settings.reduce_flashing);
-                    ImGui::TextWrapped("Softens flashing battle and lightning effects while preserving ordinary artwork and movement. Does not guarantee seizure safety.");
+                    ImGui::TextWrapped("Automatically dims the whole picture during strong flashes or rapid flicker, then restores brightness gradually. Does not guarantee seizure safety.");
                     ImGui::Spacing();
                     if (ImGui::Button("Restore game display")) settings = DisplaySettings{};
                     ImGui::Spacing();
@@ -313,6 +313,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     ImGui::Checkbox("Infinite PSI / PP (999/999)", &impl_->game_settings.infinite_pp);
                     ImGui::Checkbox("Noclip", &impl_->game_settings.noclip);
                     ImGui::Checkbox("Enemies ignore you", &impl_->game_settings.enemies_ignore);
+                    ImGui::Checkbox("Player does max damage", &impl_->game_settings.player_max_damage);
                     ImGui::TextWrapped("Enemies ignore you prevents overworld pursuit and contact battles. Story battles still work.");
                     ImGui::Separator();
                     const auto& state=diagnostics.game_debug;

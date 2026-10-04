@@ -39,6 +39,25 @@ void verify_stationary_programs(const ActionScriptData &scripts, GameVersion ver
     idle.call(jp ? 0xc0c698 : 0xc0c6b6);
     idle.byte(0x0b); idle.word(retention);
     idle.call(jp ? 0xc020ff : 0xc020f1); idle.byte(0);
+    Expected fixed_surface{scripts, scripts.entry(7)};
+    fixed_surface.byte(0x25); fixed_surface.word(stationary);
+    fixed_surface.byte(0x3b); fixed_surface.byte(0); fixed_surface.byte(0x39);
+    fixed_surface.call(jp ? 0xc0a658 : 0xc0a679); fixed_surface.byte(0);
+    fixed_surface.call(first_pose); fixed_surface.byte(0x19); fixed_surface.word(retention);
+    Expected box{scripts, scripts.entry(9)};
+    box.byte(0x25); box.word(stationary);
+    box.byte(0x3b); box.byte(0); box.byte(0x39); box.call(surface);
+    box.call(jp ? 0xc0c335 : 0xc0c353); // Closed/down or opened/up from its event flag.
+    box.byte(0x19); box.word(retention);
+    Expected marker{scripts, scripts.entry(693)};
+    initialize(marker);
+    const auto rotation = marker.at;
+    for (unsigned direction : {0u, 2u, 4u, 6u}) {
+        marker.call(jp ? 0xc0aa4d : 0xc0aa6e); marker.byte(direction); marker.byte(0);
+        marker.byte(6); marker.byte(8);
+    }
+    marker.call(jp ? 0xc0c698 : 0xc0c6b6);
+    marker.byte(0x0b); marker.word(rotation); marker.byte(0x19); marker.word(scripts.entry(35));
     Expected facing{scripts, scripts.entry(605)};
     initialize(facing); facing.byte(7);
     const unsigned child = (facing.at & 0xff0000) | scripts.byte(facing.at) |
@@ -96,6 +115,9 @@ bool StationaryNpcSprites::supports(NpcId npc) const {
     if (npc >= state_->npcs.size()) return false;
     const auto &definition = state_->npcs.definition(npc);
     return supports_stationary_npc_preview(definition.type, definition.script);
+}
+bool StationaryNpcSprites::supports(NpcId npc, unsigned current_script) const {
+    return supports(npc) && state_->npcs.definition(npc).script == current_script;
 }
 std::optional<NpcPlacement> StationaryNpcSprites::placement(NpcId npc) const {
     return supports(npc) ? state_->placements[npc] : std::nullopt;
@@ -166,12 +188,20 @@ std::vector<StationaryNpcSprite> StationaryNpcSprites::prepare(NpcRectangle boun
         const auto origin = state_->collision.origin(
             {std::uint16_t(candidate.placement.x), std::uint16_t(candidate.placement.y)}, sprite.shape);
         const auto left = state_->collision.edge(*preparation.area_, origin, sprite.shape, CollisionEdge::Left);
-        const auto flags = state_->collision.edge(*preparation.area_, origin, sprite.shape, CollisionEdge::Right, left);
+        const auto flags = definition.script == 7 ? 0u :
+            state_->collision.edge(*preparation.area_, origin, sprite.shape, CollisionEdge::Right, left);
         SpriteAppearance appearance(state_->sprites, definition.sprite);
-        // All three verified programs publish this exact first pose without
-        // moving. Script606's later animation belongs to its eventual active
-        // owner; readiness neither runs that timeline nor consumes randomness.
-        appearance.select_four(definition.direction, 0, flags);
+        unsigned direction = definition.direction;
+        if (definition.type == NpcType::ItemBox) {
+            const unsigned flag = definition.event_flag;
+            if (flag && (flag - 1) / 8 >= visibility.event_flags.size())
+                throw std::invalid_argument("Missing item-box opened flag state");
+            const bool opened = flag && (visibility.event_flags[(flag - 1) / 8] & (1u << ((flag - 1) & 7)));
+            direction = opened ? 0 : 4;
+        } else if (definition.script == 693) direction = 0;
+        // Verified programs publish this first pose without moving. Later
+        // animation belongs to the active owner; preparation runs no timeline.
+        appearance.select_four(direction, 0, flags);
         const auto &selected = *appearance.displayed();
         result.push_back({candidate.placement,
             state_->sprites->acquire(selected.sprite, selected.pose, selected.surface, selected.format),

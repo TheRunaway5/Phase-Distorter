@@ -46,14 +46,18 @@ void GameDebug::install_hooks() {
     } else {
         bus_.debug_read_wram = {};
     }
-    if (settings_.infinite_hp || settings_.infinite_pp) {
-        bus_.debug_write_wram = [this](unsigned address, std::uint8_t value) { return filter_stat_write(address, value); };
+    if (settings_.infinite_hp || settings_.infinite_pp || settings_.player_max_damage) {
+        bus_.debug_write_wram = [this](unsigned address, std::uint8_t value) {
+            return filter_stat_write(address, filter_damage_write(address, value));
+        };
     } else {
         bus_.debug_write_wram = {};
     }
 }
 
 void GameDebug::snapshot_io(SnapshotArchive &archive) {
+    if (archive.format_version() >= 4) archive(settings_.player_max_damage);
+    else if (archive.loading()) settings_.player_max_damage = false;
     archive(settings_.infinite_hp, settings_.infinite_pp, settings_.noclip, settings_.enemies_ignore,
             ready_, status_, original_max_, captured_max_, party_attempts_);
     bool pending = bool(pending_request_);
@@ -100,6 +104,30 @@ void GameDebug::snapshot_io(SnapshotArchive &archive) {
         install_hooks();
         install_teleport_hook();
     }
+}
+
+std::uint8_t GameDebug::filter_damage_write(unsigned address, std::uint8_t value) const {
+    if (!settings_.player_max_damage || !ready_ || !read_word(source_.wram_battle_mode_flag) ||
+        cpu_.emulation_mode || (cpu_.status_register & 0x30) || !cpu_.x_index ||
+        cpu_.program_counter != source_.gameplay_routines.damage_argument_store_end) return value;
+    // CALC_DAMAGE stages X in its direct-page VIRTUAL04 word before testing
+    // immunity, reducing HP and printing that same damage. The instruction
+    // advances PC before its two writes, in both source execution backends.
+    const unsigned low = std::uint16_t(cpu_.direct_page + 4);
+    if (address != low && address != std::uint16_t(low + 1)) return value;
+    const auto& battler = source_.battler_layout;
+    const unsigned attacker = read_word(source_.battle_state.current_attacker);
+    const unsigned target = cpu_.accumulator;
+    if (attacker < battler.table_address || attacker >= battler.table_address + 6 * battler.entry_size ||
+        (attacker - battler.table_address) % battler.entry_size ||
+        target < battler.table_address + 6 * battler.entry_size || target >= battler.table_address + 32 * battler.entry_size ||
+        (target - battler.table_address) % battler.entry_size) return value;
+    const unsigned id = read_word(attacker + battler.id);
+    if (id < 1 || id > 4 || bus_.work_ram[attacker + battler.ally_or_enemy] ||
+        bus_.work_ram[attacker + battler.npc_id] ||
+        bus_.work_ram[source_.party_state.members + (attacker - battler.table_address) / battler.entry_size] != id ||
+        bus_.work_ram[target + battler.ally_or_enemy] != 1) return value;
+    return 0xff; // Maximum unsigned 16-bit damage; battle text zero-extends it.
 }
 
 std::uint8_t GameDebug::filter_stat_write(unsigned address, std::uint8_t value) const {

@@ -346,36 +346,36 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         for(auto& tab:tabbar->Tabs)if(std::string(ImGui::TabBarGetTabName(tabbar,&tab))=="Debug")debug_tab=&tab;
         require(debug_tab,"Missing Debug tab");
         click(window,panel,draw,int(tabbar->BarRect.Min.x+debug_tab->Offset+debug_tab->Width/2),int(tabbar->BarRect.GetCenter().y));
-        // Four parallel checkboxes at the top of the Debug tab.
+        // Gameplay checkboxes at the top of the Debug tab.
         const auto row=ImGui::GetFrameHeight()+ImGui::GetStyle().ItemSpacing.y;
         const auto first_y=tabbar->BarRect.Max.y+ImGui::GetStyle().ItemSpacing.y+ImGui::GetFrameHeight()/2;
-        for(unsigned i=0;i<4;++i)click(window,panel,draw,int(window_layout->Pos.x+30),int(first_y+i*row));
+        for(unsigned i=0;i<5;++i)click(window,panel,draw,int(window_layout->Pos.x+30),int(first_y+i*row));
         const auto cheats=panel.game_settings();
-        require(cheats.infinite_hp && cheats.infinite_pp && cheats.noclip && cheats.enemies_ignore,
-                "Debug checkboxes did not enable all four gameplay tools");
+        require(cheats.infinite_hp && cheats.infinite_pp && cheats.noclip && cheats.enemies_ignore && cheats.player_max_damage,
+                "Debug checkboxes did not enable all gameplay tools");
         panel.set_game_settings({});
         draw(); draw();
         const auto restored = panel.game_settings();
-        require(!restored.infinite_hp && !restored.infinite_pp && !restored.noclip && !restored.enemies_ignore,
+        require(!restored.infinite_hp && !restored.infinite_pp && !restored.noclip && !restored.enemies_ignore && !restored.player_max_damage,
             "Snapshot restoration did not replace the Debug GUI cheat settings");
         panel.set_game_settings(cheats);
         draw(); draw();
         require(!panel.take_game_action(),"Toggling a cheat emitted an unrelated party/teleport command");
-        click(window,panel,draw,80,300);
+        click(window,panel,draw,80,300+int(row));
         auto command=panel.take_game_action();
         require(command && command->kind==eb::GameDebugRequest::Kind::Teleport && command->destination==1,
                 "Teleport button did not emit the selected destination");
         require(!panel.take_game_action(),"Teleport command was emitted twice");
-        click(window,panel,draw,104,358); // Paula
-        click(window,panel,draw,172,358); // Jeff
-        click(window,panel,draw,233,358); // Poo
-        click(window,panel,draw,80,387);
+        click(window,panel,draw,104,358+int(row)); // Paula
+        click(window,panel,draw,172,358+int(row)); // Jeff
+        click(window,panel,draw,233,358+int(row)); // Poo
+        click(window,panel,draw,80,387+int(row));
         command=panel.take_game_action();
         require(command && command->kind==eb::GameDebugRequest::Kind::Party &&
                 command->party==std::array<bool,4>{true,true,true,true},"Party button did not emit the selected membership");
         require(!panel.take_game_action(),"Party command was emitted twice");
         if(!prefix.empty())save(prefix+"-game-debug.ppm",capture());
-        click(window,panel,draw,150,270);
+        click(window,panel,draw,150,270+int(row));
         SDL_Event text{};text.type=SDL_TEXTINPUT;text.text.windowID=SDL_GetWindowID(window);
         SDL_strlcpy(text.text.text,"Area: Magicant / Sea of Eden",sizeof(text.text.text));
         panel.process_event(text);draw();draw();
@@ -385,7 +385,7 @@ void verify(SDL_Window* window, SDL_GLContext context, const std::string& prefix
         require(choices,"Searchable destination list did not open");
         if(!prefix.empty())save(prefix+"-teleport-search.ppm",capture());
         click(window,panel,draw,int(choices->Pos.x+80),int(choices->Pos.y+ImGui::GetTextLineHeight()/2));
-        click(window,panel,draw,80,300);
+        click(window,panel,draw,80,300+int(row));
         command=panel.take_game_action();
         require(command && command->kind==eb::GameDebugRequest::Kind::Teleport && command->destination==1149,
                 "Searching for an endgame area did not select its teleport destination");

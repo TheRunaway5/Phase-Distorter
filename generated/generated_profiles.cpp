@@ -72,6 +72,10 @@ constexpr SourceProfile profile_us{
         .remove_party_character = 0xc229bb,
         .fade_out = 0xc08814,
         .wait_frames = 0xc0878b,
+        .damage_argument_store_end = 0xc27ebb,
+    },
+    .battle_state = {
+        .current_attacker = 0xa970,
     },
     .dma_queue = {
         .write_index = 0x0,
@@ -232,6 +236,10 @@ constexpr SourceProfile profile_jp{
         .remove_party_character = 0xc228b3,
         .fade_out = 0xc0880a,
         .wait_frames = 0xc08781,
+        .damage_argument_store_end = 0xc27e52,
+    },
+    .battle_state = {
+        .current_attacker = 0xab72,
     },
     .dma_queue = {
         .write_index = 0x0,

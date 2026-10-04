@@ -21,17 +21,13 @@ void require(bool condition, const char* message) {
 struct Canvas {
     unsigned width;
     std::vector<std::uint32_t> pixels;
-    std::vector<std::uint8_t> mask;
-    std::vector<std::uint32_t> reference;
     explicit Canvas(unsigned width = 64, std::uint32_t color = 0xff203040)
         : width(width), pixels(width * height, color) {}
     eb::PresentationFrame view(std::uint64_t frame, double aspect = 0) const {
-        return {pixels, width, aspect, frame, mask, reference};
+        return {pixels, width, aspect, frame, {}, {}};
     }
     void flashing() {
         std::fill(pixels.begin(), pixels.end(), 0xffffffff);
-        mask.assign(pixels.size(), 1);
-        reference.assign(pixels.size(), 0xff000000);
     }
 };
 
@@ -155,11 +151,12 @@ void callbacks_and_picture_lifetime() {
 
     settings.reduce_flashing = true;
     pipeline.configure(settings, eb::FramePacer::frame_rate, 300, Time{});
+    pipeline.completed_frame(canvas.view(1));
     canvas.flashing();
     for (std::uint64_t frame = 2; frame <= 4; ++frame)
         pipeline.completed_frame(canvas.view(frame));
     pipeline.simulation_finished(canvas.view(4), 3, Time{});
-    require(pipeline.current_picture().pixels[0] == 0xff181818,
+    require(pipeline.current_picture().pixels[0] == 0xff404040,
             "Long DMA did not filter every completed frame exactly once");
     require(!pipeline.simulation_due(Time{} + eb::FramePacer::period() * 3),
             "Multiple completed frames lost simulation clock debt");
@@ -328,21 +325,26 @@ void direct_scene_boundary() {
             "Recovery from unsupported scene retained stale movement");
     settings.reduce_flashing = true;
     pipeline.configure(settings, 60, 300, Time{});
-    canvas.flashing(); artwork(5, 3);
+    artwork(5, 3);
+    canvas.flashing(); artwork(6, 4);
     require(!pipeline.picture(Time{}).scene && pipeline.picture(Time{}).pixels[0] != 0xffffffff,
             "Direct artwork bypassed the flashing filter");
+    std::fill(canvas.pixels.begin(), canvas.pixels.end(), 0xff000000);
+    artwork(7, 5);
+    require(!pipeline.picture(Time{}).scene,
+            "A black phase of an active dimming sequence re-enabled unfiltered direct artwork");
 }
 
 void filter_toggles_and_partial_failures() {
     Canvas canvas;
-    canvas.flashing();
     eb::DisplaySettings settings;
     settings.frame_limit = 300;
     settings.reduce_flashing = true;
-    Pipeline pipeline(Time{}, settings, eb::FramePacer::frame_rate, 300, true);
+    Pipeline pipeline(Time{}, settings, eb::FramePacer::frame_rate, 300, true, canvas.view(0));
+    canvas.flashing();
     pipeline.completed_frame(canvas.view(1));
     pipeline.simulation_finished(canvas.view(1), 1, Time{});
-    require(pipeline.current_picture().pixels[0] == 0xff080808, "First filtered frame changed");
+    require(pipeline.current_picture().pixels[0] == 0xff404040, "First detected flash was not dimmed immediately");
     settings.reduce_flashing = false;
     pipeline.configure(settings, eb::FramePacer::frame_rate, 300, Time{} + 1ms);
     require(!pipeline.presentation_due(Time{} + 1ms), "Filter toggle reused an incompatible interpolation endpoint");
@@ -354,10 +356,10 @@ void filter_toggles_and_partial_failures() {
     pipeline.configure(settings, eb::FramePacer::frame_rate, 300, Time{} + 2ms);
     pipeline.completed_frame(canvas.view(3));
     pipeline.simulation_finished(canvas.view(3), 1, Time{} + 2ms);
-    require(pipeline.current_picture().pixels[0] == 0xff080808,
+    require(pipeline.current_picture().pixels[0] == 0xffffffff,
             "Disabled filter history leaked into re-enabled output");
 
-    Canvas partial(96, 0xff123456);
+    Canvas partial(96, 0xffffffff);
     pipeline.refresh_after_error(partial.view(3, 4.0 / 3));
     require(copy(pipeline.current_picture()) == partial.pixels && pipeline.current_picture().width == 96,
             "Exception snapshot reused stale pixels after a resize in the same hardware frame");
@@ -365,8 +367,8 @@ void filter_toggles_and_partial_failures() {
 
     Pipeline headless(Time{}, settings, eb::FramePacer::frame_rate, 300, false);
     headless.simulation_finished(canvas.view(0), 0, Time{});
-    require(headless.current_picture().pixels[0] == 0xff080808,
-            "Step limit before the first frame omitted the filtered partial picture");
+    require(headless.current_picture().pixels[0] == 0xffffffff,
+            "First partial picture acquired a startup fade without a prior frame");
 }
 
 void restore_discards_future() {
@@ -394,6 +396,46 @@ void restore_discards_future() {
         if (high) require(!pipeline.simulation_due(now), "Restoring retained simulation debt");
     }
 }
+
+void automatic_filter_cadence() {
+    for (unsigned width : {256u, 398u, 522u}) {
+        for (int fps : {60, 144, 300}) {
+            Canvas canvas(width, 0xff202020);
+            eb::DisplaySettings settings;
+            settings.frame_limit = fps;
+            settings.reduce_flashing = true;
+            settings.interpolate_frames = false;
+            Pipeline pipeline(Time{}, settings, 60, fps, true, canvas.view(0));
+            eb::PhotosensitivityFilter reference;
+            reference.apply(canvas.pixels, width, height, true);
+            auto expected = canvas.pixels;
+            for (std::uint64_t frame = 1; frame <= 150; ++frame) {
+                std::fill(canvas.pixels.begin(), canvas.pixels.end(),
+                          frame >= 70 || frame % 2 ? 0xffffffff : 0xff202020);
+                const auto raw = canvas.pixels;
+                const auto filtered = reference.apply(raw, width, height, true);
+                expected.assign(filtered.begin(), filtered.end());
+                pipeline.completed_frame(canvas.view(frame));
+                require(copy(pipeline.current_picture()) == expected,
+                        "Hardware callback missed a flash or advanced recovery incorrectly");
+                require(canvas.pixels == raw, "Filtering changed the producer's native picture");
+                // Three game frames can finish before one host presentation.
+                if (frame % 3) continue;
+                const auto now = Time{} + std::chrono::milliseconds(frame * 1000 / 60);
+                pipeline.configure(settings, 60, fps, now);
+                pipeline.simulation_finished(canvas.view(frame), 3, now);
+                for (int redraw = 0; redraw < 5; ++redraw) {
+                    require(copy(pipeline.picture(now)) == expected,
+                            "Host redraw/cap changed the dimming result");
+                    pipeline.presented(now);
+                    pipeline.simulation_finished(canvas.view(frame), 0, now);
+                    require(copy(pipeline.current_picture()) == expected,
+                            "Repeated same-frame refresh advanced detector/recovery history");
+                }
+            }
+        }
+    }
+}
 } // namespace
 
 int main() {
@@ -408,6 +450,7 @@ int main() {
         direct_scene_boundary();
         filter_toggles_and_partial_failures();
         restore_discards_future();
+        automatic_filter_cadence();
         std::cout
             << "Presentation pipeline: native/headless identity, independent caps, VRR changes, callback ownership, "
                "DMA frames, filter toggles, scene changes and partial/error captures passed\n";

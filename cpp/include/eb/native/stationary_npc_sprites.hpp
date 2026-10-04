@@ -45,10 +45,10 @@ class StationaryNpcPreparation {
     NpcResourcePreparationFailure resource_failure_ = NpcResourcePreparationFailure::None;
 };
 
-// Graphical readiness only for three verified position-stationary programs
-// (8, 605 and 606). Their inactive position/initial pose is invariant; wandering,
-// enemy, gift-box and arbitrary scripted actors are deliberately not inferred.
-// Active NPC identities always win, including hidden/unselected active actors.
+// Graphical readiness for verified position-stationary programs (7,8,9,605,
+// 606,693). Item boxes select their opened pose from authoritative flags.
+// Wandering, enemy and arbitrary scripted actors are not inferred. Callers
+// suppress active identities, except a verified CREATE awaiting its first pose.
 // No logical actor is created, ticked, retained or deleted by this owner.
 class StationaryNpcSprites {
   public:
@@ -58,6 +58,7 @@ class StationaryNpcSprites {
                          NpcSpriteReadinessLimits resource_limits = {},
                          bool restore_threed_npcs = true);
     bool supports(NpcId npc) const;
+    bool supports(NpcId npc, unsigned current_script) const;
     // Authored identity for an eligible stationary actor; shared by prepared
     // artwork and its eventual logical actor without allocating gameplay state.
     std::optional<NpcPlacement> placement(NpcId npc) const;

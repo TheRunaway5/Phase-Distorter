@@ -1,5 +1,39 @@
-# Unreleased
+# Phase Distorter 0.2 — 2026-10-04
 
+Draft release notes covering the original September 27 v0.1 release through
+October 4 are in [the complete v0.2 notes](releases/Phase-Distorter-0.2-patch-notes.md).
+
+- Keep the post-Giygas robot corpses in their original centred framing and carry
+  departing souls completely off the widescreen display before source release.
+  Preserve the original scene timing, native picture, and snapshot continuation.
+
+- Replace selective flash suppression with automatic whole-picture dimming:
+  analyze every completed frame for luminance, palette and pattern changes,
+  dim immediately during flashes, and restore brightness after a quiet period.
+  This replicates the requested behavior with independently chosen parameters;
+  exact Wii U equivalence remains unverified.
+- Detect small repeated SNES palette steps in Kraken, Starman and Giygas
+  backgrounds, with asset-backed PSI/background/status checks and fixtures for
+  the requested lightning, white-burst and warp-flash mechanisms.
+
+- Keep scripted cutscene stages and prayer apertures inside their authored
+  screen, including fixed black borders during direct-render interpolation.
+- Respect source NPC ownership after map loading and during cutscenes, removing
+  duplicate bodies and noninteractive previews. Preserve initial artwork until
+  the first source draw so newly created Saturn Valley actors do not blink out.
+
+- Let natural forest borders and cave/room voids extend without widescreen
+  camera correction, while retaining the boundaries around desert traffic
+  and the short road tunnels to Threed and Fourside.
+- Prepare present/trash-container poses and sanctuary boss markers throughout
+  widescreen margins, and preserve prop artwork between source creation and
+  first source draw to remove activation pop-in.
+
+- Keep Lumine Hall's scrolling message inside its authored wall patch, including
+  the direct scene renderer.
+- Draw eligible prepared NPCs and decorations across the original viewport as
+  well as widescreen margins, fixing clipped streetlights and missing props
+  when widescreen is disabled.
 - Restore Threed's Investigator after Master Belch and keep the Ghost Enthusiast
   available afterward, with their original placements, sprites and dialogue in
   both EarthBound and Mother 2.
@@ -32,6 +66,23 @@
 - Add `--replay-only` for desktop replay validation independent of physical gameplay buttons.
 - Serialize virtual-display UI tests to avoid parallel Xvfb display-number races.
 
+## Native component migration
+
+- Add independent native world, map/collision/streaming, actor/action, camera,
+  overlay, enemy/contact and encounter-effect components.
+- Add native party, inventory, meters/RNG, dialogue/fonts/windows/menus,
+  Talk/Check/gifts, growth, credits and battle startup/target/turn components.
+- Add a native save codec and Continue-prefix work with source comparisons,
+  sanitizer checks and CPU-free linkage audits. The desktop still uses the
+  compatibility runtime; full native session integration remains in progress.
+
+## CRT and audio delivery
+
+- Add saved flat CRT-Lottes Fast effects without temporal blending.
+- Add a 64 ms audio jitter reserve and underrun recovery, bounded catch-up
+  presentation starvation, scanline tile-row decoding, disabled-layer pruning
+  and startup CRT warmup while preserving generated PCM and game state.
+
 ## Source organization
 
 - Name the main CPU, audio CPU, DSP, registers, clock units and memory regions explicitly.
@@ -50,7 +101,7 @@
 - Add a saved, default-off VRR pacing toggle in Display settings and --vrr / --no-vrr overrides.
 
 
-- Add a Debug tab with infinite HP/PP at 999/999, noclip, enemy avoidance,
+- Add a Debug tab with infinite HP/PP at 999/999, maximum player damage, noclip, enemy avoidance,
   party selection, and a searchable teleport picker covering all 385 named
   areas plus every scripted warp and door landing (1,472 choices).
 - Hide the fullscreen top bar until the pointer reaches the top edge; reveal
@@ -62,6 +113,10 @@
 - Consolidate native executables and runtime libraries under `launchers/` and
   downloadable archives under `releases/`, removing duplicate root files.
 - Package releases from those canonical inputs without recreating root aliases.
+
+- Build v0.2 Linux/Windows bundles and a combined versioned launcher folder/ZIP,
+  including draft patch notes, version records, notices, manifests and checksums.
+- Add `refresh_launchers` and have the Linux build helper refresh its executable.
 
 # Phase Distorter 0.1 — 2026-09-27
 

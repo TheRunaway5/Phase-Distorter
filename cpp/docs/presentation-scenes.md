@@ -32,20 +32,89 @@ The source instead enforces a graphics-region boundary in
   `LOADED_MAP_TILE_COMBO` at WRAM `$436E`. Metatile zero is source data, not a
   guarantee of a flat black color.
 
-Use these original visibility rules for extra picture area. A presentation-only
-view adjustment can stop at the contiguous matching-sector interval, while the
-game's own camera remains unchanged. Such a wider-view clamp is a port policy;
-it should not be described as a pre-existing native camera constraint. Collision
+Use these original visibility rules for extra picture area. The display follows
+the source camera through natural borders, using metatile zero outside the
+matching combination rather than exposing a different area's artwork. A
+presentation-only view adjustment remains for constrained scenery, stopping at
+the contiguous matching-sector interval while the game's own camera remains
+unchanged. Such a wider-view clamp is a port policy; it should not be described
+as a pre-existing native camera constraint. Collision
 walls, hotspot triggers, and NPC spawn boundaries are not interchangeable with
 graphics-region boundaries.
+
+Entity-directed story cameras (`UNKNOWN_C46698`/`C466A8`, camera mode 2)
+and active layer/color windows retain the authored 256-pixel canvas with black
+side margins. Their neighboring map storage can contain another room using the
+same combination, and extending window-edge membership can expose horizontal
+strips outside a prayer iris. This presentation policy applies to software and
+direct scene capture, leaves source-owned actors visible, and resets immediately
+when ordinary control/window state returns. Other camera modes and ordinary
+forest/cave borders retain their wide view.
+Direct scenery and actor quads also clip in display coordinates after
+interpolation; changing between the ordinary map and the authored canvas resets
+motion history even when both stages share a tileset combination.
+
+The choice uses authored combination IDs, shared by both regional sector grids
+and `src/data/map/tileset_table.asm`, rather than collision or the current fade's
+pixel colors:
+
+| Border policy | Combinations | Reason |
+| --- | --- | --- |
+| Natural border; no camera correction or span clipping | 2, 3, 6, 13 | Twoson/Threed forest borders, Saturn Valley/Peaceful Rest terrain and Winters forest borders are safe to extend with their own metatile zero |
+| Natural border; no camera correction or span clipping | 10–12, 14–17, 19–26 | Rooms and caves have authored void borders; the underground cave combination 26 includes sanctuary rooms |
+| Constrained matching-sector span | 5, 8 | Road tunnels to Threed/Fourside and desert traffic must retain the framing that conceals their short endpoints |
+| Constrained matching-sector span | Other combinations | Preserve the existing policy until their border art is classified |
+
+Transparent cave/room borders and the opaque underground border are classified
+from imported arrangements and graphics. No live black-pixel heuristic is used:
+a fade cannot turn a road or tunnel into an unconstrained scene. Each natural
+scene clears prior correction/history immediately, including repeated captures
+within one logical frame. Existing snapshot layout remains unchanged.
 
 Screen-space window effects retain the source framing. A scenery-only boundary
 adjustment would move actors independently of a fixed layer mask or color window.
 In the pyramid title demo, crossing a sector-row boundary moved the party outside
 the circular aperture even though the source camera still followed correctly.
-Active main/subscreen layer windows and color-window effects therefore bypass
-the presentation boundary adjustment. Out-of-area map tiles still use the
-authored lookup rules. Unmasked scenes retain the wider-view boundary policy.
+Active main/subscreen layer windows and color-window effects therefore use the
+authored canvas instead of a presentation boundary adjustment. Unmasked scenes
+use the scene's selected border policy.
+
+Prayer apertures retain the original oval's centre and movement in the native
+256-by-224 picture. The display's side margin translates the people and aperture
+together; the host must not recenter the opening on the wider viewport or choose
+a different nearby NPC. An off-centre source focus therefore remains off-centre
+by the same amount within the authored picture.
+`native_stationary_npc_render_reference --prayer-focus <asset-pack>` verifies
+this against the 4:3 renderer using imported people and the original
+`UNKNOWN_C0B149` oval routine (JP `C0B128`). It compares every pixel through
+opening/closing, moving subjects, four display widths, layer/color windows,
+and ordinary/entity-directed camera modes, including display resizing during
+the sequence. Direct rendering must fall back to the scanline window renderer.
+These are deterministic renderer fixtures, not a natural replay of every prayer
+story sequence.
+
+The post-Giygas robot stage also retains its original framing. `EEVENT5` moves
+to teleport `$D7`, whose centre is `(200,6064)`, and displays the four robot
+corpse NPCs 1306–1309. Detect those actual source actors in their authored region
+to keep the camera and scenery in the centred 256-pixel canvas, even when the
+ordinary boundary policy would move this combination-zero stage.
+`EVENT_551`–`554` send sprite group 258 left to world X zero. That endpoint is
+only 72 pixels left of the native picture, so it lies inside sufficiently wide
+displays. During their final departure leg, presentation adds leftward travel
+across the extra margin, proportional to progress toward that source endpoint.
+The spirits therefore leave the whole wide display before source release.
+Their initial rise, the later Saturn Valley return, the source coordinates,
+velocities, event waits, release timing, and native picture stay unchanged.
+Software composition and direct capture use the same uploaded progress; direct
+motion anchors include the extra travel, and snapshots preserve it independently
+of display width. Scenery remains clipped to the original stage while spirits
+can cross its black margins.
+`native_stationary_npc_render_reference --robot-ending <asset-pack>` uses the
+real corpse placements/artwork and outgoing soul scripts' sampled positions.
+It checks all four spirits at five widths in US/JP, unchanged native pixels and
+WRAM, complete departure, fractional motion, phase isolation, resizing, and
+renderer snapshot restoration. This is a source-backed rendering fixture;
+natural playback of the full ending has not been verified by this check.
 
 Use current `BG1_X_POS`/`BG1_Y_POS` at WRAM `$31`/`$33`, reconciled with the actual
 latched PPU scroll phase. The seemingly suitable `BG12_POSITION_X/Y_COPY` at
@@ -111,12 +180,14 @@ trailing blank columns. `C48A6D` selects a source offset of
 and uploads that patch through `C3F705` at tile coordinates `(808,588)`, wrapped
 to `(40,12)` in BG1's 64 by 32 tilemap at VRAM word `$3800`.
 
-The existing prepared maps therefore contain additional text columns that a
-wider presentation can expose without accelerating the scroll or changing its
-script. Do not simply sample beyond the current 30-column VRAM patch; that area
-contains other map tiles. Match the displayed patch against the prepared maps
-to select the uploaded phase, because the source variable can advance before
-the upload becomes visible.
+Keep the displayed text inside that authored 30-column wall patch. The rest
+of the prepared message supplies later scroll phases; exposing it all at once
+would draw letters beyond the wall. Match the displayed patch against the
+prepared maps to select the uploaded phase, because the source variable can
+advance before the upload becomes visible. Within the patch, retain letters
+that fall into a widescreen margin. Outside it, use the ordinary world tiles.
+The direct scene cache must key decoded tiles by this displayed entry rather
+than the unmodified wall arrangement.
 
 The active entity's `ENTITY_SCRIPT_TABLE` entry at WRAM `$0A62` is **event ID
 353**, not an instruction pointer. It has 30 word entries. Script pointer tables
@@ -182,6 +253,17 @@ metadata, and battle-exit fades in both regional profiles. The optional
 `battle_animation_tests --assets FILE` checks every frame of all 34 imported PSI
 sequences in both layouts at width 400, plus selected frames at width 1024.
 These are rendering fixtures, not a claim of naturally playing every battle.
+
+Selection windows, their text, and battle HP/PP panels retain their original
+positions inside the centered 256-pixel aperture. Unmatched OAM indicators also
+stay in that aperture when overworld boundary framing shifts the scenery;
+captured actors and emitted world overlays continue to follow the map. The
+scanline and direct renderers use the same OAM ownership check.
+`widescreen_camera_path_tests` checks both map edges, selection panels/indicators,
+and captured actor/overlay alignment in US/JP at eight widths. The optional
+`native_dialogue_menu_reference` additionally compares actual source-generated
+selection-window pixels at widths 360, 400, 522 and 1024 under overworld and
+battle presentation policy, including empty margins and unchanged game data.
 
 ## Verification boundary
 
