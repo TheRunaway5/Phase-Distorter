@@ -15,13 +15,32 @@ public:
     void reset(Time now, double rate) {
         tick_ = draw_ = now;
         draw_period_ = rate > 0 ? std::chrono::duration_cast<Duration>(std::chrono::duration<double>(1 / rate)) : Duration::zero();
+        arrival_ = now;
+        interval_ = FramePacer::period();
     }
     void resume(Time now) {
-        if (now - tick_ > std::chrono::milliseconds(250)) tick_ = draw_ = now;
+        if (now - tick_ > std::chrono::milliseconds(250)) {
+            tick_ = draw_ = arrival_ = now;
+            interval_ = FramePacer::period();
+        }
     }
     bool simulation_due(Time now) const { return now >= tick_; }
-    void simulated(uint64_t frames) { tick_ += FramePacer::period() * frames; }
-    bool presentation_due(Time now) const { return !simulation_due(now) && (draw_period_ == Duration::zero() || now >= draw_); }
+    // The gap estimate rejects stalls by clamping; a multi-frame step is rare
+    // catch-up, for which the native period is the best next-gap prior.
+    void simulated(Time now, std::uint64_t frames) {
+        tick_ += FramePacer::period() * frames;
+        if (frames == 1) {
+            const auto interval = now - arrival_;
+            const auto period = FramePacer::period();
+            if (interval >= period / 4 && interval <= period * 4)
+                interval_ += (interval - interval_) / 8;
+        } else {
+            interval_ = FramePacer::period();
+        }
+        arrival_ = now;
+    }
+    // A draw entering the clearance before the tick deadline is deferred past it.
+    bool presentation_due(Time now) const { return !simulation_due(now) && now + clearance() <= tick_ && (draw_period_ == Duration::zero() || now >= draw_); }
     void presented(Time now) {
         if (draw_period_ == Duration::zero()) { draw_ = now; return; }
         draw_ += draw_period_;
@@ -29,11 +48,19 @@ public:
         if (draw_ <= now) draw_ += draw_period_ * ((now - draw_) / draw_period_ + 1);
     }
     double fraction(Time now) const {
-        return std::clamp(1.0 + double((now - tick_).count()) / FramePacer::period().count(), 0.0, 1.0);
+        return std::clamp(double((now - arrival_).count()) / double(interval_.count()), 0.0, 1.0);
     }
-    Time wake(Time now) const { return draw_period_ == Duration::zero() ? now : std::min(tick_, draw_); }
+    Time wake(Time now) const {
+        if (draw_period_ != Duration::zero() && draw_ > now) return std::min(tick_, draw_);
+        // Inside the clearance a present is suppressed; the next event is the tick.
+        return now + clearance() <= tick_ ? now : (tick_ > now ? tick_ : now);
+    }
 private:
+    // Swap plus loop work completes inside this window before a tick deadline.
+    static constexpr Duration clearance() { return std::chrono::milliseconds(3); }
     Time tick_{}, draw_{};
     Duration draw_period_{};
+    Time arrival_{};
+    Duration interval_{};
 };
 } // namespace eb

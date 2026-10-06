@@ -82,7 +82,7 @@ int main() {
             const auto end=now+std::chrono::seconds(10);
             while(now<end) {
                 clock.resume(now);
-                if(clock.simulation_due(now)) { ++ticks; clock.simulated(1); now+=std::chrono::microseconds(100); }
+                if(clock.simulation_due(now)) { ++ticks; clock.simulated(now,1); now+=std::chrono::microseconds(100); }
                 if(clock.presentation_due(now)) { ++draws; now+=std::chrono::microseconds(100); clock.presented(now); }
                 now=std::max(now,clock.wake(now));
             }
@@ -93,13 +93,32 @@ int main() {
         }
         eb::PresentationClock high(Time{},300);
         require(high.simulation_due(Time{}),"First game tick was not due");
-        high.simulated(2);
+        high.simulated(Time{},2);
         require(!high.simulation_due(Time{}+eb::FramePacer::period()),"Multi-frame DMA lost simulation time");
-        high.reset(Time{},0); high.simulated(1);
+        high.reset(Time{},0); high.simulated(Time{},1);
         require(high.fraction(Time{}+eb::FramePacer::period()/2)>.499 && high.fraction(Time{}+eb::FramePacer::period()/2)<.501,
             "Presentation fraction does not track game cadence");
-        high.resume(Time{}+std::chrono::seconds(5)); high.simulated(1);
+        high.resume(Time{}+std::chrono::seconds(5)); high.simulated(Time{}+std::chrono::seconds(5),1);
         require(!high.simulation_due(Time{}+std::chrono::seconds(5)),"Host suspension created a game tick backlog");
+        // A late tick stretches the fraction over the measured gap.
+        eb::PresentationClock late(Time{},120);
+        const auto arrived=Time{}+eb::FramePacer::period()+std::chrono::milliseconds(2);
+        late.simulated(arrived,1);
+        require(late.fraction(arrived)==0,"Interpolation did not anchor at the actual tick arrival");
+        require(late.fraction(arrived+eb::FramePacer::period())<1,
+            "Interpolation froze at the ideal grid point instead of spanning the measured gap");
+        require(late.fraction(arrived+eb::FramePacer::period()*2)==1,
+            "Interpolation fraction escaped its endpoints");
+        // A draw slot inside the clearance is deferred past the tick.
+        eb::PresentationClock gated(Time{},120);
+        gated.simulated(Time{},1);
+        gated.presented(Time{});
+        const auto near_deadline=Time{}+eb::FramePacer::period()-std::chrono::milliseconds(1);
+        require(!gated.presentation_due(near_deadline),"Draw slot entered the swap clearance before the tick deadline");
+        const auto tick_arrival=Time{}+eb::FramePacer::period();
+        gated.simulated(tick_arrival,1);
+        require(gated.presentation_due(tick_arrival+std::chrono::microseconds(100)),
+            "Deferred draw slot was not presented after the tick");
         eb::FramePacer switched(Time{});
         const auto changed=Time{}+std::chrono::seconds(30);
         switched.set_rate(changed, eb::FramePacer::rate_for_refresh(144,true));
