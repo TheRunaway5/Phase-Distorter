@@ -51,13 +51,18 @@ public:
         return std::clamp(double((now - arrival_).count()) / double(interval_.count()), 0.0, 1.0);
     }
     Time wake(Time now) const {
-        if (draw_period_ != Duration::zero() && draw_ > now) return std::min(tick_, draw_);
-        // Inside the clearance a present is suppressed; the next event is the tick.
+        if (draw_period_ != Duration::zero() && draw_ > now) {
+            // A slot inside the clearance cannot be presented before the tick.
+            return draw_ + clearance() <= tick_ ? draw_ : tick_;
+        }
         return now + clearance() <= tick_ ? now : (tick_ > now ? tick_ : now);
     }
 private:
     // Swap plus loop work completes inside this window before a tick deadline.
-    static constexpr Duration clearance() { return std::chrono::milliseconds(3); }
+    static Duration clearance() {
+        return std::min(std::chrono::duration_cast<Duration>(std::chrono::milliseconds(3)),
+                        FramePacer::period() / 4);
+    }
     Time tick_{}, draw_{};
     Duration draw_period_{};
     Time arrival_{};

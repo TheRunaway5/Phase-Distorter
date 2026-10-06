@@ -119,6 +119,16 @@ int main() {
         gated.simulated(tick_arrival,1);
         require(gated.presentation_due(tick_arrival+std::chrono::microseconds(100)),
             "Deferred draw slot was not presented after the tick");
+        const auto slot=gated.wake(Time{}+eb::FramePacer::period()/2);
+        require(slot>Time{}+eb::FramePacer::period()/2 && slot<Time{}+std::chrono::microseconds(8400),
+            "wake missed a drawable draw slot outside the clearance");
+        // 144 fps slots drift into the clearance window; such a wake goes
+        // straight to the tick instead of waking up to sleep again.
+        eb::PresentationClock gated144(Time{},144);
+        gated144.simulated(Time{},1);
+        gated144.presented(Time{}+std::chrono::microseconds(10000));
+        require(gated144.wake(Time{}+std::chrono::microseconds(11000))==Time{}+eb::FramePacer::period(),
+            "wake inside the clearance must target the tick");
         eb::FramePacer switched(Time{});
         const auto changed=Time{}+std::chrono::seconds(30);
         switched.set_rate(changed, eb::FramePacer::rate_for_refresh(144,true));
