@@ -9,6 +9,7 @@ struct FlashFilterContext {
   bool giygas{};
   bool psi_active{};
   unsigned psi_animation{};
+  bool intro{};
 };
 // EarthBound's console brightness and quantized temporal feedback filter.
 class PhotosensitivityFilter {
@@ -19,10 +20,13 @@ public:
   // Disabled returns the original span exactly and discards history. Enabled
   // returns private output, valid until the next apply/reset, without writing
   // any input. Alpha stays exact. Enabled brightness is 80 percent.
+  // Nonzero unfiltered_mask pixels keep their original color and do not feed
+  // text into feedback history. The mask is empty or matches the canvas.
   // Call once per completed game frame, not once per host redraw.
-  std::span<const std::uint32_t> apply(std::span<const std::uint32_t> pixels,
-                                       int width, int height, bool enabled,
-                                       FlashFilterContext context = {});
+  std::span<const std::uint32_t>
+  apply(std::span<const std::uint32_t> pixels, int width, int height,
+        bool enabled, FlashFilterContext context = {},
+        std::span<const std::uint8_t> unfiltered_mask = {});
   void reset();
   // Black RGB can be unchanged while the exposure reduction is still active.
   bool dimmed() const { return enabled_; }

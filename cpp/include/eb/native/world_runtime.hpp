@@ -20,6 +20,8 @@ class WorldEnemyContact;
 class WorldEnemyBehavior;
 class WorldScenePresentation;
 class WorldEncounterEffects;
+class WorldSpriteFade;
+class WorldCollisionWindow;
 // The loading-area predicate reads live party/teleport state at the service
 // boundary. Absence leaves that actor request explicit; no cached leader or
 // guessed party position becomes another mutable owner.
@@ -55,9 +57,14 @@ public:
     void respond_battle();
     void respond_party_sprite_blink();
     void respond_teddy_refresh();
+    void respond_bicycle_dismount();
     void respond_item_failure_scan(std::uint16_t first_empty);
     const dialogue::ScriptSoundRequest &script_sound() const;
     void respond_script_sound();
+    // Actual authored actor PLAY_SOUND boundary. The host executes its audio
+    // command before acknowledging the same pending actor operation.
+    dialogue::ScriptSoundRequest actor_sound() const;
+    void respond_actor_sound();
     void respond_dialogue(dialogue::Response);
     bool complete() const;
 
@@ -65,8 +72,10 @@ public:
     friend class WorldRuntime;
     Operation(WorldRuntime &, std::unique_ptr<story::Scene::Operation>,
               bool refresh);
+    Operation(WorldRuntime &, story::Scene::Operation &);
     WorldRuntime &runtime_;
-    std::unique_ptr<story::Scene::Operation> scene_;
+    std::unique_ptr<story::Scene::Operation> owned_scene_;
+    story::Scene::Operation *scene_{};
     std::unique_ptr<WorldMaintenance::Operation> maintenance_;
     std::unique_ptr<WorldWalking::Operation> walking_;
     std::unique_ptr<WorldEscalator::Operation> escalator_;
@@ -74,6 +83,7 @@ public:
     bool maintenance_streaming_{};
     bool refresh_{}, done_{}, main_effect_pending_{};
   };
+  void interrupt_publication();
 
   WorldRuntime(dialogue::WindowHost &, party::State &, story::RandomState &,
                party::MeterWindows &, story::TickState &, story::InputState &,
@@ -89,6 +99,9 @@ public:
 
   std::unique_ptr<Operation> begin(story::TickKind);
   std::unique_ptr<Operation> begin_publication();
+  std::unique_ptr<Operation> begin_nested_publication(Operation &parent);
+  void require_content_boundary(Operation *parent = nullptr) const;
+  dialogue::Conversation &dialogue_owner(Operation &parent);
   // MAIN_LOOP's actual frame prefix: actors, screen, encounter effects, then
   // the frame/input boundary. Post-frame interactions are separate work.
   std::unique_ptr<Operation> begin_main_frame();
@@ -96,6 +109,11 @@ public:
   std::unique_ptr<Operation> begin(dialogue::Conversation &);
   std::unique_ptr<Operation> begin_nested(dialogue::Conversation &,
                                           Operation &parent);
+  std::unique_ptr<Operation> begin_nested(story::TickKind, Operation &parent);
+  std::unique_ptr<Operation> begin_actor_frame(story::ActorFrameService &);
+  std::unique_ptr<Operation> begin_nested_actor_frame(story::ActorFrameService &, Operation &parent);
+  void require_nested(const Operation &parent) const;
+  story::Scene::Operation &scene_operation(Operation &parent);
   void bind_interactions(npcs::Interactions &);
   // Initial battle-scene admission only. Existing world publication must not
   // be replaced without the separate encounter handoff lifecycle.
@@ -109,6 +127,8 @@ public:
       WorldScenePresentation &next, const WorldDisplayFade &);
   void bind_battle_animations(battle::AnimationCommands &);
   void bind_battle_frame(battle::Frame &);
+  void bind_collision_window(WorldCollisionWindow &);
+  WorldCollisionWindow *collision_window() const noexcept;
   void bind_inventory(party::Inventory &);
   void bind_maintenance(WorldControl &, WorldMaintenanceState &,
                         party::ItemTransformationState &,
@@ -135,12 +155,14 @@ public:
   void bind_enemy_behavior(WorldEnemyBehavior &);
   void bind_presentation(WorldScenePresentation &);
   void bind_encounter_effects(WorldEncounterEffects &);
+  bool uses(const WorldEncounterEffects &) const noexcept;
   bool uses_map_load(const ActorWorld &, const WorldEnemies &, const WorldMapArea &,
                      const AreaPalettes &, const WorldMap &, const WorldPalettes &,
                      const WorldPaletteAnimations &, const WorldSpawnControls &,
                      const story::RandomState &, const dialogue::WindowHost &,
                      const WorldScenePresentation &) const noexcept;
   void bind_world_control_commands(WorldControlCommands &);
+  void bind_sprite_fade(WorldSpriteFade &);
   bool uses(const dialogue::WindowHost &, const party::State &,
             const ActorWorld &, const story::TickState &,
             const WorldSpawnControls &) const noexcept;
@@ -158,16 +180,24 @@ public:
   // Read-only identity/lifecycle view for helpers whose execution still runs
   // through this runtime's admitted publication operations.
   const story::Scene &scene() const noexcept;
+  // Stable construction-time borrow for encounter/story coordinators. Their
+  // real Scene children must be driven through service_child(), so the same
+  // world actor, maintenance, streaming and frame services remain in force.
+  story::Scene &coordinator_scene();
+  // Borrows an actual child until completion; does not replace or acknowledge
+  // it. Rejects foreign Scene owners before any service or gameplay mutation.
+  std::unique_ptr<Operation> service_child(story::Scene::Operation &);
+  std::unique_ptr<Operation> service_child(story::Scene::Operation &, Operation &parent);
 
   // LOAD_MAP_AT_SECTOR's ordinary area content phase: select destination
   // sector, resolve flags, and reset both authored animation sequences.
   // Cleanup, photograph/special colors, fades and activation are separate.
   // All fallible preparation precedes the in-place owner commit.
-  void prepare_area(CameraPosition destination, bool preserve_artwork = false);
+  void prepare_area(CameraPosition destination, bool preserve_artwork = false, Operation *parent = nullptr);
   // Map loading clears cached objects, then refreshes scenery without a game,
   // input or actor tick. Newly activated objects wait for their real draw phase.
-  void clear_world_capture();
-  void refresh_world_capture();
+  void clear_world_capture(Operation *parent = nullptr);
+  void refresh_world_capture(Operation *parent = nullptr);
   // LOAD_MAP_BLOCK_EVENT_CHANGES without a tile/animation reload. Rebuild
   // arrangements/collision from authored base; retain current art/clocks.
   void reprepare_events();
@@ -177,13 +207,14 @@ public:
   // Battle mode skips it exactly as C05200 does. This standalone phase is
   // unavailable once the real maintenance owner has been bound. Returns whether
   // artwork or colors changed. Requires idle scene ownership.
-  bool advance_area_animation();
+  bool advance_area_animation(const WorldControlState &);
 
-  void begin_initial_activation(CameraPosition center);
-  void begin_refresh(CameraPosition camera);
+  void begin_initial_activation(CameraPosition center, Operation *parent = nullptr);
+  void reload_camera(CameraPosition center, Operation *parent = nullptr);
+  void begin_refresh(CameraPosition camera, Operation *parent = nullptr);
   // Scripted/initial streaming only. Actor-callback streaming is resumed by
   // its Operation::advance. A work yield consumes no scene/input/actor tick.
-  bool advance_streaming(unsigned work_budget = 256);
+  bool advance_streaming(unsigned work_budget = 256, Operation *parent = nullptr);
   bool streaming() const;
   bool failed() const;
   const WorldStreamingWork &streaming_work() const;
@@ -191,10 +222,16 @@ public:
   // content refresh also requires an explicit ordinary WorldFrame operation
   // to capture the changed map/actors before this accessor becomes usable.
   std::shared_ptr<const DirectSceneFrame> frame() const;
+  // Immutable output already committed to the display remains sampleable
+  // while the next map or actor capture is being prepared. This accessor never
+  // captures pending content or advances a publication.
+  std::shared_ptr<const DirectSceneFrame> published_frame() const;
   std::uint64_t completed_frames() const;
   std::vector<WorldSoundEvent> take_sound_events();
 
 private:
+  friend class WorldMapLoad;
+  std::unique_ptr<Operation> begin_retained_publication(Operation *parent);
   struct State;
   std::unique_ptr<State> state_;
   void check() const;

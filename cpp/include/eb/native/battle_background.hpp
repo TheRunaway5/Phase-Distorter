@@ -106,6 +106,8 @@ public:
   // their next palette tick, except the explicit black/white/restore commands.
   void apply_palette_brightness(std::uint16_t factor, unsigned first,
                                 unsigned last, std::span<std::uint16_t> publication = {});
+  // C2DAE3 swaps the first/fourth authored distortion slots for final static.
+  void swap_final_distortion();
   void set_initial_scroll(std::uint16_t horizontal, std::uint16_t vertical);
   void set_initial_raster(BattleDistortionAxis,
                           const std::array<std::uint16_t, 224> &);

@@ -66,14 +66,21 @@ struct Reference {
     colors.animation_id = id;
     for (unsigned p = 0; p < 16; ++p)
       for (unsigned i = 0; i < 16; ++i) {
-        const unsigned value = ((p * 83 + i * 117) ^ 0x1357) & 0x7fff;
+        const unsigned value = ((p * 83 + i * 117) ^ 0x9357) & 0xffff;
         put(0x200 + (p * 16 + i) * 2, value);
-        if (p >= 2 && p < 8)
+        if (p >= 2 && p < 8) {
           colors.scenery[p - 2][i] = i ? argb(value) : 0;
-        if (p >= 8)
+          if(i)colors.scenery_high_bits[p-2]|=std::uint16_t((value>>15)<<i);
+          else colors.scenery_zero[p-2]=std::uint16_t(value);
+        }
+        if (p >= 8) {
           colors.sprites[p - 8][i] = i ? argb(value) : 0;
+          if(i)colors.sprite_high_bits[p-8]|=std::uint16_t((value>>15)<<i);
+          else colors.sprite_zero[p-8]=std::uint16_t(value);
+        }
       }
     put(0x2a0, id);
+    colors.scenery_zero[3]=std::uint16_t(id);
     return colors;
   }
   void compare(const AreaPaletteAnimation &native) const {
@@ -85,6 +92,9 @@ struct Reference {
         require(actual == argb(word(0x240 + (p * 16 + i) * 2)),
                 "Source/native palette colors differ");
       }
+    for(unsigned p=0;p<14;++p)for(unsigned i=0;i<16;++i)
+      require((p<6?colors.scenery_word(p,i):colors.sprite_word(p-6,i))==word(0x240+(p*16+i)*2),
+              "Source/native full raw palette word differs");
     if (native.active()) {
       const unsigned state = jp ? 0x47e2 : 0x445c;
       require(native.ticks_until_change() == word(state) &&
@@ -215,6 +225,9 @@ void verify(const eb::GameAssets &assets) {
         const auto colors = palettes.resolve({group, variant}, flags);
         require(colors.animation_id == reference.word(0x2a0),
                 "Resolved area's animation selector differs");
+        for(unsigned p=0;p<6;++p)for(unsigned i=0;i<16;++i)
+          require(colors.scenery_word(p,i)==reference.word(0x240+(p*16+i)*2),
+                  "Resolved raw area palette differs from complete source LOAD_MAP_PAL");
         native.prepare(colors);
         ++resolutions;
       }

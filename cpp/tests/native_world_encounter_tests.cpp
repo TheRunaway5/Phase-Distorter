@@ -1,4 +1,5 @@
 #include "eb/native/world_encounter.hpp"
+#include "eb/native/battle/palette_effects.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -22,7 +23,8 @@ void run() {
   const auto definitions = data();
   for (unsigned initiative = 0; initiative < 3; ++initiative)
     for (unsigned group : {0u, 447u, 448u, 65535u}) {
-      WorldEncounterState encounter{WorldBattleInitiative(initiative), std::uint16_t(group)};
+      WorldEncounterState encounter;
+      encounter.initiative=WorldBattleInitiative(initiative);encounter.group=std::uint16_t(group);
       WorldSwirlState swirl{};
       swirl.next = 4; swirl.repeat_speed = 7; swirl.repeats_until_speedup = 13;
       const auto old_swirl = swirl;
@@ -33,16 +35,26 @@ void run() {
       WorldEncounterVisualState visual{};
       visual.window_left = {17, 53}; visual.window_right = {91, 207};
       const auto old_visual = visual;
+      battle::PaletteBankState transport;
+      for(unsigned i=0;i<256;++i)transport.staged_color(i)=std::uint16_t(0x8000+i);
+      const auto old_staged=transport.staged;
       unsigned calls = 0;
       WorldEncounter owner(definitions, encounter, swirl, colors, backup, visual,
           [&](const WorldEncounterMusicChange &request) {
             ++calls;
+            check(transport.staged==old_staged&&!transport.upload_mode,"Palette staging preceded actual music");
             check(swirl == old_swirl && colors == old_colors && visual == old_visual,
                   "Visual mutations preceded the real music boundary");
             check(request.track == (group >= 448 ? 8u : initiative == 2 ? 9u : 176u),
                   "Wrong encounter music");
           });
+      owner.bind_palette_transport(transport);
       owner.begin_swirl();
+      for(unsigned i=0;i<256;++i)check(transport.staged_color(i)==(i?old_staged[i/16][i%16]:std::uint16_t(30|(7<<5)|(21<<10))),"Encounter backdrop overwrote another raw color");
+      check(transport.upload_mode==8&&transport.displayed==decltype(transport.displayed){},"Encounter backdrop published before NMI");
+      battle::PaletteBankState foreign_transport;
+      rejects([&]{owner.bind_palette_transport(foreign_transport);},"Encounter replaced a bound palette transport");
+      owner.bind_palette_transport(transport);
       check(calls == 1 && colors[0] == backup && colors[1] == old_colors[1],
             "Swirl did not restore only the actual backdrop");
       check(visual.window_left == std::array<std::uint8_t, 2>{255, 255} &&
@@ -69,7 +81,14 @@ void run() {
   ScenePalette colors{};
   PaletteColor backup{};
   WorldEncounterVisualState visual;
+  battle::PaletteBankState transport;
   WorldEncounter owner(definitions, encounter, swirl, colors, backup, visual, {});
+  owner.bind_palette_transport(transport);
+  for(unsigned i=0;i<256;++i)transport.staged_color(i)=std::uint16_t(0x8000+i);
+  for(unsigned i=0;i<128;++i)colors[i]={std::uint8_t(i&31),std::uint8_t(i&31),std::uint8_t(i&31)};
+  owner.palette_changed();
+  for(unsigned i=0;i<256;++i)check(transport.staged_color(i)==(i<128?std::uint16_t((i&31)*1057):std::uint16_t(0x8000+i)),"Contact grayscale did not retain actual upper raw palettes");
+  check(transport.upload_mode==24&&transport.displayed==decltype(transport.displayed){},"Contact grayscale omitted its staged full upload intent");
   for (unsigned id = 0; id < 7; ++id)
     for (unsigned options = 0; options < 256; ++options) {
       visual.window_left = {17, 53}; visual.window_right = {91, 207};

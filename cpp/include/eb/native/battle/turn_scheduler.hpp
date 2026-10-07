@@ -14,6 +14,8 @@ struct BattleMenuSelection {
 };
 struct TurnState {
   std::uint16_t round_number{}, initiative{}, mirror_enemy{};
+  std::uint16_t mirror_turns{};
+  Battler mirror_backup;
   bool flee_requested{};
   std::array<std::uint16_t, 6> selected_party_slots{};
   std::uint16_t selected_count{};

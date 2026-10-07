@@ -87,7 +87,45 @@ enum class NativeAction {
   EnemyChaseAngle,
   EnemyAngleVelocity,
   EnemyAngleDirection,
-  EnemyDistanceSleep
+  EnemyDistanceSleep,
+  CheckContentIntegrity,
+  ReadMovedThisTick,
+  ChooseRandom,
+  DirectionFromLeader,
+  NpcInitialDirection,
+  RefreshGiftAppearance,
+  SetDirectionAndRefresh,
+  InflictSunstrokeCheck,
+  FadePauseActors,
+  FadeRestoreActors,
+  FadeShowSprites,
+  FadeRefreshSprites,
+  FadeHideBlinkSprites,
+  FadeRows,
+  FadeColumns,
+  FadeResetDissolve,
+  FadeDissolve,
+  FadeFinishTask,
+  FadeReleaseController,
+  YieldToText,
+  TargetAngle,
+  TargetReached,
+  SetDirectionFrame,
+  CopyPartyPosition,
+  OpenPrayerWindow,
+  ClosePrayerWindow,
+  WindowAnimationActive,
+  AdvanceEncounterEffects,
+  CopySpritePosition,
+  PlaySound,
+  VelocityDistanceSleep,
+  CaptureSpriteTarget,
+  FaceNpcTowardActor,
+  CheckProspectiveTerrain,
+  CheckProspectiveNpcCollision,
+  FaceSpriteTowardActor,
+  SetMovementBounds,
+  CheckMovementBounds
 };
 
 enum class ActionTemporaryInput { Observed, Independent, Forwarded };
@@ -96,7 +134,21 @@ struct CreateActorOperands {
   std::uint16_t sprite{}, script{};
   bool operator==(const CreateActorOperands &) const = default;
 };
-using ActionPayload = std::variant<std::monostate, CreateActorOperands>;
+// CHOOSE_RANDOM consumes a byte count and inline words. Count zero still
+// selects a word using the raw random byte (the source divider's remainder),
+// so that exceptional content shape owns all 256 reachable choices.
+struct ChooseRandomOperands {
+  std::uint8_t count{};
+  std::vector<std::uint16_t> choices;
+  bool operator==(const ChooseRandomOperands &) const = default;
+};
+struct MovementBoundsOperands {
+  std::uint16_t x_extent{}, y_extent{};
+  bool operator==(const MovementBoundsOperands &) const = default;
+};
+using ActionPayload =
+    std::variant<std::monostate, CreateActorOperands, ChooseRandomOperands,
+                 MovementBoundsOperands>;
 
 struct BoundAction {
   NativeAction operation = NativeAction::Unsupported;
@@ -159,7 +211,10 @@ enum class ActorTickCallback {
   CenterCameraOffset,
   WorldMaintenance,
   PartyFollower,
-  EnemyPath
+  EnemyPath,
+  TeleportLeader,
+  TeleportFollower,
+  TeleportFailureFollower
 };
 
 struct ActorActionContext {
@@ -186,6 +241,8 @@ struct ActionSceneContext {
   // stable while actors run; no second flag snapshot is retained here. An
   // unbound or out-of-range request stays suspended without any mutation.
   std::span<std::uint8_t> event_flags;
+  // Shared ACTIONSCRIPT_STATE: authored actors signal waiting dialogue.
+  std::uint16_t action_script_state{};
 };
 
 struct NativeActionResult {
@@ -202,6 +259,10 @@ NativeActionResult apply_action(const BoundAction &action,
                                 ActionActorState &actor,
                                 ActorActionContext &context,
                                 ActionSceneContext &scene);
+
+// Exact C0CA4E task wait from the live 16.16 XY velocities and incoming
+// distance word. Retains source signed comparisons, division and low-word wrap.
+std::uint16_t velocity_distance_sleep(const ActionActorState &, std::uint16_t distance);
 
 // Preserve world ordering: scripts/tick callbacks for all actors, then physics
 // and projection for all actors. Projection uses authored integer coordinates;

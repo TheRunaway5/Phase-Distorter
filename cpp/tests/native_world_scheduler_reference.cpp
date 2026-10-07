@@ -112,7 +112,7 @@ struct Original {
     // LDA FRAME_COUNTER reads the following OAM byte too; AND00FF must discard it.
     bus->work_ram[3] = 0xa5;
     word(l.window, f.windows.draw_order().empty() ? 0xffff : 0);
-    word(l.battle, f.maintenance.battle_mode_flag);
+    word(l.battle, f.windows.prompt_state().battle_mode);
     word(l.swirl, f.appearance.battle_swirl_ticks);
     word(l.enemy, f.maintenance.enemy_touched);
     word(l.timer, f.phone.timer);
@@ -172,7 +172,7 @@ struct Original {
             "Scheduler changed clock or read frame high byte");
     require(word(l.timer) == f.phone.timer && word(l.timer + 2) == f.phone.queued, "Phone state mismatch");
     require(word(l.window) == (f.windows.draw_order().empty() ? 0xffff : 0) &&
-            word(l.battle) == f.maintenance.battle_mode_flag && word(l.swirl) == f.appearance.battle_swirl_ticks &&
+            word(l.battle) == f.windows.prompt_state().battle_mode && word(l.swirl) == f.appearance.battle_swirl_ticks &&
             word(l.enemy) == f.maintenance.enemy_touched, "Scheduler changed pause gates");
     require(word(game(128)) == f.control.x_fraction && word(game(132)) == f.control.y_fraction &&
             word(game(130)) == f.leader.leader_x && word(game(134)) == f.leader.leader_y &&
@@ -221,7 +221,7 @@ void run(const eb::GameAssets &assets) {
       for (unsigned timer : {0u, 1u, 65535u}) {
         Fixture f(content);
         if (gates & 1) f.open();
-        f.maintenance.battle_mode_flag = gates & 2;
+        f.windows.prompt_state().battle_mode = gates & 2;
         f.appearance.battle_swirl_ticks = gates & 4;
         f.maintenance.enemy_touched = gates & 8;
         f.clock.frame_counter = frame;

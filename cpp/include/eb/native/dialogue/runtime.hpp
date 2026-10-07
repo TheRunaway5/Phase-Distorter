@@ -56,6 +56,15 @@ struct State {
     // lookup word. A world adapter must supply that semantic slot explicitly;
     // there is no universal tail/dummy fallback for this source state.
     std::optional<unsigned> unfocused_register_slot;
+    // Optional live BUFFER alias for OPEN_WINDOW_TABLE[$ffff]. The two bytes
+    // remain owned by the caller; full indexed-address carry selects them.
+    struct RegisterAlias {
+        std::span<const std::uint8_t, 2> word;
+        unsigned stride;
+    };
+    std::optional<RegisterAlias> unfocused_register_alias;
+    std::optional<unsigned> ambient_lookup() const;
+    std::optional<unsigned> ambient_slot() const;
     WindowState &registers_at(unsigned slot);
     const WindowState &registers_at(unsigned slot) const;
     RegisterBackup backup;
@@ -113,10 +122,13 @@ enum class RequestKind {
     // selecting and printing a conscious member's name. No operand follows.
     RefreshParty,
     PartyQuery,
+    ItemQuery,
     ItemCommand,
     // CC1F02 acknowledges the audio boundary before its mandatory world tick.
     ScriptSound,
     SoundWorldTick,
+    SpecialEvent,
+    ScriptMusic,
     WorldControl,
     NpcGift,
     ShowMeters,
@@ -131,7 +143,17 @@ enum class RequestKind {
     // Operandless191E/1F read the shared prepared number/item scratch.
     // This remains external until a stable prepared-message owner is bound.
     PreparedValue,
-    BattleGrammar
+    // Operandless CC1D20 compares the two retained prepared-name strings.
+    PreparedNamesEqual,
+    BattleGrammar,
+    // CC1928 consumes one literal stat descriptor and queries a source byte
+    // selected by live secondary memory. It emits no text or frame callback.
+    StatLetter,
+    // CC1F61 waits for the shared action-script yield word. No operands.
+    WaitActionScripts,
+    // CC1F21 executes the complete synchronous TELEPORT lifecycle. count is
+    // the resolved destination word; no setter or tick can acknowledge it.
+    Teleport
 };
 struct MenuAppendRequest {
     // CC19_02/C17889 gather into a 30-byte scratch buffer. The first byte is
@@ -166,7 +188,14 @@ struct InventoryRequest {
     unsigned stream_slot{};
     bool operator==(const InventoryRequest &) const = default;
 };
-enum class ItemCommandKind { FindSpace, Give, AddMoney };
+enum class ItemCommandKind { FindSpace, Give, AddMoney, Take, SubtractMoney, Remove };
+enum class ItemQueryKind { Subtype2, FindCondiment, SellPrice };
+struct ItemQueryRequest {
+    ItemQueryKind kind{};
+    // Zero authored operands resolve the complete low argument word.
+    std::uint16_t item{};
+    bool operator==(const ItemQueryRequest &) const = default;
+};
 struct ItemCommandRequest {
     ItemCommandKind kind{};
     // Source word selectors stay words until the party helper consumes them.
@@ -190,6 +219,15 @@ struct ScriptSoundRequest {
     std::uint16_t source_value{};
     bool operator==(const ScriptSoundRequest &) const = default;
 };
+enum class ScriptMusicKind { Change, Stop, Effect };
+struct ScriptMusicRequest {
+    ScriptMusicKind kind{};
+    std::uint16_t value{};
+    // CC1F00 passes this first byte to C216AD. That helper overwrites X,
+    // but the literal still belongs to the command's two-byte stream.
+    std::uint8_t parameter{};
+    bool operator==(const ScriptMusicRequest &) const = default;
+};
 struct BattleAnimationRequest {
     std::uint16_t ally{}, enemy{};
     bool operator==(const BattleAnimationRequest &) const = default;
@@ -202,7 +240,7 @@ struct BattleAnimationResult {
 enum class NpcGiftAction { Open, Close, IsOpen };
 enum class PartyQueryKind {
     DisplayCharacter, Status, ControlledCount, StatusEquals, FewerControlledThan,
-    FirstConscious, ConsciousCount
+    FirstConscious, ConsciousCount, InventoryItem
 };
 struct PartyQueryRequest {
     PartyQueryKind kind{};
@@ -237,6 +275,7 @@ struct Request {
     std::optional<WindowSelectionRequest> window_selection;
     std::optional<InventoryRequest> inventory{};
     std::optional<PartyQueryRequest> party_query{};
+    std::optional<ItemQueryRequest> item_query{};
     std::optional<ItemCommandRequest> item_command{};
     std::optional<NpcGiftAction> npc_gift{};
     std::optional<ScriptSoundRequest> script_sound{};
@@ -244,6 +283,10 @@ struct Request {
     std::optional<BattleAnimationRequest> battle_animation{};
     // US1C14/15 consume one literal byte; zero selects the count path.
     std::optional<BattleGrammarRequest> battle_grammar{};
+    // CC1F41 consumes one literal byte, including zero. The native owner
+    // completes the event's real children before returning its signed word.
+    std::optional<std::uint8_t> special_event{};
+    std::optional<ScriptMusicRequest> script_music{};
     bool operator==(const Request &) const = default;
 };
 struct Response {
@@ -256,6 +299,7 @@ struct Response {
     // their source16-bit width. CITEM is zero-extended from its byte owner.
     std::optional<std::uint32_t> prepared_value{};
     std::optional<BattleAnimationResult> battle_animation_result{};
+    std::optional<std::uint16_t> special_event_result{};
 };
 enum class Progress { Suspended, Finished, BudgetExhausted };
 struct FrameSnapshot {

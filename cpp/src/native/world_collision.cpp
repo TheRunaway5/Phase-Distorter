@@ -73,7 +73,11 @@ std::uint16_t WorldCollision::edge(const CollisionSampler &read, CollisionPoint 
     flags |= sample(first);
     for (unsigned i = 0; i < count; ++i) {
         flags |= sample(next);
-        next = wrap(unsigned(next) + 1);
+        // Edge coordinates originate in unsigned16 pixels. Crossing its last
+        // eight-pixel cell returns to pixel zero, rather than sampling an
+        // unrepresentable pixel65536. Keep ordinary world cells distinct from
+        // the source's smaller display/cache ring.
+        next = std::uint16_t((unsigned(next) + 1) & 0x1fffu);
     }
     return flags;
 }

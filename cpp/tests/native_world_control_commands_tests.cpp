@@ -72,7 +72,7 @@ void operand_domains(eb::GameVersion region) {
                     vm.request()->glyph == 0x41,
                 "Focus parser swallowed its following glyph");
         }
-  for (unsigned selector : {0xecu, 0xf3u}) {
+  for (unsigned selector : {0xe2u, 0xe3u}) {
     dialogue::State state;
     dialogue::Runtime vm(
         program(region, {0x1f, std::uint8_t(selector), 0x41, 2}), state);
@@ -91,7 +91,8 @@ void application(eb::GameVersion region) {
             !f.commands.uses(foreign.automatic) &&
             !f.commands.uses(foreign.actors),
         "Command service accepted a foreign owner");
-  const auto late = f.create(10, 1, 43), early = f.create(2, 1, 42);
+  const auto late = f.create(10, 1, 43);
+  f.create(2, 1, 42);
   f.control.automatic_ticks = 77;
   f.control.moved_this_tick = 9;
   dialogue::State state;

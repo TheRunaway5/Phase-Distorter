@@ -156,8 +156,8 @@ struct Fixture {
     WorldMapArea area=make_area();
     AreaPalettes palettes=make_palettes();
     std::unique_ptr<story::Scene> scene;
-    explicit Fixture(eb::GameVersion region,bool meter_art=false):version(region),party(region),output(assets(region).fonts,text),
-        windows(assets(region).input.import(),text,output),meters(windows,party,assets(region).meters),
+    explicit Fixture(eb::GameVersion region,bool meter_art=false, std::shared_ptr<const dialogue::WindowResources> menu_windows={}):version(region),party(region),output(assets(region).fonts,text),
+        windows(menu_windows ? std::move(menu_windows) : assets(region).input.import(),text,output),meters(windows,party,assets(region).meters),
         actors(make_sprites(),make_scripts(),region) {
         party.controlled_count=1;party.controlled_order[0]=0;party.party_order[0]=1;
         clock.frame_counter=255;
@@ -280,8 +280,9 @@ struct FrameFixture {
     battle::FrameState frame_state;
     story::BattlePublication publication;
     battle::Frame frame;
-    explicit FrameFixture(eb::GameVersion version, unsigned depth, bool bind = true)
-        : f(version, true), background(battle_background(depth)),
+    explicit FrameFixture(eb::GameVersion version, unsigned depth, bool bind = true,
+                          std::shared_ptr<const dialogue::WindowResources> menu_windows = {})
+        : f(version, true, std::move(menu_windows)), background(battle_background(depth)),
           roster(battle::EnemyResources::import(std::vector<std::uint8_t>(0x160000), version)),
           layers(std::vector<std::uint8_t>(0x100000), version),
           publication(colors, scratch, display, background, objects, f.windows, visual, fade),

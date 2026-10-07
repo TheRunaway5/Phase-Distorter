@@ -24,15 +24,30 @@ void GameSceneRenderer::capture_aperture(int x, int y, unsigned radius_x, unsign
 bool GameSceneRenderer::presentation_window_contains(const SceneReadView &view, unsigned layer,
                                                       int x, unsigned y) const {
     const unsigned selection = (view.ppu_registers[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
-    if (!presentation_aperture_ || (selection & 0x0a) != 2)
+    if (!presentation_aperture_ || !(selection & 2))
         return view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
     // Enlarge both radii equally around the source focus. Stretching only X
     // would turn the circular opening into a wide oval.
     const double scale = double(presentation_width_) / 256;
     const double dx = (x - aperture_x_) / (aperture_radius_x_ * scale);
     const double dy = (int(y) - aperture_y_) / (aperture_radius_y_ * scale);
-    const bool inside = dx * dx + dy * dy <= 1;
-    return selection & 1 ? !inside : inside;
+    bool first = dx * dx + dy * dy <= 1;
+    if (selection & 1) first = !first;
+    if (!(selection & 8)) return first;
+    // SET_WINDOW_MASK enables both windows during actual prayer cutscenes.
+    // Extend the captured first window, then preserve the hardware operation
+    // and second window. Its inverted empty interval is AND's neutral input.
+    const unsigned native_x = unsigned(std::clamp(x, 0, 255));
+    bool second = native_x >= view.ppu_registers[0x28] && native_x <= view.ppu_registers[0x29];
+    if (selection & 4) second = !second;
+    const unsigned logic = layer < 4 ? (view.ppu_registers[0x2a] >> (layer * 2)) & 3
+                                     : (view.ppu_registers[0x2b] >> ((layer - 4) * 2)) & 3;
+    switch (logic) {
+    case 0: return first || second;
+    case 1: return first && second;
+    case 2: return first != second;
+    default: return first == second;
+    }
 }
 
 namespace {
@@ -175,6 +190,7 @@ void GameSceneRenderer::resize_presentation_width(const SceneReadView &view, uns
                         presentation_framebuffer_.begin() + y * width + (width - 256) / 2);
     if (presentation_effects_enabled_) {
         presentation_effect_mask_.assign(width * 224, 0);
+        presentation_unfiltered_mask_.assign(width * 224, 0);
         const auto pixels = presentation_pixels(view.native_framebuffer);
         presentation_effect_reference_.assign(pixels.begin(), pixels.end());
     }
@@ -204,12 +220,93 @@ void GameSceneRenderer::set_presentation_effects_enabled(const SceneReadView &vi
                                             presentation_gas_palettes_[1]);
         }
         presentation_effect_mask_.assign(presentation_width_ * 224, 0);
+        presentation_unfiltered_mask_.assign(presentation_width_ * 224, 0);
         const auto pixels = presentation_pixels(view.native_framebuffer);
         presentation_effect_reference_.assign(pixels.begin(), pixels.end());
     } else {
         presentation_effect_mask_.clear();
         presentation_effect_reference_.clear();
+        presentation_unfiltered_mask_.clear();
     }
+}
+
+bool GameSceneRenderer::source_window_layer(const SceneReadView &view, unsigned layer) const {
+    // OVERWORLD_SETUP_VRAM / LOAD_BATTLE_BG: two-bit art at word $6000,
+    // tilemap at $7c00. Lightning temporarily borrows this same page.
+    return layer < 4 && !(presentation_screen_overlay_layer_ & (1u << layer)) &&
+        background_color_depths[view.ppu_registers[5] & 7][layer] == 2 &&
+        (view.ppu_registers[7 + layer] & 0xfc) == 0x7c &&
+        ((view.ppu_registers[0x0b + layer / 2] >> ((layer & 1) * 4)) & 15) == 6;
+}
+
+void GameSceneRenderer::prepare_presentation_windows(const SceneReadView &view) {
+    presentation_ui_window_count_ = 0;
+    presentation_ui_layer_ = 4;
+    presentation_left_windows_ = false;
+    if (presentation_width_ == 256) return;
+    for (unsigned layer = 0; layer < 4; ++layer)
+        if (source_window_layer(view, layer) &&
+            ((view.ppu_registers[0x2c] | view.ppu_registers[0x2d]) & (1u << layer))) {
+            presentation_ui_layer_ = layer;
+            break;
+        }
+    if (presentation_ui_layer_ == 4) return;
+    // Regional WINDOW_STATS, OPEN_WINDOW_TABLE, WINDOW_HEAD/TAIL and
+    // window_stats offsets from ebsrc. CREATE_WINDOW stores content size;
+    // its drawn border adds two tiles in each dimension.
+    const bool jp = view.game_version == GameVersion::JP;
+    const unsigned records = jp ? 0x89c2 : 0x8650, size = jp ? 76 : 82,
+                   table = jp ? 0x8c26 : 0x88e4, head = jp ? 0x8c22 : 0x88e0;
+    const auto word = [&](unsigned at) { return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8; };
+    std::array<UiWindow, 8> windows{};
+    unsigned count = 0, previous = 0xffff;
+    std::array<bool, 8> seen{};
+    bool moved = false;
+    const unsigned layer = presentation_ui_layer_;
+    const int scroll_x = int((view.background_scroll_x[layer] + 512) & 1023) - 512,
+              scroll_y = int((view.background_scroll_y[layer] + 512) & 1023) - 512;
+    for (unsigned slot = word(head); slot != 0xffff;) {
+        if (slot >= 8 || seen[slot]) return;
+        seen[slot] = true;
+        const unsigned at = records + slot * size, id = word(at + 4), x = word(at + 6),
+                       y = word(at + 8), w = word(at + 10) + 2, h = word(at + 12) + 2;
+        if (id >= (jp ? 52u : 53u) || word(table + id * 2) != slot || word(at) != previous ||
+            x >= 32 || y >= 32 || w < 2 || h < 2 || w > 32 - x || h > 32 - y)
+            return;
+        // Gameplay windows authored at the left inset: command/cash, goods
+        // actions, PSI category, status and the two battle command layouts.
+        // Dialogue and startup/name-entry windows keep their own positions.
+        const bool edge = x == 1 && (id == 0 || id == 3 || id == 4 || id == 8 ||
+                                    id == 10 || id == 11 || id == 15 || id == 18);
+        windows[count++] = {int(x * 8) - scroll_x, int(y * 8) - scroll_y - 1,
+                            int((x + w) * 8) - scroll_x, int((y + h) * 8) - scroll_y - 1, edge};
+        moved |= edge;
+        previous = slot;
+        slot = word(at + 2);
+    }
+    if (word(head + 2) != previous) return;
+    presentation_ui_windows_ = windows;
+    presentation_ui_window_count_ = count;
+    presentation_left_windows_ = moved;
+}
+
+std::optional<int> GameSceneRenderer::presentation_window_sample_x(int x, unsigned y) const {
+    const auto owner = [&](int sample_x) {
+        for (unsigned index = presentation_ui_window_count_; index > 0; --index)
+            if (presentation_ui_windows_[index - 1].contains(sample_x, int(y)))
+                return int(index - 1);
+        return -1;
+    };
+    const int current = owner(x), shifted_x = x + int(presentation_width_ - 256) / 2,
+              shifted = owner(shifted_x);
+    // The source page already contains the topmost window's visible artwork.
+    // Move only artwork owned by a left window, never an overlapping dialogue.
+    if (shifted >= 0 && presentation_ui_windows_[shifted].left_edge &&
+        (current < 0 || presentation_ui_windows_[current].left_edge || shifted > current))
+        return shifted_x;
+    if (x < 0 || x >= 256 || (current >= 0 && presentation_ui_windows_[current].left_edge))
+        return std::nullopt;
+    return x;
 }
 
 void GameSceneRenderer::prepare_presentation_objects(const SceneReadView &view) {
@@ -1064,7 +1161,7 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
                     objects[x] = world_objects[x];
         }
     }
-    if (presentation_aperture_ || presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
+    if (presentation_left_windows_ || presentation_aperture_ || presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
         (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
         for (unsigned x = 0; x < presentation_width_; ++x)
             output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
@@ -1087,8 +1184,7 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
         // waiting for the frontend's next iteration would repeat one gas frame
         // or stretch one logo frame. Keep the user's requested width separately.
         presentation_frame_aspect_ =
-            (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c &&
-                    !intro_interference(view)
+            (view.ppu_registers[5] & 7) == 3 && view.ppu_registers[7] == 0x78 && view.ppu_registers[8] == 0x7c
                 ? 4.0 / 3
                 : 0.0;
         resize_presentation_width(view, presentation_frame_aspect_ ? 256 : requested_presentation_width_);
@@ -1096,10 +1192,10 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
     const unsigned oval = view.game_version == GameVersion::JP ? 0x4356 : 0x3fd0;
     const auto &regs = view.ppu_registers;
     const unsigned masked = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
-    bool oval_window = (regs[0x30] & 0xf0) && ((regs[0x25] >> 4) & 0x0a) == 2;
+    bool oval_window = (regs[0x30] & 0xf0) && ((regs[0x25] >> 4) & 2);
     for (unsigned layer = 0; layer < 5; ++layer)
         oval_window |= (masked & (1u << layer)) &&
-            ((regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 0x0a) == 2;
+            ((regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 2);
     const unsigned battle = view.source_profile.wram_battle_mode_flag;
     presentation_aperture_ = aperture_valid_ && oval_window &&
         (regs[5] & 0x37) == 1 && regs[7] == 0x39 && regs[8] == 0x59 &&
@@ -1109,11 +1205,13 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
         view.ppu_registers[0x27] == view.work_ram[oval + y * 2 + 1];
     if (!y || presentation_width_ > 256)
         prepare_presentation_scene(view);
+    prepare_presentation_windows(view);
     refresh_host_artwork(view);
     if (presentation_effects_enabled_)
         prepare_presentation_effects(view);
     if ((view.ppu_registers[0] & 0x80) && presentation_effects_enabled_) {
         std::fill_n(presentation_effect_mask_.begin() + y * presentation_width_, presentation_width_, 0);
+        std::fill_n(presentation_unfiltered_mask_.begin() + y * presentation_width_, presentation_width_, 0);
         std::fill_n(presentation_effect_reference_.begin() + y * presentation_width_, presentation_width_,
                     0xff000000);
     }

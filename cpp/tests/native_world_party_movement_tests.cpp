@@ -152,6 +152,37 @@ void projection() {
   require(f.actors.advance_tick() == WorldTickResult::Complete,
           "Foreign detach removed party owner");
 }
+void retained_projection_cache() {
+  Fixture f;
+  require(f.state.projection.leader_role==0 && f.state.projection.direction==0,
+          "Cold follower cache did not start with the actual zeroed BSS words");
+  const auto follower=f.create(25,2);
+  auto &a=f.actors.actor(follower);
+  a.behavior.direction=0;a.action().variables[5]=2;
+  a.behavior.projected_x=77;a.behavior.projected_y=91;
+  a.action().position[0]=0x00641234;a.action().position[1]=0x0075abcd;
+  const auto cold_position=a.action().position;
+  f.movement.project(follower);
+  require(a.action().position==cold_position && a.behavior.projected_y==117,
+          "Cold cached role0 required an invented live actor or changed coordinates");
+  const auto leader=f.create(0);
+  auto &b=f.actors.actor(leader);
+  b.action().position[1]=100u<<16;b.behavior.projected_x=77;
+  const auto before_actor=f.actors.actors();
+  f.actors.erase(leader);
+  require(!f.actors.actor_for_role(0) && f.actors.authored_behavior(0).projected_x==77,
+          "Retirement discarded retained screen coordinates");
+  a.behavior.projected_x=77;a.behavior.projected_y=91;
+  f.movement.project(follower);
+  require(a.action().position==cold_position && a.behavior.projected_y==91 &&
+              f.actors.actors().size()+1==before_actor.size() && f.actors.ticks()==0,
+          "Dormant cached projection changed exact spacing or advanced actor lifecycle");
+  f.state.projection.leader_role=30;
+  const auto projection=a.behavior;
+  rejects([&]{f.movement.project(follower);},"Unowned cached role accepted");
+  require(a.behavior.projected_x==projection.projected_x && a.behavior.projected_y==projection.projected_y,
+          "Rejected projection partially changed output");
+}
 void paused_follower() {
   Fixture f;
   const auto id = f.create(24);
@@ -225,7 +256,7 @@ void maintenance_boundary() {
 int main() {
   try {
     startup();
-    projection();
+    projection(); retained_projection_cache();
     paused_follower();
     maintenance_boundary();
     std::cout << "Native party movement tests passed\n";

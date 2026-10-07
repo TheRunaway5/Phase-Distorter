@@ -293,7 +293,7 @@ struct Oracle {
          {140, f.control_state.trodden_surface_flags},
          {142, f.leader.walking_style},
          {144, f.control_state.moved_this_tick},
-         {146, f.leader.movement_flags},
+         {146, f.leader.area_character_style},
          {148, 24},
          {176, f.control_state.automatic_mode}}};
     for (auto [at, v] : game_words)
@@ -317,14 +317,14 @@ struct Oracle {
     put(l.map_high + 48, 0x7e | (a.appearance.flashing_hidden() ? 0x8000 : 0));
     put(l.possessed, f.state.possessed_players);
     put(l.ghost, 65535);
-    put(l.battle, f.windows.prompt_state().battle_mode);
+    put(l.battle, f.control_state.encounter.mode);
     put(l.sector_x, f.state.last_sector_x);
     put(l.sector_y, f.state.last_sector_y);
     put(l.auto_music, f.state.auto_sector_music);
     put(l.loaded_items, f.items.loaded_count);
     put(l.activity, f.input.player_activity);
     put(l.windows, f.windows.draw_order().empty() ? 65535 : 0);
-    put(l.battle_flag, f.state.battle_mode_flag);
+    put(l.battle_flag, f.windows.prompt_state().battle_mode);
     put(l.enemy, f.state.enemy_touched);
     put(l.swirl, f.actors.appearance_scene().battle_swirl_ticks);
     put(l.intangible, f.actors.appearance_scene().intangibility_ticks);
@@ -440,7 +440,7 @@ void compare(Oracle &o, const Fixture &f) {
        {140, f.control_state.trodden_surface_flags},
        {142, f.leader.walking_style},
        {144, f.control_state.moved_this_tick},
-       {146, f.leader.movement_flags},
+       {146, f.leader.area_character_style},
        {148, f.party.current_leader_role},
        {176, f.control_state.automatic_mode}}};
   for (auto [offset, value] : game)
@@ -583,7 +583,7 @@ void drive(Oracle &o, Fixture &f, unsigned scenario, unsigned serial) {
       o.counts.phones += o.phone_calls;
       o.counts.tile_ticks += o.tile_calls;
       o.counts.palette_ticks += o.palette_calls;
-      if (f.windows.prompt_state().battle_mode) {
+      if (f.control_state.encounter.mode) {
         ++o.counts.battles;
         require(!stage && !o.create_calls && !o.delete_calls &&
                     !o.phone_calls && !o.tile_calls && !o.palette_calls,
@@ -648,7 +648,7 @@ void configure(Fixture &f, unsigned scenario, unsigned gate) {
   f.input.player_activity = 0x5432;
   f.phone.timer = gate == 1 ? 27 : 0;
   f.phone.queued = gate == 2 ? 1 : 0;
-  f.state.battle_mode_flag = gate == 3;
+  f.windows.prompt_state().battle_mode = gate == 3;
   f.actors.appearance_scene().battle_swirl_ticks = gate == 4 ? 17 : 0;
   f.state.enemy_touched = gate == 5;
   if (gate == 6)
@@ -686,7 +686,7 @@ void configure(Fixture &f, unsigned scenario, unsigned gate) {
     a.appearance.step_eight(a.action(), blink);
     require(a.appearance.flashing_hidden(), "Ghost blink gate fixture failed");
   }
-  f.windows.prompt_state().battle_mode = gate == 12;
+  f.control_state.encounter.mode = gate == 12;
 }
 void verify(const eb::GameAssets &assets) {
   Content content(assets);
@@ -704,13 +704,13 @@ void verify(const eb::GameAssets &assets) {
         require(f.state.possessed_players == 0,
                 "Maintenance failed to consume possession count");
         context += " existing ghost battle pause";
-        f.windows.prompt_state().battle_mode = 1;
+        f.control_state.encounter.mode = 1;
         o.put(o.l.battle, 1);
         const auto retained = f.state.possession_actor;
         drive(o, f, scenario, 0);
         require(f.state.possession_actor == retained,
                 "Battle pause erased existing ghost");
-        f.windows.prompt_state().battle_mode = 0;
+        f.control_state.encounter.mode = 0;
         o.put(o.l.battle, 0);
         context += " release";
         drive(o, f, scenario, 1);
@@ -729,8 +729,8 @@ void verify(const eb::GameAssets &assets) {
   for (unsigned tick = 0; tick < 96; ++tick) {
     context =
         assets.title + " continued animation tick=" + std::to_string(tick);
-    f.windows.prompt_state().battle_mode = tick % 11 == 7;
-    o.put(o.l.battle, f.windows.prompt_state().battle_mode);
+    f.control_state.encounter.mode = tick % 11 == 7;
+    o.put(o.l.battle, f.control_state.encounter.mode);
     drive(o, f, tick & 1, tick);
   }
   require(counts.created && counts.deleted && counts.phones && counts.items &&

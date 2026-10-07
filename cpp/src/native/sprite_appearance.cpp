@@ -52,6 +52,7 @@ void SpriteAppearance::latch(unsigned pose, std::uint16_t surface_flags, SpriteF
     auto image = resources_->acquire(requested_sprite_, pose, submerged, format);
     displayed_ = SpriteFrameSelection{requested_sprite_, pose, submerged, format};
     image_ = std::move(image);
+    image_override_ = false;
 }
 void SpriteAppearance::select_four(unsigned direction, std::uint16_t animation, std::uint16_t surface_flags) {
     latch(four_direction_pose(direction, animation), surface_flags, SpriteFrameFormat::FourDirection);
@@ -112,10 +113,20 @@ SpriteAnimationUpdate SpriteAppearance::step_eight(ActionActorState &actor,
     }
     return result;
 }
+void SpriteAppearance::replace_image(std::shared_ptr<const SpriteImage> image) {
+    if (!available_ || !displayed_ || !image || !image->layout || !image->canvas ||
+        !image_ || !image_->layout || *image->layout != *image_->layout ||
+        image->canvas->size() != image_->canvas->size())
+        throw std::invalid_argument("Retained sprite upload requires current appearance geometry");
+    image_ = std::move(image);
+    image_override_ = true;
+}
 void SpriteAppearance::release() {
     available_ = false;
     displayed_.reset();
     image_.reset();
+    image_override_ = false;
+    fade_hidden_ = false;
 }
 SpriteActor SpriteAppearance::draw(const ActionActorState &actor, float x, float y,
                                     std::uint16_t current_surface_flags) const {
@@ -133,7 +144,8 @@ SpriteActor SpriteAppearance::draw(const ActionActorState &actor, float x, float
     picture.draw_group = actor.priority;
     picture.upper_layer = current_surface_flags & 2 ? 7 : 10;
     picture.lower_layer = current_surface_flags & 1 ? 7 : 10;
-    picture.visible = available_ && actor.alive && !(actor.animation & 0x8000) &&
+    picture.image = image_;
+    picture.visible = available_ && !fade_hidden_ && actor.alive && !(actor.animation & 0x8000) &&
                       displayed_.has_value() && !flashing_hidden_;
     return picture;
 }
@@ -145,6 +157,8 @@ void SpriteFrameSelection::snapshot_io(SnapshotArchive &archive) {
         throw std::runtime_error("Invalid snapshot sprite selection");
 }
 void SpriteAppearance::snapshot_io(SnapshotArchive &archive) {
+    if (image_override_ || fade_hidden_)
+        throw std::logic_error("Snapshot of live sprite fade requires its retained fade owner");
     archive(geometry_sprite_, requested_sprite_, displayed_, fingerprint_, flashing_hidden_, available_);
     if (archive.loading()) {
         const auto &geometry = resources_->definition(geometry_sprite_);

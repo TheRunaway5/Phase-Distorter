@@ -30,6 +30,9 @@ struct SpriteActor {
     // Drawn before this actor's body, with the same motion and depth identity.
     // Timed playback belongs to the world draw phase, never to presentation.
     std::vector<SpriteFragment> overlays;
+    // Explicit generation-owned uploaded artwork, retained until its owner
+    // performs another real appearance upload. Catalog actors leave this null.
+    std::shared_ptr<const SpriteImage> image{};
 };
 struct SpriteCamera {
     float left{}, top{};

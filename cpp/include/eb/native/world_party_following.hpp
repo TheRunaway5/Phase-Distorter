@@ -29,6 +29,8 @@ public:
                       const WorldPartyFollowingState &,
                       const WorldPartyFollowingData &);
   bool uses(const ActorWorld &) const noexcept;
+  bool uses(const ActorWorld &, const party::State &, const npcs::InteractionState &,
+            const dialogue::PromptState &) const noexcept;
   bool uses(const WorldControl &, const party::State &,
             const WorldMaintenanceState &,
             const dialogue::PromptState &) const noexcept;
@@ -44,12 +46,21 @@ public:
             const WorldPartyFollowingData &) const noexcept;
   // US C04EF0, before the first ordinary eight-direction animation call.
   std::optional<std::uint16_t> prepare(ActorId);
+  // C07A56 with an explicit source walking-style argument. Existing role
+  // direction/surface are read before the caller places its trail point.
+  std::optional<std::uint16_t> prepare_with_style(ActorId,std::uint16_t);
   // C04D78, the post-script callback, before the separate physics pass.
   // True includes its authored battle/swirl/mode early exits.
   bool tick(ActorId);
+  // Complete C07B52 after battle/scene suspension: refresh role24..29 from
+  // the actual leader or retained trail, then latch their existing animation.
+  // This preserves fractions and source single-member facing. No actor pass,
+  // frame, footstep, input or trail cursor is consumed.
+  void position_after_pause();
 
 private:
-  bool update(ActorId, bool movement, std::uint16_t &result);
+  bool update(ActorId, bool movement, std::uint16_t &result,
+              const PartyTrailPoint *positioning = nullptr);
   ActorWorld &actors_;
   party::State &party_;
   WorldPartyState &formation_;

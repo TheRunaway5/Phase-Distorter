@@ -18,7 +18,26 @@ WorldDoorResources::import(std::span<const std::uint8_t> image,
   auto result =
       std::shared_ptr<WorldDoorResources>(new WorldDoorResources(version));
   result->data_.assign(image.begin() + base, image.begin() + base + size);
+  const unsigned directions=version==GameVersion::US?0x3e1d8:0x3e1c2;
+  for(unsigned i=0;i<4;++i) {
+    const unsigned at=directions+i*2;
+    result->entry_directions_[i]=std::uint16_t(image[at]|unsigned(image[at+1])<<8);
+    if(result->entry_directions_[i]>=8)
+      throw std::invalid_argument("Invalid authored door destination direction");
+  }
   return result;
+}
+WorldDoorEntryRecord WorldDoorResources::entry(dialogue::ReferenceKey key) const {
+  if(key[2]!=0xcf || key[3] || (key[1]&0x80))
+    throw std::invalid_argument("Queued door key does not select owned door payload content");
+  const unsigned at=unsigned(key[0])|unsigned(key[1])<<8;
+  if(at>data_.size() || data_.size()-at<11)
+    throw std::out_of_range("Door destination reads outside owned payload content");
+  const auto word=[&](unsigned offset){return std::uint16_t(data_[at+offset]|unsigned(data_[at+offset+1])<<8);};
+  return {{data_[at],data_[at+1],data_[at+2],data_[at+3]},word(4),word(6),word(8),data_[at+10]};
+}
+std::uint16_t WorldDoorResources::entry_direction(const WorldDoorEntryRecord &record) const {
+  return entry_directions_[record.packed_y>>14];
 }
 DoorEventPredicate
 WorldDoorResources::event_predicate(std::uint16_t door_found) const {

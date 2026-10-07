@@ -29,7 +29,7 @@ void DisplaySetup::begin(DisplayBlankKind kind) {
       !publication->uses_frame_display(frames_) ||
       !publication->uses_visual(visual_))
     throw std::logic_error("Display setup requires its actual fade, display and visual publisher");
-  if (!(clock_.interrupt_mask & 0x80))
+  if (!(clock_.effective_interrupt_mask() & 0x80))
     throw std::logic_error("Blank helper requires its native NMI owner");
 
   reset_ = kind == DisplayBlankKind::Reset;

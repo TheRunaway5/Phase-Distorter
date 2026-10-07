@@ -265,6 +265,17 @@ aspect, 4:3, 16:10, 16:9, 21:9, the window's aspect, or a custom ratio. Preferen
 persist between desktop sessions. The **Diagnostics** tab shows frame, CPU,
 sound, and timing information.
 
+For Steam Deck's [1280×800 display](https://www.steamdeck.com/en/tech), enable
+**Widescreen** and select **16:10 (Steam Deck)**. To start in fullscreen with
+this ratio, use `--aspect 16:10 --fullscreen` as the Steam launch options, or run:
+
+```sh
+"./Phase Distorter" --aspect 16:10 --fullscreen
+```
+
+The expanded game view fills the 16:10 screen. Fixed intro artwork keeps its
+authored aspect ratio, then returns to the selected view.
+
 The optional **Variable refresh rate (VRR)** checkbox uses native-rate pacing
 with vsync, capped below the monitor maximum. Enable VRR in your monitor and
 graphics settings first; the checkbox controls application pacing. It defaults
@@ -309,13 +320,16 @@ and Lumine Hall's scrolling wall text adapts to the wider picture. Forest border
 and the void around caves and rooms extend naturally without forcing the display
 camera away from the player. Short road tunnels, including those to Threed and
 Fourside, and the desert traffic strip retain camera boundaries; constrained
-areas narrower than the selected view use side borders. Menus and HUD remain
-centered.
+areas narrower than the selected view use side borders. Command boxes, the
+carried-money counter and gameplay windows authored at the left inset follow
+the wider view's left edge, keeping their original size. Dialogue and the party
+HUD retain their authored positions in the centered native view.
 
 Fixed intro artwork, including **The War Against Giygas!**, uses a centered 4:3
 view instead of repeating into the margins. The selected wider view returns
-after that scene. The animated Giygas static fills the selected wide view while
-the intro card stays centered. The Mother 2 logo screen extends its background into the
+after that scene. Static and palette flashes retain the same card dimensions
+and receive temporal smoothing when the photosensitivity filter is enabled.
+The Mother 2 logo screen extends its background into the
 widescreen margins while keeping the original logo and copyright centered;
 the artwork itself is not stretched or repeated.
 
@@ -364,8 +378,11 @@ The **Photosensitivity filter** in **F1 → Display** is **disabled by default**
 and works independently of widescreen. It uses the SNES Classic EarthBound
 filter's 80% brightness ramp and quantized temporal feedback for PSI and Giygas.
 The feedback persists across native frames, including prayer returns; host
-redraws do not advance it. Filtering affects the complete picture, including
-text and widescreen margins, while the original framebuffer remains intact.
+redraws do not advance it. Battle backgrounds, effects and widescreen margins
+are filtered. Enemy sprites and visible text windows retain their original
+colors and brightness, including window borders, fills, and prompts. Moving,
+changing or removing enemy artwork leaves no photosensitivity feedback trail.
+The original framebuffer remains intact.
 
 The setting is saved with your display preferences. To enable it before the
 first game frame, use:

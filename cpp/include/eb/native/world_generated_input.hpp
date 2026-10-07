@@ -8,6 +8,7 @@
 
 namespace eb::native {
 class WalkingData;
+class PeripheralState;
 
 struct GeneratedInputRun {
   std::uint8_t frames{};
@@ -37,7 +38,8 @@ public:
                      GeneratedInputDataLayout);
   GameVersion version() const noexcept { return version_; }
   std::uint16_t pad(CollisionDirection) const;
-  std::uint16_t angle(CollisionPoint from, CollisionPoint to) const;
+  std::uint16_t angle(CollisionPoint from, CollisionPoint to,
+                      PeripheralState* peripherals = nullptr) const;
   CollisionDirection direction(CollisionPoint from, CollisionPoint to) const;
 
 private:

@@ -33,7 +33,7 @@ public:
         std::optional<std::uint32_t> number_;
         dialogue::Conversation* parent_{};
         dialogue::Conversation conversation_;
-        bool pending_{}, complete_{};
+        bool pending_{}, complete_{}, raw_{};
     };
     BattleDialogue(std::shared_ptr<const dialogue::Program>, dialogue::PromptHost&,
                    dialogue::PreparedMessage&, party::State&, const InputState&);
@@ -41,6 +41,8 @@ public:
     BattleDialogue& operator=(const BattleDialogue&) = delete;
     BattleDialogue(BattleDialogue&&) = delete;
     BattleDialogue& operator=(BattleDialogue&&) = delete;
+    // DISPLAY_TEXT with no battle wrapper writes: its caller owns prompt mode.
+    std::unique_ptr<Operation> begin_raw(dialogue::Location);
     std::unique_ptr<Operation> begin_text(dialogue::Location);
     std::unique_ptr<Operation> begin_text(dialogue::Location, dialogue::Conversation& parent);
     std::unique_ptr<Operation> begin_number(dialogue::Location, std::uint32_t);

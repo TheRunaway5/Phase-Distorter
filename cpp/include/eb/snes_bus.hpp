@@ -154,6 +154,9 @@ class SnesBus {
     std::span<const uint32_t> presentation_effect_reference() const {
         return scene_renderer_.presentation_effect_reference();
     }
+    std::span<const uint8_t> presentation_unfiltered_mask() const {
+        return scene_renderer_.presentation_unfiltered_mask();
+    }
     // Optional host observer for each completed hardware frame, including every
     // frame crossed by one long DMA stall. The pixels are borrowed until this
     // callback returns; consume/copy them here rather than retaining the span.

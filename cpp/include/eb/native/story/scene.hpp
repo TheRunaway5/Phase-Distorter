@@ -6,13 +6,23 @@
 #include "eb/native/story/input.hpp"
 #include "eb/native/story/ticks.hpp"
 
-namespace eb::native { class WorldDisplayFade; struct WorldEncounterVisualState; }
-namespace eb::native::battle { class AnimationCommands; class Frame; class FrameDisplay; }
+namespace eb::native { class WorldDisplayFade; struct WorldEncounterVisualState; class WorldEncounterEffects; }
+namespace eb::native::battle { class AnimationCommands; class Frame; class FrameDisplay; class Roster; struct FrameState; struct PaletteBankState; struct PsiScratch; }
 namespace eb::native::npcs { class Interactions; }
 namespace eb::native::party { class Inventory; }
 
 namespace eb::native::story {
 class BattleDialogue;
+class Scene;
+enum class ActorFramePhase { ObjectsCleared, BeforeScreen, ScreenUpdated };
+// Synchronous source phases surrounding the real actor pump. The child owns
+// the Scene throughout; this service may not start a competing operation.
+class ActorFrameService {
+public:
+    virtual ~ActorFrameService() = default;
+    virtual bool uses(const Scene &) const noexcept = 0;
+    virtual void apply(ActorFramePhase) = 0;
+};
 class PartyFormation;
 class TeddyParty;
 enum class SceneService { Frame, ActorEngine, CameraRefresh, BattleHelper, Dialogue, PartySpriteBlink, TeddyRefresh, ItemFailureScan, ScriptSound, BicycleDismount, Publication };
@@ -61,6 +71,7 @@ public:
     virtual bool uses_frame_display(const battle::FrameDisplay &display) const noexcept {
         return frame_display() == &display;
     }
+    virtual bool uses_palette_transport(const battle::PaletteBankState &) const noexcept { return false; }
     // Admission verifies the setup child and display publisher borrow the
     // same transport, palette, background and scratch owners.
     virtual bool supports_animation(const battle::AnimationCommands &) const noexcept { return false; }
@@ -72,7 +83,10 @@ public:
 // activation, map animation and audio playback have their own source entry
 // points: neither screen sampling nor a dialogue frame invents those calls.
 class Scene {
-  public:
+public:
+    // Clear the live OAM builder, preserving already staged and published
+    // immutable screens and the UPDATE_SCREEN buffer selection.
+    void reset_object_builder() noexcept;
     class Operation {
       public:
         ~Operation();
@@ -91,6 +105,7 @@ class Scene {
         void complete_frame(std::array<std::uint16_t, 2> raw);
         void complete_frame(std::array<std::uint16_t, 2> host, FrameBoundaryService &);
         const std::optional<WorldActionRequest> &actor_request() const;
+        bool window_animation_active(const WorldEncounterEffects &) const;
         void respond_actor(std::uint16_t value = 0, unsigned parameter_bytes = 0,
                            std::optional<std::uint16_t> sleep_frames = std::nullopt);
         const std::optional<WorldCameraRefresh> &camera_request() const;
@@ -118,6 +133,8 @@ class Scene {
         const std::optional<dialogue::ConversationEvent> &dialogue_event() const;
         void respond_dialogue(dialogue::Response);
         bool complete() const;
+        bool uses(const Scene &) const noexcept;
+        bool is_child_of(const Operation &) const noexcept;
       private:
         friend class Scene;
         struct Execution;
@@ -134,6 +151,12 @@ class Scene {
     std::unique_ptr<Operation> begin(TickKind);
     // One real NMI publication; no Ticks traversal or WAIT/input consumption.
     std::unique_ptr<Operation> begin_publication();
+    std::unique_ptr<Operation> begin_nested_publication(Operation &parent);
+    void require_content_boundary(Operation *parent = nullptr) const;
+    dialogue::Conversation &dialogue_owner(Operation &parent);
+    // A physical NMI during a synchronous peripheral handshake publishes the
+    // retained screen without advancing or acknowledging any logical child.
+    void interrupt_publication(FrameBoundaryService * = nullptr);
     // Complete C43568: one real WAIT followed by the bound C2DB3F body.
     std::unique_ptr<Operation> begin_battle_frame();
     std::unique_ptr<Operation> begin_nested_battle_frame(Operation &parent);
@@ -151,6 +174,12 @@ class Scene {
     // an actor callback is suspended. Reuse this scene's clock, cached screen
     // and live guard; never start another ActorWorld traversal recursively.
     std::unique_ptr<Operation> begin_nested(TickKind, Operation &parent);
+    std::unique_ptr<Operation> begin_actor_frame(ActorFrameService &);
+    std::unique_ptr<Operation> begin_nested_actor_frame(ActorFrameService &, Operation &parent);
+    // Validate an actual synchronous callback before its owner mutates state.
+    // Actor callbacks retain their live tick; dialogue/formation callbacks
+    // have no tick and may run a real frame child before receiving a reply.
+    void require_nested(const Operation &parent) const;
     // Bind stable authoritative services before execution. They must outlive
     // this Scene; rebinding to different owners is rejected. Interaction flags
     // must already have their final allocation, shared directly with actors.
@@ -174,12 +203,16 @@ class Scene {
     void handoff_publication(ScenePublication &expected, ScenePublication &next,
                              const WorldDisplayFade &, BattleServices);
     const ScenePublication *publication() const noexcept;
+    bool uses(const RandomState &) const noexcept;
+    bool uses(const ActorWorld &) const noexcept;
     bool uses(const TickState &) const noexcept;
+    bool uses_battle_menu(const battle::Roster&, const battle::FrameState&, const battle::PaletteBankState&, const battle::PsiScratch&, const RandomState&) const noexcept;
+    bool uses(const InputState &) const noexcept;
     bool uses(const dialogue::WindowHost&, const party::State&) const noexcept;
     bool uses(const BattleDialogue&) const noexcept;
     bool uses(const PartyFormation&) const noexcept;
-    void clear_world_capture();
-    void refresh_world_capture();
+    void clear_world_capture(Operation *parent = nullptr);
+    void refresh_world_capture(Operation *parent = nullptr);
     bool shares_world(const dialogue::WindowHost&, const ActorWorld&) const;
     bool failed() const noexcept;
     bool busy() const noexcept;

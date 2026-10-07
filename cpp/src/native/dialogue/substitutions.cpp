@@ -341,6 +341,50 @@ std::uint32_t TextSubstitutions::read_number(StatKey key, TextOutput::Owner owne
     require(bool(e.values.read_number), "Text substitution requires a live numeric provider");
     return e.values.read_number(key);
 }
+std::optional<std::uint16_t> TextSubstitutions::query_item(const ItemQueryRequest &request, TextOutput::Owner owner) const {
+    const auto &e = *execution_;
+    e.host.output().require_owner(owner);
+    require(e.host.output().complete(), "Item query requires idle text output");
+    switch (request.kind) {
+    case ItemQueryKind::SellPrice:return std::uint16_t(e.catalog().item_cost(request.item)>>1);
+    case ItemQueryKind::Subtype2:
+        switch (e.catalog().item_properties(request.item).type & 0x0c) {
+        case 4: return 2;
+        case 8: return 3;
+        default: return 1;
+        }
+    case ItemQueryKind::FindCondiment: {
+        const auto food=std::uint8_t(request.item);
+        if((e.catalog().item_properties(food).type&0x3c)!=0x20)return 0;
+        const auto inventory=e.host.attacker_inventory();
+        if(!inventory)return {};
+        return e.catalog().find_condiment(food,*inventory);
+    }
+    }
+    throw std::logic_error("Unknown typed item query");
+}
+std::uint8_t TextSubstitutions::stat_letter(unsigned descriptor, TextOutput::Owner owner) const {
+    const auto &e = *execution_;
+    e.host.output().require_owner(owner);
+    require(e.host.output().complete(), "Stat byte query requires idle text output");
+    const auto &catalog = e.catalog();
+    const auto index = e.host.state().window().active.secondary;
+    if (index > catalog.stat_tag(descriptor)) return 0;
+    const auto &stat = catalog.stat(descriptor);
+    // Index0 and numeric-tag indices beyond the actual field read adjacent
+    // source storage. These bytes have no owner in this semantic field view.
+    // Do not invent a NUL, clamp, or numeric-width comparison for that domain.
+    require(index != 0 && index <= stat.size,
+            "Stat byte query leaves its owned live field");
+    if (stat.kind == StatKind::String) {
+        require(bool(e.values.read_string), "Stat byte query requires its live string owner");
+        const auto bytes = e.values.read_string(stat.key);
+        require(index <= bytes.size(), "Stat byte query leaves the live string storage");
+        return bytes[index - 1];
+    }
+    require(bool(e.values.read_number), "Stat byte query requires its live numeric owner");
+    return std::uint8_t(e.values.read_number(stat.key) >> ((index - 1) * 8));
+}
 void TextSubstitutions::configure(std::shared_ptr<const SubstitutionResources> resources, SubstitutionValues values) {
     auto &e = *execution_;
     e.host.output().require_owner(0);
@@ -401,6 +445,17 @@ std::unique_ptr<TextSubstitutions::Operation> TextSubstitutions::begin_nested(Su
 }
 std::unique_ptr<TextSubstitutions::Operation> TextSubstitutions::begin_nested(SubstitutionCommand command,
                                                                             Operation &parent) {
+    auto &output = execution_->host.output();
+    const auto parent_owner = parent.callback_owner(output);
+    if (execution_->host.state().focus &&
+        (command.action == SubstitutionAction::Number || command.action == SubstitutionAction::Money))
+        valid_number(command.value);
+    const auto owner = output.enter(parent_owner);
+    try { return begin(std::move(command), owner, true); }
+    catch (...) { output.leave(owner); throw; }
+}
+std::unique_ptr<TextSubstitutions::Operation> TextSubstitutions::begin_nested(SubstitutionCommand command,
+                                                                            MenuHost::Operation &parent) {
     auto &output = execution_->host.output();
     const auto parent_owner = parent.callback_owner(output);
     if (execution_->host.state().focus &&

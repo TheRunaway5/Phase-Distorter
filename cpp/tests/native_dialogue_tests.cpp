@@ -463,6 +463,61 @@ void battle_grammar_arguments() {
                 "JP ignored grammar selector consumed a following glyph");
     }
 }
+void script_music_arguments() {
+    for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        State state;
+        state.dummy.active.argument=0x12340028;
+        state.dummy.active.working=0xaabbccdd;
+        Runtime vm(program({0x1f,0,0,0,0x1f,7,0,0x1f,1,2},version),state);
+        vm.start(EntryId{0});
+        require(vm.advance()==Progress::Suspended &&
+                vm.request()->script_music==ScriptMusicRequest{ScriptMusicKind::Change,40,0},
+                "Music command lost either zero literal or live argument word");
+        vm.respond({});
+        require(vm.advance()==Progress::Suspended &&
+                vm.request()->script_music==ScriptMusicRequest{ScriptMusicKind::Effect,40,0},
+                "Music effect command did not resolve the source argument");
+        vm.respond({});
+        require(vm.advance()==Progress::Suspended &&
+                vm.request()->script_music==ScriptMusicRequest{ScriptMusicKind::Stop,0,0},
+                "Stop music command consumed an extra authored operand");
+        vm.respond({});
+        require(vm.advance()==Progress::Finished && state.dummy.active.working==0xaabbccdd &&
+                vm.returned_cursor()==Location{0,10},"Music changed working memory or failed to return");
+        Runtime literals(program({0x1f,0,255,28,0x1f,7,2,2},version),state);
+        literals.start(EntryId{0});
+        require(literals.advance()==Progress::Suspended &&
+                literals.request()->script_music==ScriptMusicRequest{ScriptMusicKind::Change,28,255},
+                "Music command truncated its first byte or ignored a literal track");
+        literals.respond({});
+        require(literals.advance()==Progress::Suspended &&
+                literals.request()->script_music==ScriptMusicRequest{ScriptMusicKind::Effect,2,0},
+                "Music effect changed a nonzero literal");
+        literals.respond({});require(literals.advance()==Progress::Finished,"Music literal stream did not return");
+    }
+}
+void special_event_arguments() {
+    for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        for (unsigned event : {0u, 8u, 15u, 17u, 18u, 255u}) {
+            State state;
+            state.dummy.active.working = 0x12345678;
+            Runtime vm(program({0x1f, 0x41, std::uint8_t(event), 2}, version), state);
+            vm.start(EntryId{0});
+            require(vm.advance() == Progress::Suspended &&
+                    vm.request()->kind == RequestKind::SpecialEvent && vm.request()->special_event == event,
+                    "Special event consumed a zero operand or lost its typed request");
+            rejects([&] { vm.respond({}); }, "Special event accepted an incomplete result");
+            require(state.dummy.active.working == 0x12345678 && vm.advance() == Progress::Suspended,
+                    "Rejected special event response advanced its authored stream");
+            Response response;
+            response.special_event_result = event & 1 ? 0xfffe : 1;
+            vm.respond(response);
+            require(vm.advance() == Progress::Finished && vm.returned_cursor() == Location{0, 4} &&
+                    state.dummy.active.working == (event & 1 ? 0xfffffffeu : 1u),
+                    "Special event did not sign extend the complete working dword");
+        }
+    }
+}
 void validation() {
     rejects([] { Program p(eb::GameVersion::US, {{0, 65535, {1, 2}}}); }, "Cross-page block accepted");
     rejects([] { Program p(eb::GameVersion::US, {{0, 0, {1, 2}}, {0, 1, {2}}}); },
@@ -499,6 +554,8 @@ int main() {
         requests_and_limits();
         battle_animation_arguments();
         battle_grammar_arguments();
+        special_event_arguments();
+        script_music_arguments();
         validation();
         std::cout << "PASS " << checks << " CPU-free dialogue semantic/request/content checks\n";
     } catch (const std::exception &error) {

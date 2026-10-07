@@ -11,6 +11,7 @@
 #include "eb/native/dialogue/conversation.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
+#include "generated_profile.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -727,16 +728,69 @@ void resource_probe(const eb::GameAssets& assets,const dialogue::WindowResources
         }
     }
 }
+
+void source_widescreen_probe(const eb::GameAssets& assets) {
+    std::uint64_t compared = 0, masks = 0;
+    for (unsigned id : {0u, 15u, 18u}) {
+        Source source(assets);
+        source.create(id); source.create(10); source.draw_all();
+        source.call(assets.version == eb::GameVersion::US ? 0xc47f87 : 0xc45c1a, true);
+        const bool battle = id != 0;
+        for (unsigned width : {256u, 398u, 522u, 796u, 1024u}) {
+            auto display = std::make_unique<eb::SnesBus>(*source.bus);
+            const unsigned layer = battle ? 0 : 2;
+            for (unsigned cell = 0; cell < 896; ++cell) {
+                const auto descriptor = source.get(source.p.scene + cell * 2);
+                display->video_ram[0xf800 + cell * 2] = descriptor;
+                display->video_ram[0xf801 + cell * 2] = descriptor >> 8;
+            }
+            std::copy_n(source.bus->work_ram.begin() + 0x200, 64, display->palette_ram.begin());
+            display->write_byte(0x420c, 0);
+            display->write_byte(0x2100, 15); display->write_byte(0x2105, battle ? 0 : 1);
+            display->write_byte(0x2107 + layer, 0x7c);
+            display->write_byte(layer ? 0x210c : 0x210b, 6);
+            display->write_byte(0x212c, 1u << layer); display->write_byte(0x212d, 0);
+            display->write_byte(0x210e + layer * 2, 0xff);
+            display->write_byte(0x210e + layer * 2, 0xff);
+            const auto battle_at = eb::source_profile(assets.version).wram_battle_mode_flag;
+            display->work_ram[battle_at] = battle; display->work_ram[battle_at + 1] = 0;
+            display->set_presentation_width(width); display->set_presentation_effects_enabled(true);
+            const auto end = display->completed_frames + 2;
+            while (display->completed_frames < end) display->advance_cpu_cycles(1000);
+            for (unsigned window_id : {id, 10u}) {
+                const unsigned record = source.record(source.slot(window_id)), left = source.get(record + 6) * 8,
+                               top = source.get(record + 8) * 8, w = (source.get(record + 10) + 2) * 8,
+                               h = (source.get(record + 12) + 2) * 8;
+                for (unsigned y = top; y < top + h; ++y)
+                    for (unsigned x = left; x < left + w; ++x) {
+                        const auto at = y * width + x;
+                        require(display->presentation_pixels()[at] == display->native_framebuffer[y * 256 + x],
+                                "Actual source command/cash artwork differs at the widescreen left edge");
+                        masks += display->presentation_unfiltered_mask()[at] != 0;
+                        ++compared;
+                    }
+            }
+        }
+    }
+    require(masks > compared / 2, "Actual command/cash artwork did not receive its photosensitivity exemption");
+    std::cout << "PASS " << (assets.version == eb::GameVersion::US ? "US" : "JP")
+              << " real source command/cash windows at five widths: " << compared
+              << " native-art comparisons, " << masks << " protected pixels\n";
+}
 }
 int main(int argc,char** argv) {
     try {
         if(argc<2) {std::cout<<"SKIP native window reference: supply local US and/or JP .ebpak files\n";return 77;}
-        for(int i=1;i<argc;++i) {
+        const bool widescreen = std::string(argv[1]) == "--widescreen";
+        require(!widescreen || argc > 2, "Supply asset packs after --widescreen");
+        for(int i=widescreen?2:1;i<argc;++i) {
             const auto assets=eb::load_game_assets(argv[i],eb::asset_profiles());
+            if (widescreen) { source_widescreen_probe(assets); continue; }
             const auto resources=dialogue::WindowResources::import(assets.image,assets.version);
             source_configuration_probe(assets,*resources);resource_probe(assets,*resources);
             const auto fonts=dialogue::FontResources::import(assets.image,assets.version);native_configuration_cases(assets,fonts,resources);native_lifecycle_cases(assets,fonts,resources);native_title_cases(assets,fonts,resources);native_conversation_cases(assets,fonts,resources);
         }
+        if (widescreen) return 0;
         std::cout<<"PASS source window setup probe: "<<counts.configurations<<" configurations, "<<counts.reopens<<" reopens, "
                  <<counts.closes<<" closes, "<<counts.draws<<" draw calls, "<<counts.world_calls<<" actual sprite helpers, "
                  <<counts.instructions<<" original instructions, "<<counts.ticks<<" explicit WindowTick seams, "

@@ -378,3 +378,11 @@ BattleBackgroundPixel BattleBackgroundFrame::sample(int x,
   return {palette[index], index, artwork->opaque[at] != 0};
 }
 } // namespace eb::native
+
+namespace eb::native {
+void BattleBackground::swap_final_distortion() {
+  std::swap(definition_.distortions[0], definition_.distortions[3]);
+  definition_.distortions[1] = 0;
+  state_.distortion.duration = 1;
+}
+}

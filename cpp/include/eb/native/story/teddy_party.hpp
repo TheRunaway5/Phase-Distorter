@@ -23,7 +23,7 @@ class TeddyParty {
         bool complete() const { return complete_; }
       private:
         friend class TeddyParty;
-        explicit Operation(TeddyParty &);
+        explicit Operation(TeddyParty &, std::optional<std::uint16_t> = {});
         void remove(unsigned member);
         void insert(unsigned member);
         void finish();
@@ -33,6 +33,7 @@ class TeddyParty {
         std::unique_ptr<PartyFormation::TailOperation> tail_;
         std::optional<PartyFormationService> pending_;
         std::optional<std::uint8_t> selected_;
+        std::optional<std::uint16_t> remove_first_;
         bool registered_{};
         unsigned phase_{};
         bool complete_{};
@@ -44,6 +45,11 @@ class TeddyParty {
     TeddyParty(const TeddyParty &) = delete;
     TeddyParty &operator=(const TeddyParty &) = delete;
     std::unique_ptr<Operation> begin();
+    // REMOVE_ITEM invokes REMOVE_CHAR_FROM_PARTY before ordinary C216DB,
+    // even if a different Teddy already belongs to the party.
+    std::unique_ptr<Operation> begin_remove(std::uint16_t member);
+    bool busy() const noexcept { return active_ != nullptr; }
+    bool failed() const noexcept { return failed_ || creation_.failed() || updater_.failed(); }
     bool bound_to(const party::State &, const ActorWorld &, const PartyFormation &,
                   const party::Inventory &) const noexcept;
   private:

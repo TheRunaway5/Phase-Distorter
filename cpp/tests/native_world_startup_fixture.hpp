@@ -176,7 +176,7 @@ struct Fixture {
         area(r.map->prepare(r.map->sector(0,0).combination,text.event_flags)),
         colors(r.palettes->resolve(r.palettes->area_at(0,0),text.event_flags)),
         talk(r.interactions,r.map_text,r.program,windows,actors,*r.collision,area),
-        updater(party,actors,*r.party_data,formation),style(talk.state().movement_flags),
+        updater(party,actors,*r.party_data,formation),style(talk.state().area_character_style),
         creation(party,actors,*r.party_data,formation,updater,spawn.prepared,trail,style),
         refresh(updater,party,actors,*r.party_data,formation,movement,talk,clock),
         bootstrap(*r.bootstrap_data,*r.walking,actors,party,formation,trail,control,maintenance,following),
@@ -192,7 +192,8 @@ struct Fixture {
     spawn.prepared.height=19;spawn.prepared.priority=0xabcd;
     queued.current=3;queued.next=2;queued.pending=7;queued.current_type=9;
     phone={3,4};scene_colors.fill({17,18,19});
-    maintenance.battle_mode_flag=0xabcd;
+    windows.prompt_state().battle_mode=0;
+    control.encounter.mode=0x1234;
   }
   saves::ContinueSnapshot snapshot(unsigned count=4) const {
     saves::PersistedState s;s.version=r.version;

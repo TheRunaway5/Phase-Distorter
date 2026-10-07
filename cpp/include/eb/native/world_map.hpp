@@ -59,6 +59,10 @@ struct MapTileset {
     std::vector<MapBlock> blocks;
     std::vector<MapEventReplacement> replacements;
     std::vector<MapAnimation> animations;
+    // Exact LOAD_TILESET_ANIM decompression result. This includes bytes not
+    // referenced by animation tracks; the live loader retains the unwritten
+    // tail of its shared animation staging buffer across map changes.
+    std::vector<std::uint8_t> animation_bytes;
 };
 
 class WorldMapArea;
@@ -98,6 +102,8 @@ class WorldMapArea {
     // Tile/collision coordinates are 8-pixel cells; pixel coordinates are world pixels.
     MapTile tile(int tile_x, int tile_y, MapLayer layer = MapLayer::Base) const;
     std::uint8_t collision(int tile_x, int tile_y) const;
+    // Event-resolved selector used by the actual retained collision window.
+    unsigned collision_block(int tile_x,int tile_y) const {return block_at(tile_x,tile_y);}
     MapPixel pixel(int world_x, int world_y, MapLayer layer = MapLayer::Base) const;
     // Event-only arrangement/collision refresh. Reapply ordered rules from
     // authored base without resetting current artwork or animation clocks.

@@ -264,7 +264,63 @@ void party_join_hidden_animation(const eb::GameAssets &assets) {
               << ": captured Paula party-join hidden animation, retained artwork, visible recovery and validation passed\n";
 }
 
+void teleport_arrival_party_slots(const eb::GameAssets &assets) {
+    for (bool sparse : {false, true}) {
+        Fixture test(assets);
+        const unsigned jeff = sparse ? 26 : 25;
+        test.create(1, 24);
+        test.create(3, jeff);
+        test.select(jeff, 6, 0, 0, true);
+        const unsigned roster = test.jp ? 0x9b3c : 0x988b;
+        const unsigned roles = test.jp ? 0x9b48 : 0x9897;
+        const unsigned arrival = test.jp ? 0xc0e8b7 : 0xc0e8ed;
+        const unsigned graphics_low = test.jp ? 0x2dc8 : 0x29ca;
+        const unsigned graphics_high = test.jp ? 0x2e04 : 0x2a06;
+        const auto before_low = test.get(graphics_low + jeff * 2);
+        const auto before_high = test.get(graphics_high + jeff * 2);
+        test.bus.work_ram[roster] = 1;
+        test.bus.work_ram[roster + 1] = 3;
+        for (unsigned member = 0; member < 6; ++member) {
+            if (member >= 2) test.bus.work_ram[roster + member] = 0;
+            test.put(roles + member * 2, member == 0 ? 24 : member == 1 ? jeff : 0xffff);
+        }
+        // Actual C0E897 arrival call: the original loop visits all six roster
+        // entries and passes 24 + index, even when a remaining actor's role
+        // differs after a party removal. Empty entries pass character -1.
+        for (unsigned member = 0; member < 6; ++member) {
+            test.cpu.program_counter = arrival;
+            test.cpu.accumulator = std::uint16_t(test.bus.work_ram[roster + member] - 1);
+            test.cpu.x_index = 0;
+            test.cpu.y_index = 24 + member;
+            test.cpu.direct_page = 0x1e00;
+            test.cpu.stack_pointer = 0x1fff;
+            test.cpu.status_register = eb::MainCpu65816::InterruptDisable;
+            test.put(0x1e02, member);
+            test.put(0x1e18, 0);
+            test.put(test.jp ? 0x514c : 0x4dc6,
+                     (test.jp ? 0x9c7f : 0x99ce) + (member == 1 ? 2 * 0x5f : 0));
+            for (unsigned step = 0;; ++step) {
+                require(step < 10000, "Teleport arrival appearance call did not return");
+                test.cpu.step_instruction();
+                if (test.cpu.program_counter == arrival + 4 && test.cpu.stack_pointer == 0x1fff) break;
+            }
+        }
+        // Reach the exact failing selector after the teleport fade, rather
+        // than merely asserting that the arrival preparation returned.
+        test.select(jeff, 6, 0, 0, true);
+        require(test.get(graphics_low + jeff * 2) == before_low &&
+                    test.get(graphics_high + jeff * 2) == before_high,
+                "Teleport arrival assigned an empty roster entry to a live party actor");
+        require(test.get(test.scripts + jeff * 2) == 1 &&
+                    test.bus.native_sprite_runtime()->diagnostics().live_resources == 2,
+                "Teleport arrival changed party actors or their logical tasks");
+    }
+    std::cout << (assets.version == eb::GameVersion::JP ? "JP" : "US")
+              << ": teleport arrival preserves compact/sparse party roles and skips empty roster entries\n";
+}
+
 void run(const eb::GameAssets &assets) {
+    teleport_arrival_party_slots(assets);
     party_join_hidden_animation(assets);
     Fixture test(assets);
     const auto resources = test.bus.native_sprite_runtime()->resources();

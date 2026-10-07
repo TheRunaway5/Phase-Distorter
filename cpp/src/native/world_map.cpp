@@ -122,7 +122,8 @@ WorldMap::WorldMap(std::span<const std::uint8_t> assets, WorldMapLayout layout) 
         if (count > 64)
             throw std::runtime_error("Too many map animation tracks");
         if (count) {
-            const auto animated = decompress_content(content.bytes, content.pointer(layout.animation_graphics + id * 4), 8192);
+            set.animation_bytes = decompress_content(content.bytes, content.pointer(layout.animation_graphics + id * 4), 8192);
+            const auto &animated = set.animation_bytes;
             for (unsigned track = 0; track < count; ++track) {
                 const unsigned frames = content.byte(properties), delay = content.byte(properties + 1),
                                size = content.word(properties + 2), source = content.word(properties + 4),

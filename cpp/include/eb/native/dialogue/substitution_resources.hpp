@@ -56,6 +56,8 @@ class SubstitutionResources {
     static std::shared_ptr<const SubstitutionResources> import(std::span<const std::uint8_t>, GameVersion);
     GameVersion version() const { return version_; }
     const StatDescriptor& stat(unsigned id) const;
+    // CC1928 compares the complete byte, including the numeric-type bit.
+    std::uint8_t stat_tag(unsigned id) const { return stat_tags_.at(id); }
     CharacterNameSelection character_name(unsigned id) const;
     std::span<const std::uint8_t> item_text(unsigned id) const;
     // Inventory copies the complete fixed name field, including bytes after
@@ -65,6 +67,10 @@ class SubstitutionResources {
     // Shares the imported item table with names; no mutable inventory lives here.
     ItemProperties item_properties(unsigned id) const;
     std::uint16_t item_cost(unsigned id) const;
+    std::uint16_t item_effect(unsigned id) const;
+    // FIND_CONDIMENT stops at the first empty slot and returns the first
+    // condiment byte. Its food operand is truncated by the original helper.
+    std::uint8_t find_condiment(std::uint8_t food, std::span<const std::uint8_t,14> inventory) const;
     std::uint8_t npc_flags(unsigned id) const { return npc_flags_.at(id); }
     std::uint8_t npc_enemy(unsigned id) const { return npc_enemies_.at(id); }
     std::span<const std::uint8_t> teleport_name(unsigned id) const;
@@ -91,6 +97,7 @@ class SubstitutionResources {
     explicit SubstitutionResources(GameVersion version) : version_(version) {}
     GameVersion version_;
     std::array<StatDescriptor, 96> stats_{};
+    std::array<std::uint8_t, 96> stat_tags_{};
     std::array<std::uint8_t, 19> npc_enemies_{}, npc_flags_{};
     std::array<PsiNameSelection, 54> abilities_{};
     std::vector<std::uint8_t> item_table_;

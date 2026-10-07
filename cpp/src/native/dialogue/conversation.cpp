@@ -71,7 +71,9 @@ TextOutput::Owner Conversation::callback_owner(TextOutput &output) const {
         window_effect ? window_effect->kind == WindowEffectKind::WindowTick :
         request && (request->kind == RequestKind::Pause || request->kind == RequestKind::TimedWait || request->kind == RequestKind::Prompt ||
                     request->kind == RequestKind::Selection ||
-                    request->kind == RequestKind::SoundWorldTick);
+                    request->kind == RequestKind::SoundWorldTick ||
+                    request->kind == RequestKind::Teleport ||
+                    (request->kind == RequestKind::SpecialEvent && request->special_event == 7));
     if (!callback)
         throw std::logic_error("Dialogue can nest only within a world or UI host event");
     return owner_;
@@ -159,8 +161,21 @@ Progress Conversation::advance(unsigned work_budget) {
             case RequestKind::Glyph:
             case RequestKind::Newline:
             case RequestKind::WidthHint:
-            case RequestKind::ConditionalNewline:
             case RequestKind::ClearLine:
+                output_.begin(request, owner_);
+                phase_ = Phase::Output;
+                break;
+            case RequestKind::ConditionalNewline:
+                if (windows_) {
+                    if (const auto x = windows_->aliased_text_x()) {
+                        if (*x)
+                            windows_->aliased_newline(owner_);
+                        // CC01's raw register newline has no glyph/footer
+                        // effect. A zero GET_TEXT_X skips PRINT_NEWLINE too.
+                        runtime_.respond();
+                        break;
+                    }
+                }
                 output_.begin(request, owner_);
                 phase_ = Phase::Output;
                 break;
@@ -289,11 +304,28 @@ Progress Conversation::advance(unsigned work_budget) {
                 else { event_ = request; return Progress::Suspended; }
                 break;
             }
+            case RequestKind::ItemQuery: {
+                if (!request.item_query) throw std::logic_error("Item query lacks its typed operand");
+                const auto result=windows_ ? windows_->substitutions().query_item(*request.item_query, owner_) : std::nullopt;
+                if (result) runtime_.respond({*result});
+                else { event_ = request; return Progress::Suspended; }
+                break;
+            }
             case RequestKind::BattleGrammar: {
                 if (!request.battle_grammar) throw std::logic_error("Battle grammar lacks its literal selector");
                 const auto result = windows_ ? windows_->query_battle(*request.battle_grammar) : std::nullopt;
                 if (result) runtime_.respond({*result});
                 else { event_ = request; return Progress::Suspended; }
+                break;
+            }
+            case RequestKind::StatLetter:
+                if (windows_) runtime_.respond({windows_->substitutions().stat_letter(request.count, owner_)});
+                else { event_ = request; return Progress::Suspended; }
+                break;
+            case RequestKind::PreparedNamesEqual: {
+                const auto *prepared=windows_ ? windows_->prepared_message() : nullptr;
+                if(prepared) runtime_.respond({std::uint16_t(prepared->names_equal())});
+                else {event_=request;return Progress::Suspended;}
                 break;
             }
             case RequestKind::PreparedValue: {

@@ -39,7 +39,7 @@ struct Scene::Execution {
     Ticks ticks;
     std::vector<std::uint64_t> stack;
     std::uint64_t next{}, frames{};
-    bool poisoned{};
+    bool poisoned{}, publishing{};
     ScenePublication *publication{};
     std::shared_ptr<const DirectSceneFrame> objects, world, published;
     std::vector<WorldSoundEvent> sounds;
@@ -86,7 +86,25 @@ struct Scene::Execution {
         stamp.frame = frames;
         published = capture(stamp, false);
     }
+    void publish_nmi(FrameBoundaryService *boundary) {
+        require(!poisoned && !publishing && (clock.effective_interrupt_mask() & 0x80),
+                "Publication requires the actual healthy nonrecursive NMI owner");
+        if (boundary) boundary->validate_publication();
+        // Failed admission or immutable capture has not consumed this clock.
+        while (windows.publish_next()) {}
+        auto stamp = *world; stamp.frame = frames + 1;
+        auto result = capture(stamp, true);
+        ++frames; ++clock.frame_counter; ++clock.new_frame_started; ++clock.publications;
+        published = std::move(result);
+        publishing = true;
+        try {
+            if (publication) publication->complete_publication();
+            if (boundary) boundary->after_publication();
+            publishing = false;
+        } catch (...) { publishing = false; poisoned = true; throw; }
+    }
 };
+void Scene::reset_object_builder() noexcept { execution_->objects.reset(); }
 struct Scene::Operation::Execution {
     Scene::Execution &scene;
     dialogue::Conversation *conversation{};
@@ -99,7 +117,11 @@ struct Scene::Operation::Execution {
     std::unique_ptr<battle::AnimationCommands::Operation> animation;
     std::unique_ptr<battle::Frame::Operation> battle_frame;
     std::uint64_t owner{};
+    std::uint64_t parent_owner{};
+    std::uint64_t publications_at_wait{};
     bool done{}, tick_for_meter{}, party_sprite_blink{}, battle_after_wait{}, publication_only{};
+    bool action_script_wait{};
+    ActorFrameService *actor_frame_service{};
     std::optional<SceneService> pending;
     Execution(Scene::Execution &s, dialogue::Conversation *c, Ticks::Operation *parent, std::uint64_t token)
         : scene(s), conversation(c), parent_tick(parent), owner(token) {}
@@ -187,6 +209,20 @@ struct Scene::Operation::Execution {
                 } else {
                     tick.reset();
                     if (tick_for_meter) { meter->respond(); tick_for_meter = false; }
+                    else if (action_script_wait) {
+                        // C102D0 tests the live signal after WINDOW_TICK and
+                        // each C1004E; only the initial tick rolls text state.
+                        auto& signal = s.actors.scene().action_script_state;
+                        if (signal) {
+                            signal = 0;
+                            action_script_wait = false;
+                            answer_conversation();
+                        } else if (s.windows.prompt_state().debug &&
+                                   (s.input.state[0] & 0x3000) == 0x3000) {
+                            action_script_wait = false;
+                            answer_conversation();
+                        } else start_tick(TickKind::WorldFrame);
+                    }
                     else if (conversation) answer_conversation();
                     else finish();
                 }
@@ -196,6 +232,7 @@ struct Scene::Operation::Execution {
             switch (*tick->service()) {
             case TickService::ClearObjects:
                 s.objects.reset();
+                if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::ObjectsCleared);
                 tick->respond();
                 return;
             case TickService::RunActors: {
@@ -210,13 +247,18 @@ struct Scene::Operation::Execution {
                 }
                 return;
             }
-            case TickService::UpdateScreen: s.screen(); tick->respond(); return;
+            case TickService::UpdateScreen:
+                if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::BeforeScreen);
+                s.screen();
+                if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::ScreenUpdated);
+                tick->respond(); return;
             case TickService::FrameBoundary:
                 if (s.battle_frame && tick->battle_body_pending()) {
                     require(s.publication && s.publication->supports_battle_frame(*s.battle_frame),
                             "Battle frame requires its actual display publisher");
                     s.battle_frame->validate_begin();
                 }
+                publications_at_wait = s.clock.publications;
                 pending = SceneService::Frame;
                 return;
             case TickService::BattleHelper:
@@ -254,13 +296,20 @@ struct Scene::Operation::Execution {
             const auto progress=receipt->advance(1);
             if(progress==dialogue::Progress::Finished) {
                 const auto recipient=receipt->recipient();
-                if(!recipient) {pending=SceneService::ItemFailureScan;return;}
-                const auto next=s.inventory->first_empty_index(recipient);
-                answer_item({recipient,next});receipt.reset();
+                const auto &request=std::get<dialogue::Request>(*conversation->event());
+                require(request.item_command.has_value(), "Inventory result lost its actual command");
+                if(request.item_command->kind==dialogue::ItemCommandKind::Give) {
+                    if(!recipient) {pending=SceneService::ItemFailureScan;return;}
+                    const auto next=s.inventory->first_empty_index(recipient);
+                    answer_item({recipient,next});
+                } else answer_item({recipient,{}});
+                receipt.reset();
             } else if(progress==dialogue::Progress::Suspended) {
-                require(receipt->service()==party::InventoryService::TeddyRefresh,
+                require(receipt->service()==party::InventoryService::TeddyRefresh ||
+                        receipt->service()==party::InventoryService::TeddyRemove,
                         "Unknown native item receipt service");
-                if(s.teddy) teddy=s.teddy->begin();
+                if(s.teddy) teddy=receipt->service()==party::InventoryService::TeddyRemove ?
+                    s.teddy->begin_remove(receipt->teddy_member()) : s.teddy->begin();
                 else pending=SceneService::TeddyRefresh;
             }
             return;
@@ -305,6 +354,12 @@ struct Scene::Operation::Execution {
             catch (...) { s.poisoned = true; throw; }
             answer_conversation();
         } else if (const auto *request = std::get_if<dialogue::Request>(&event);
+                   request && request->kind == dialogue::RequestKind::WaitActionScripts) {
+            s.actors.scene().action_script_state = 0;
+            s.windows.output().policy().instant = false;
+            action_script_wait = true;
+            start_tick(TickKind::Window);
+        } else if (const auto *request = std::get_if<dialogue::Request>(&event);
                    request && request->kind == dialogue::RequestKind::SoundWorldTick) start_tick(TickKind::World);
         else if (const auto *request = std::get_if<dialogue::Request>(&event);
                  request && request->kind == dialogue::RequestKind::ShowMeters) meter = s.meters.begin_show();
@@ -333,6 +388,12 @@ struct Scene::Operation::Execution {
             }
             case dialogue::ItemCommandKind::AddMoney:
                 answer_item({s.inventory->add_wallet32(command.amount),{}});break;
+            case dialogue::ItemCommandKind::SubtractMoney:
+                answer_item({s.inventory->subtract_wallet32(command.amount),{}});break;
+            case dialogue::ItemCommandKind::Take:
+                receipt=s.inventory->begin_take(command.character,command.item);break;
+            case dialogue::ItemCommandKind::Remove:
+                receipt=s.inventory->begin_remove(command.character,command.item);break;
             case dialogue::ItemCommandKind::Give:
                 receipt=s.inventory->begin_give(command.character,command.item);break;
             default:throw std::logic_error("Unknown native item command");
@@ -349,6 +410,15 @@ Scene::Scene(dialogue::WindowHost &w, party::State &p, RandomState &r, party::Me
 Scene::~Scene() = default;
 Scene::Operation::Operation(std::unique_ptr<Execution> e) : execution_(std::move(e)) {}
 Scene::Operation::~Operation() { if (!execution_->done) execution_->scene.poisoned = true; }
+void Scene::require_nested(const Operation &parent) const {
+    auto &s = *execution_;
+    const auto &p = *parent.execution_;
+    require(&p.scene == &s, "Nested scene work requires this scene's actual parent");
+    s.check(p.owner);
+    require(!p.done && ((p.pending == SceneService::ActorEngine && p.tick) ||
+        (!p.tick && (p.pending == SceneService::Dialogue || p.pending == SceneService::BicycleDismount))),
+        "Nested scene work requires a suspended actor, dialogue or formation callback");
+}
 std::unique_ptr<Scene::Operation> Scene::begin(std::optional<TickKind> kind, dialogue::Conversation *conversation,
                                             Operation *parent,std::optional<dialogue::WindowEffect> window,
                                             std::optional<std::array<std::uint16_t, 2>> animation,
@@ -357,10 +427,9 @@ std::unique_ptr<Scene::Operation> Scene::begin(std::optional<TickKind> kind, dia
     s.check(parent ? parent->execution_->owner : 0);
     Ticks::Operation *parent_tick{};
     if (parent) {
+        require_nested(*parent);
         auto &p = *parent->execution_;
-        require(&p.scene == &s && p.pending == SceneService::ActorEngine && p.tick,
-                "Nested scene work requires this scene's suspended actor service");
-        parent_tick = p.tick.get();
+        parent_tick = p.tick ? p.tick.get() : p.parent_tick;
     }
     if (conversation) require(&conversation->output() == &s.windows.output(),
                               "Conversation and scene must share the window output owner");
@@ -371,6 +440,7 @@ std::unique_ptr<Scene::Operation> Scene::begin(std::optional<TickKind> kind, dia
     }
     const auto owner = ++s.next;
     auto e = std::make_unique<Operation::Execution>(s,conversation,parent_tick,owner);
+    e->parent_owner = parent ? parent->execution_->owner : 0;
     if (kind) e->start_tick(*kind);
     e->battle_after_wait = battle_wait;
     if (window) e->start_window_effect(*window);
@@ -387,11 +457,34 @@ std::unique_ptr<Scene::Operation> Scene::begin(std::optional<TickKind> kind, dia
 std::unique_ptr<Scene::Operation> Scene::begin_publication() {
     auto &s = *execution_;
     s.check(0);
-    require(s.clock.interrupt_mask & 0x80,
+    require(s.clock.effective_interrupt_mask() & 0x80,
             "Publication requires the actual native NMI interrupt source");
     auto operation = begin({}, nullptr, nullptr);
     operation->execution_->publication_only = true;
     operation->execution_->pending = SceneService::Publication;
+    return operation;
+}
+void Scene::require_content_boundary(Operation *parent) const {
+    auto &s=*execution_;
+    if (!parent) {s.check(0);return;}
+    auto &p=*parent->execution_;
+    require(&p.scene==&s,"Content work requires this Scene's actual parent");
+    s.check(p.owner);
+    require(!p.done && !p.tick && p.pending==SceneService::Dialogue && p.conversation,
+            "Content work requires a suspended authored content conversation");
+    const auto &event=p.conversation->event();
+    const auto *request=event?std::get_if<dialogue::Request>(&*event):nullptr;
+    require(request && (request->kind==dialogue::RequestKind::Teleport ||
+        (request->kind==dialogue::RequestKind::SpecialEvent && request->special_event==7)),
+        "Only actual teleport or town-map requests admit nested map content work");
+}
+std::unique_ptr<Scene::Operation> Scene::begin_nested_publication(Operation &parent) {
+    require_content_boundary(&parent);
+    require(execution_->clock.effective_interrupt_mask() & 0x80,
+            "Publication requires the actual native NMI interrupt source");
+    auto operation=begin({},nullptr,&parent);
+    operation->execution_->publication_only=true;
+    operation->execution_->pending=SceneService::Publication;
     return operation;
 }
 std::unique_ptr<Scene::Operation> Scene::begin_battle_frame() {
@@ -417,6 +510,20 @@ std::unique_ptr<Scene::Operation> Scene::begin_nested(dialogue::Conversation &c,
 std::unique_ptr<Scene::Operation> Scene::begin_nested(TickKind kind, Operation &parent) {
     return begin(kind,nullptr,&parent);
 }
+std::unique_ptr<Scene::Operation> Scene::begin_actor_frame(ActorFrameService &service) {
+    require_content_boundary();
+    require(service.uses(*this), "Actor-frame phases require their actual Scene owner");
+    auto result=begin(TickKind::ActorFrame,nullptr,nullptr);
+    result->execution_->actor_frame_service=&service;
+    return result;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_nested_actor_frame(ActorFrameService &service, Operation &parent) {
+    require_content_boundary(&parent);
+    require(service.uses(*this), "Actor-frame phases require their actual Scene owner");
+    auto result=begin(TickKind::ActorFrame,nullptr,&parent);
+    result->execution_->actor_frame_service=&service;
+    return result;
+}
 dialogue::Progress Scene::Operation::advance(unsigned budget) {
     auto &e = *execution_;
     if (e.done) return dialogue::Progress::Finished;
@@ -440,6 +547,14 @@ FrameRequirement Scene::Operation::frame_requirement() const {
     return clock.new_frame_started ? FrameRequirement::InputOnly : FrameRequirement::NmiPublication;
 }
 void Scene::Operation::complete_publication() { complete_publication_impl(nullptr); }
+bool Scene::Operation::uses(const Scene &scene) const noexcept {
+    return &execution_->scene == scene.execution_.get();
+}
+bool Scene::Operation::is_child_of(const Operation &parent) const noexcept {
+    return &execution_->scene == &parent.execution_->scene &&
+        execution_->parent_owner == parent.execution_->owner &&
+        !execution_->done && !parent.execution_->done;
+}
 void Scene::Operation::complete_publication(FrameBoundaryService &boundary) {
     complete_publication_impl(&boundary);
 }
@@ -450,23 +565,9 @@ void Scene::Operation::complete_publication_impl(FrameBoundaryService *boundary)
     require(e.pending == SceneService::Publication ||
                 (e.pending == SceneService::Frame && frame_requirement() == FrameRequirement::NmiPublication),
             "Scene has no pending NMI publication");
-    require((s.clock.interrupt_mask & 0x80) != 0,
-            "IRQ-only publication requires its native interrupt timing owner");
-    if (boundary) boundary->validate_publication();
-    // Queue descriptors retain live sources. A rejected immutable capture does
-    // not consume the source NMI clock or invoke its scheduled callback.
-    while (s.windows.publish_next()) {}
-    auto stamp = *s.world;
-    stamp.frame = s.frames + 1;
-    auto published = s.capture(stamp, true);
-    ++s.frames;
-    ++s.clock.frame_counter;
-    ++s.clock.new_frame_started;
-    ++s.clock.publications;
-    s.published = std::move(published);
+    // Peripheral waits share this body without acknowledging a logical child.
+    s.publish_nmi(boundary);
     try {
-        if (s.publication) s.publication->complete_publication();
-        if (boundary) boundary->after_publication();
         if (e.pending == SceneService::Publication) {
             require(e.publication_only || bool(e.animation) || bool(e.battle_frame), "Publication lost its continuation");
             if (e.publication_only) {}
@@ -478,6 +579,9 @@ void Scene::Operation::complete_publication_impl(FrameBoundaryService *boundary)
         s.poisoned = true;
         throw;
     }
+}
+void Scene::interrupt_publication(FrameBoundaryService *boundary) {
+    execution_->publish_nmi(boundary);
 }
 void Scene::Operation::complete_frame(std::array<std::uint16_t,2> raw) {
     complete_frame_impl(raw, nullptr);
@@ -497,13 +601,20 @@ void Scene::Operation::complete_frame_impl(std::array<std::uint16_t,2> raw, Fram
         // not release the source WAIT loop and must not poll input yet.
         if (!s.clock.new_frame_started) return;
     } else if (requirement == FrameRequirement::VBlank) {
-        // With all B0 interrupt bits clear WAIT observes physical VBlank only.
-        // It cannot transfer queued graphics/palettes or run the NMI callback.
-        auto stamp = *s.world;
-        stamp.frame = s.frames + 1;
-        auto published = s.capture(stamp, false);
-        ++s.frames;
-        s.published = std::move(published);
+        // WAIT reads the software mirror, while the physical NMI uses $4200.
+        // A cold palette reset can clear the former while retaining the latter.
+        // Consume that real publication once; only an NMI-free VBlank needs a
+        // separate capture without graphics transfer or interrupt callbacks.
+        const bool published = s.clock.publications != e.publications_at_wait;
+        require(published || !(s.clock.effective_interrupt_mask() & 0x80),
+                "VBlank wait requires its retained hardware NMI publication");
+        if (!published) {
+            auto stamp = *s.world;
+            stamp.frame = s.frames + 1;
+            auto image = s.capture(stamp, false);
+            ++s.frames;
+            s.published = std::move(image);
+        }
     }
     try {
         s.clock.new_frame_started = 0;
@@ -524,6 +635,11 @@ void Scene::Operation::complete_frame_impl(std::array<std::uint16_t,2> raw, Fram
 }
 const std::optional<WorldActionRequest> &Scene::Operation::actor_request() const {
     execution_->check(SceneService::ActorEngine); return execution_->scene.actors.request();
+}
+bool Scene::Operation::window_animation_active(const WorldEncounterEffects &effects) const {
+    auto &e = *execution_; e.check(SceneService::ActorEngine);
+    require(e.scene.battle_frame, "Window animation status requires the bound PSI frame owner");
+    return e.scene.battle_frame->window_animation_active(effects);
 }
 void Scene::Operation::respond_actor(std::uint16_t value, unsigned bytes,
                                      std::optional<std::uint16_t> sleep_frames) {
@@ -655,6 +771,12 @@ void Scene::bind_publication(ScenePublication &publication) {
     s.publication = &publication;
 }
 const ScenePublication *Scene::publication() const noexcept { return execution_->publication; }
+bool Scene::uses_battle_menu(const battle::Roster& roster,const battle::FrameState& frame,const battle::PaletteBankState& colors,const battle::PsiScratch& scratch,const RandomState& random) const noexcept {
+ const auto& e=*execution_;return e.battle_frame && e.battle_frame->uses(roster,frame,colors,scratch) && &e.random==&random;
+}
+bool Scene::uses(const InputState& input) const noexcept { return &execution_->input==&input; }
+bool Scene::uses(const RandomState &random) const noexcept { return &execution_->random == &random; }
+bool Scene::uses(const ActorWorld &actors) const noexcept { return &execution_->actors == &actors; }
 bool Scene::uses(const TickState &clock) const noexcept { return &execution_->clock == &clock; }
 bool Scene::uses(const dialogue::WindowHost& windows, const party::State& party) const noexcept {
     return &execution_->windows == &windows && &execution_->party == &party;
@@ -717,16 +839,21 @@ void Scene::handoff_publication(ScenePublication &expected, ScenePublication &ne
     s.battle_frame = services.frame;
     s.animations = services.animations;
 }
-void Scene::clear_world_capture() {
+dialogue::Conversation &Scene::dialogue_owner(Operation &parent) {
+    require_content_boundary(&parent);
+    require(parent.execution_->conversation,"Teleport parent lacks its actual conversation");
+    return *parent.execution_->conversation;
+}
+void Scene::clear_world_capture(Operation *parent) {
+    require_content_boundary(parent);
     auto &s = *execution_;
-    s.check(0);
     s.objects.reset();
     s.world.reset();
     s.published.reset();
 }
-void Scene::refresh_world_capture() {
+void Scene::refresh_world_capture(Operation *parent) {
+    require_content_boundary(parent);
     auto &s = *execution_;
-    s.check(0);
     s.screen();
     s.publish();
 }

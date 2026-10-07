@@ -21,8 +21,12 @@ public:
     GameVersion version() const { return roster_.version(); }
     bool uses(const Roster&, const party::State&, const dialogue::PreparedMessage&,
               const ActionState&) const noexcept;
+    bool uses(const Roster&, const party::State&, const dialogue::PreparedMessage&) const noexcept;
     void fix_attacker(std::uint16_t mode);
     void fix_target();
+    // C23E8A: the caller resolves the live row position into this physical
+    // enemy slot. Shares TARGET_NAME_BUFFER, then publishes attacker text.
+    void fix_menu_name(unsigned physical_slot);
     void swap_attacker_with_target();
     // C23E32: zero flags do nothing; otherwise select the first set physical
     // slot and execute FIX_TARGET_NAME. No consciousness/side filter is added.

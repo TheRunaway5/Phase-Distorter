@@ -172,6 +172,10 @@ class TextOutput {
     void begin_fixed_glyph(std::uint16_t, Owner);
     void draw_fixed_glyph(std::uint16_t, Owner);
     void align_composition(Owner);
+    // JP PRINT_NEWLINE's raw register path. Its caller owns these registers;
+    // no image canvas is inferred. Scrolling requires a real surface owner.
+    void newline_without_scroll(std::uint16_t font, std::uint16_t height,
+                                TextCursor &, Owner);
     void highlight_label(std::span<const std::uint8_t>, std::uint16_t limit, bool selected, Owner);
     void highlight_remainder(Owner);
     void prepare_string(std::span<const std::uint8_t>, std::uint16_t limit, bool normal_font,

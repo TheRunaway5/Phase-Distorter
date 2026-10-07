@@ -1,6 +1,11 @@
 # Authored-data interpreters and host text composition. This library must remain
 # independent of the compatibility CPU/bus/audio implementation.
+# Shared retained peripheral results are pure native state used by both
+# authored palette producers and the engine. Keep that dependency below both.
+add_library(eb_native_peripherals STATIC src/native/peripheral_state.cpp)
+target_include_directories(eb_native_peripherals PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 add_library(eb_native_story STATIC
+    src/native/character_growth.cpp
     src/native/battle/action_resources.cpp
     src/native/battle/names.cpp
     src/native/battle/grammar.cpp
@@ -10,6 +15,11 @@ add_library(eb_native_story STATIC
     src/native/battle/enemy_resources.cpp
     src/native/battle/encounter_resources.cpp
     src/native/battle/roster.cpp
+    src/native/battle/outcomes.cpp
+    src/native/battle/outcome_palette.cpp
+    src/native/battle/actions/resources.cpp
+    src/native/battle/menu/resources.cpp
+    src/native/battle/actions/special_resources.cpp
     src/native/dialogue/program.cpp
     src/native/dialogue/runtime.cpp
     src/native/dialogue/import.cpp
@@ -29,6 +39,7 @@ add_library(eb_native_story STATIC
     src/native/party/view.cpp
     src/native/party/dialogue_values.cpp
     src/native/party/meters.cpp
+    src/native/party/meter_flipout.cpp
     src/native/party/condition.cpp
     src/native/party/queries.cpp
     src/native/party/movement_policy.cpp
@@ -56,8 +67,10 @@ add_library(eb_native_story STATIC
     src/native/npcs/map_text.cpp
     src/native/npcs/interaction_queue.cpp)
 target_include_directories(eb_native_story PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(eb_native_story PUBLIC eb_native_peripherals)
 if(TARGET eb_native_engine)
     target_sources(eb_native_engine PRIVATE src/native/battle/formation.cpp
+        src/native/battle/actions/rules.cpp
         src/native/battle/psi_resources.cpp src/native/battle/psi_animation.cpp
         src/native/battle/psi_scene.cpp src/native/battle/psi_setup.cpp
         src/native/battle/frame.cpp src/native/battle/frame_display.cpp
@@ -78,7 +91,12 @@ if(TARGET eb_scene)
         target_sources(eb_native_story_scene PRIVATE src/native/story/scene.cpp src/native/npcs/interaction.cpp src/native/story/interaction_calls.cpp src/native/story/party_formation.cpp src/native/story/teddy_party.cpp src/native/story/growth_dialogue.cpp src/native/story/battle_publication.cpp src/native/story/battle_display_setup.cpp)
         target_link_libraries(eb_native_story_scene PUBLIC eb_native_engine)
         target_sources(eb_native_story_scene PRIVATE src/native/story/battle_startup.cpp
-            src/native/story/battle_dead_players.cpp src/native/story/battle_rounds.cpp)
+            src/native/story/battle_dead_players.cpp src/native/story/battle_rounds.cpp
+            src/native/story/battle_outcomes.cpp
+            src/native/story/party_membership.cpp
+            src/native/battle/menu/command.cpp src/native/battle/menu/auto.cpp
+            src/native/battle/menu/target.cpp src/native/battle/menu/psi.cpp
+            src/native/battle/menu/goods.cpp)
     endif()
 endif()
 if(MINGW)
@@ -239,6 +257,9 @@ if(EB_BUILD_TESTS)
         endforeach()
         target_link_libraries(native_battle_frame_tests PRIVATE eb_native_story_scene)
         add_executable(native_battle_frame_scene_tests tests/native_battle_frame_scene_tests.cpp)
+        add_executable(native_battle_published_background_tests tests/native_battle_published_background_tests.cpp)
+        target_link_libraries(native_battle_published_background_tests PRIVATE eb_native_story_scene)
+        add_test(NAME native_battle_published_background_tests COMMAND native_battle_published_background_tests)
         target_link_libraries(native_battle_frame_scene_tests PRIVATE eb_native_story_scene)
         add_test(NAME native_battle_frame_scene_tests COMMAND native_battle_frame_scene_tests)
         add_executable(native_battle_display_setup_tests tests/native_battle_display_setup_tests.cpp)
@@ -251,6 +272,10 @@ if(EB_BUILD_TESTS)
         target_link_libraries(native_battle_startup_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
         add_test(NAME native_battle_startup_reference COMMAND native_battle_startup_reference)
         set_tests_properties(native_battle_startup_reference PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(native_battle_published_background_reference tests/native_battle_published_background_reference.cpp)
+        target_link_libraries(native_battle_published_background_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
+        add_test(NAME native_battle_published_background_reference COMMAND native_battle_published_background_reference)
+        set_tests_properties(native_battle_published_background_reference PROPERTIES SKIP_RETURN_CODE 77)
         add_executable(native_battle_frame_reference tests/native_battle_frame_reference.cpp)
         target_link_libraries(native_battle_frame_reference PRIVATE eb_native_world_runtime eb_core eb_assets)
         add_test(NAME native_battle_frame_reference COMMAND native_battle_frame_reference)

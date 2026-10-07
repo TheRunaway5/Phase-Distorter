@@ -476,7 +476,7 @@ void phone_gates(eb::GameVersion version) {
       break;
     }
     case 3:
-      f.state.battle_mode_flag = 1;
+      f.windows.prompt_state().battle_mode = 1;
       break;
     case 4:
       f.actors.appearance_scene().battle_swirl_ticks = 1;
@@ -500,7 +500,7 @@ void phone_gates(eb::GameVersion version) {
 }
 void battle_and_possession_gates(eb::GameVersion version) {
   Fixture battle(version);
-  battle.windows.prompt_state().battle_mode = 1;
+  battle.movement.encounter.mode = 1;
   battle.state.possessed_players = 3;
   battle.items.loaded_count = 1;
   battle.state.auto_sector_music = 1;

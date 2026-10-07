@@ -18,8 +18,15 @@ int main() {
     }
     for (const auto region:{eb::GameVersion::US,eb::GameVersion::JP}) {
         auto imported=import_program(image,region);
-        require(imported.program->entry_count()==(region==eb::GameVersion::US?61:58),"Regional section inventory changed");
+        require(imported.program->entry_count()==(region==eb::GameVersion::US?62:59),"Regional section inventory changed");
         require(imported.sections.size()==imported.program->entry_count(),"Missing navigation labels");
+        const auto alternate = std::find_if(imported.sections.begin(), imported.sections.end(),
+            [](const auto &section) { return section.name == "UNKNOWN_C9992F"; });
+        require(alternate != imported.sections.end(), "Missing authored alternate NPC text section");
+        const unsigned alternate_offset = region == eb::GameVersion::US ? 0x09992f : 0x098000;
+        const unsigned alternate_bytes = region == eb::GameVersion::US ? 0x18f7 : 0x1707;
+        require(((unsigned(alternate->begin.page) << 16) | alternate->begin.offset) == alternate_offset &&
+                alternate->bytes == alternate_bytes, "Alternate NPC text relocation changed");
         for(unsigned i=0;i<imported.program->entry_count();++i) {
             const auto at=imported.program->entry({i});
             const auto offset=(at.page<<16)|at.offset;

@@ -36,9 +36,12 @@ public:
   std::uint8_t find_npc();
   unsigned find_stealable_items();
   std::uint8_t select_stealable_item();
+  bool has_stealable_item(std::uint16_t item);
+  void choose_row_slot(unsigned attacker, unsigned slot) { set_row_target(roster_.at(attacker), slot); }
   bool uses(const Roster &, const party::State &, const story::RandomState &,
             const ActionResources &) const noexcept;
   const RowState &rows() const { return rows_; }
+  unsigned sprite_width(unsigned sprite) const { return artwork_.width(sprite); }
 
 private:
   unsigned random_row_target(Battler &);

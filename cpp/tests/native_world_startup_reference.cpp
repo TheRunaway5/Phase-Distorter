@@ -15,6 +15,8 @@ void run(const eb::GameAssets &assets,startup_test::Resources &resources,unsigne
  for(unsigned n=0;operation->stage()!=WorldStartupStage::ResetWorld && n<100000;++n){auto p=operation->advance(1);
   if(p==dialogue::Progress::Suspended){check(operation->service()==WorldStartupService::Runtime,"Imported pre-game escaped Runtime");auto *r=operation->runtime_operation();check(r->service()==story::SceneService::Frame,"Imported pre-game needs unavailable service");r->complete_frame({0,0});}}
  check(operation->stage()==WorldStartupStage::ResetWorld,"Imported PRE_GAMESTART never finished");
+ // The original reset helper preserves render FLAG independently of outer mode.
+ f.windows.prompt_state().battle_mode=0xabcd;
  const auto before_flags=snapshot.state.event_flags;
  const auto key=resources.continuing->dialogue().pre_game_start;const unsigned at=(unsigned(key[2])<<16|unsigned(key[1])<<8|key[0])-0xc00000;
  check(assets.image.at(at)==5&&assets.image.at(at+3)==2,"PRE_GAMESTART source content changed");

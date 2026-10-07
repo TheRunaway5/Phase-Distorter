@@ -28,6 +28,8 @@ public:
   SpriteEffectSeed seed(unsigned group, unsigned pose,
                         bool authored_fade_grid = false) const;
   unsigned fade_width(unsigned group) const;
+  // Actual planar seed including the inclusive final word copied by C4283F/84.
+  std::vector<std::uint8_t> planar_seed(unsigned group, unsigned pose) const;
 
 private:
   std::shared_ptr<SpriteResources> resources_;
@@ -52,6 +54,11 @@ public:
                        unsigned y);
   // One selected pixel position in every 8x8 tile (the dissolve pass).
   void copy_phase(unsigned phase);
+  // Rebind the actual retained source/destination buffers before a helper.
+  // Both spans are row-major indexed pixels in the declared fade grid.
+  void load_pixels(std::span<const std::uint8_t> source,
+                   std::span<const std::uint8_t> destination);
+  std::span<const std::uint8_t> pixels() const noexcept { return pixels_; }
   std::shared_ptr<const SpriteImage>
   snapshot(SpriteOrientation orientation = SpriteOrientation::Authored) const;
   void snapshot_io(SnapshotArchive &archive);

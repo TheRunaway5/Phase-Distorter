@@ -62,6 +62,7 @@ WorldPaletteAnimations::WorldPaletteAnimations(
             const unsigned source = frame * 192 + (p * 16 + i) * 2;
             result.scenery[p][i] =
                 color(data[source] | unsigned(data[source + 1]) << 8);
+            result.scenery_high_bits[p] |= std::uint16_t((data[source + 1] >> 7) << i);
           }
       }
     }
@@ -99,6 +100,7 @@ bool AreaPaletteAnimation::advance() {
   const auto &frame = track_->frames[next_++];
   colors_.scenery = frame.scenery;
   colors_.scenery_zero = frame.scenery_zero;
+  colors_.scenery_high_bits = frame.scenery_high_bits;
   remaining_ = frame.delay;
   return true;
 }

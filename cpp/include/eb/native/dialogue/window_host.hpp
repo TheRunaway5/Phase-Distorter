@@ -123,9 +123,26 @@ class WindowHost {
     std::array<WindowMenuOption, 70> &menu_options();
     MenuState &menu_state();
     PromptState &prompt_state();
+    const PromptState &prompt_state() const;
     // One stable party owner shared by recursive dialogue and the scene.
     // Binding again requires the same identity; no party values are copied.
     // The party must outlive this host, including after a Scene is destroyed.
+    // Bind the real retained 64KiB BUFFER owner for unfocused GET_ACTIVE.
+    // No bytes are copied. Storage must outlive the host; rebinding requires
+    // identical storage. Allocation/register lookup remains source ordered.
+    void bind_ambient_register_source(std::span<const std::uint8_t, 65536>);
+    // JP CREATE may read its inherited registers from the real retained
+    // ANIMATED_TILESET_BUFFER. Borrowed storage must outlive this host.
+    // This permits only that read; foreign mutable register access still fails.
+    void bind_ambient_animation_source(std::span<const std::uint8_t, 8192>);
+    // PRINT_NEWLINE can write the cursor in that same physical owner. This
+    // separate capability requires the identical read-only binding above;
+    // it does not admit a drawable window or scrolling outside its bank.
+    void bind_ambient_animation_layout(std::span<std::uint8_t, 8192>);
+    // JP GET_TEXT_X can address the same retained animation owner while
+    // unfocused. An owned window bank is handled by TextOutput instead.
+    // This query borrows two live bytes and never creates a window surface.
+    std::optional<std::uint16_t> aliased_text_x() const;
     void bind_party(const party::State &);
     void bind_party(party::State &&) = delete;
     void bind_party(const party::State &&) = delete;
@@ -150,6 +167,9 @@ class WindowHost {
     TextAnimations &animations();
     std::span<const WindowId> draw_order() const;
     SavedWindowAttributes save_attributes() const;
+    void save_text_context();
+    void restore_text_context();
+    void request_redraw();
     // CLOSE's source suppression flag is shared across nested callbacks.
     bool &suppress_close_tick();
     void set_pagination(std::optional<WindowId>, std::optional<unsigned> frame);
@@ -165,6 +185,7 @@ class WindowHost {
     // C20293 clears four staged cells above the meter area. No publication,
     // window redraw, input acquisition or logical tick occurs here.
     void clear_auto_fight_indicator();
+    void stage_auto_fight_indicator(std::span<const std::uint16_t,4>);
     // Source C1078D updates only rows18..26, preserving upper windows and row27.
     void publish_meter_area();
     // Deferred source publications retain live staged data until the scene's
@@ -215,6 +236,7 @@ class WindowHost {
     friend class PromptHost;
     friend class TextSubstitutions;
     friend class detail::StringPrinter;
+    std::optional<std::span<const std::uint8_t,14>> attacker_inventory() const;
     // Every menu service sharing this option pool must interpret stored
     // Locations against the same immutable imported content.
     void bind_menu_program(const Program &);
@@ -234,6 +256,7 @@ class WindowHost {
     // ambient physical slot, which may already have been closed.
     const OutputWindow &positioning_window() const;
     void position_source(TextCursor, unsigned fraction, TextOutput::Owner);
+    void aliased_newline(TextOutput::Owner);
     std::unique_ptr<Operation> begin(const Request &, TextOutput::Owner);
     std::unique_ptr<Operation> begin(WindowCommand, TextOutput::Owner, bool owns_activation);
     struct Execution;

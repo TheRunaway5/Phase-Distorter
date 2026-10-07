@@ -153,8 +153,23 @@ bool WindowGraphics::bound_to(const TextOutput &output) const { return &executio
 
 void WindowGraphics::retain_prepared_artwork(unsigned first,
                                               std::span<const WindowArtwork> artwork) {
+    retain_prepared_artwork(first, artwork, TextOutput::Owner{0});
+}
+void WindowGraphics::retain_prepared_artwork(unsigned first,
+                                              std::span<const WindowArtwork> artwork,
+                                              Conversation &parent) {
+    const auto &event = parent.event();
+    const auto *request = event ? std::get_if<Request>(&*event) : nullptr;
+    require(request && (request->kind == RequestKind::Teleport ||
+                (request->kind == RequestKind::SpecialEvent && request->special_event == 7)),
+            "Nested map artwork requires its actual suspended teleport or town-map conversation");
+    retain_prepared_artwork(first, artwork, parent.callback_owner(execution_->output));
+}
+void WindowGraphics::retain_prepared_artwork(unsigned first,
+                                              std::span<const WindowArtwork> artwork,
+                                              TextOutput::Owner owner) {
     auto &e = *execution_;
-    e.output.require_owner(0);
+    e.output.require_owner(owner);
     require(e.pending.empty() && first <= e.staged.size() &&
                 artwork.size() <= e.staged.size() - first,
             "Retained window artwork requires an idle bounded staging range");

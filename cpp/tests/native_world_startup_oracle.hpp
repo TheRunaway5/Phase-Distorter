@@ -46,7 +46,8 @@ struct Oracle {
   for(unsigned i=0;i<256;++i){const auto &p=f.trail.points[i];const unsigned v[]{p.x,p.y,p.surface_flags,p.walking_style,p.direction,p.reserved};
    for(unsigned j=0;j<6;++j)put(l.trail+i*12+j*2,v[j]);}
   put(l.disabled,f.clock.disabled_transitions);put(l.mushroom,f.movement.mushroomized);
-  put(l.delta?0x993b:0x9643,f.maintenance.battle_mode_flag);
+  put(l.delta?0x993b:0x9643,f.windows.prompt_state().battle_mode);
+  put(l.battle,f.control.encounter.mode);
   put(l.mushroom_timer,f.movement.timer);put(l.mushroom_modifier,f.movement.modifier);
   put(0x24,f.random.primary_word);put(0x26,f.random.secondary_word);
  }
@@ -61,8 +62,8 @@ struct Oracle {
    check(get(game(162)+i*2)==f.formation.roles[i]&&get(character(i,61))==f.formation.trail_cursors[i],"Role/trail indices differ");}
   check(get(game(148))==f.formation.current_leader_role&&get(game(136))==f.trail.next_write,"Bootstrap current leader/trail differs");
   check(get(game(176))==f.control.automatic_mode&&get(game(178))==f.control.automatic_ticks&&get(game(180))==f.control.automatic_restore_style,"Automatic reset differs");
-  check(get(game(144))==f.control.moved_this_tick&&get(game(146))==f.talk.state().movement_flags&&
-        get(l.delta?0x993b:0x9643)==f.maintenance.battle_mode_flag,"Independent restored/preserved movement and battle fields differ");
+  check(get(game(144))==f.control.moved_this_tick&&get(game(146))==f.talk.state().area_character_style&&
+        get(l.delta?0x993b:0x9643)==f.windows.prompt_state().battle_mode,"Independent restored/preserved movement and battle fields differ");
   check(get(l.pajamas)==f.following.pajamas&&get(l.mushroom)==f.movement.mushroomized&&get(l.mushroom_timer)==f.movement.timer&&get(l.mushroom_modifier)==f.movement.modifier,"Actual movement/pajamas tails differ");
   check(!get(l.battle)&&!get(l.input)&&get(l.npcs)==1&&get(l.enemies)==0xffff&&get(l.maximum)==f.enemies.population().maximum&&!get(l.swirl)&&!get(l.pending)&&get(l.auto_music)==f.maintenance.auto_sector_music&&get(l.phone)==f.phone.timer&&!get(l.teleport_style)&&!get(l.teleport_destination)&&get(l.fade)==0xffff,"World prefix flags differ");
   for(unsigned i=0;i<256;++i){auto c=f.scene_colors[i];check(get(0x200+i*2)==(unsigned(c.red)|unsigned(c.green)<<5|unsigned(c.blue)<<10),"Scene palette publication differs");}

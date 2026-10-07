@@ -21,8 +21,9 @@ public:
     // Valid startup consumes exactly one shared RNG result and returns the
     // authored leader's numeric role doubled, not a native actor/resource ID.
     std::optional<std::uint16_t> startup(ActorId);
-    // Requires the explicitly published projection cache. Undefined table
-    // offsets, absent leaders and untagged actors fail before projection.
+    // Uses the owned cold or published projection cache, including retained
+    // dormant leader tables. Absent caches, invalid roles, undefined table
+    // offsets and untagged actors fail before projection.
     void project(ActorId) const;
 private:
     ActorWorld &actors_;

@@ -18,6 +18,13 @@ namespace story {
 struct InputState;
 }
 
+struct WorldDoorEntryRecord {
+  dialogue::ReferenceKey text{};
+  // Payload+6 packs facing in the upper bits of Y; payload+8 is X.
+  std::uint16_t event_word{}, packed_y{}, tile_x{};
+  std::uint8_t screen_transition{};
+  bool operator==(const WorldDoorEntryRecord &) const = default;
+};
 struct DoorEventPredicate {
   std::uint16_t flag{};
   bool required_state{};
@@ -35,11 +42,14 @@ public:
   dialogue::ReferenceKey event_text(std::uint16_t door_found) const;
   // C06ACA queues this content key without reading the destination payload.
   static dialogue::ReferenceKey door_key(std::uint16_t door_found);
+  WorldDoorEntryRecord entry(dialogue::ReferenceKey) const;
+  std::uint16_t entry_direction(const WorldDoorEntryRecord &) const;
 
 private:
   explicit WorldDoorResources(GameVersion version) : version_(version) {}
   GameVersion version_;
   std::vector<std::uint8_t> data_;
+  std::array<std::uint16_t,4> entry_directions_{};
 };
 
 enum class WorldDoorTransitionKind { Escalator, Stairs };

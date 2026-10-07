@@ -10,6 +10,43 @@ int signed_position(unsigned value) {
 }
 bool reads_temporary(NativeAction action) {
   switch (action) {
+  case NativeAction::YieldToText:
+  case NativeAction::TargetAngle:
+  case NativeAction::TargetReached:
+  case NativeAction::SetDirectionFrame:
+  case NativeAction::CopyPartyPosition:
+  case NativeAction::CopySpritePosition:
+  case NativeAction::CaptureSpriteTarget:
+  case NativeAction::FaceNpcTowardActor:
+  case NativeAction::FaceSpriteTowardActor:
+  case NativeAction::SetMovementBounds:
+  case NativeAction::CheckMovementBounds:
+  case NativeAction::CheckProspectiveTerrain:
+  case NativeAction::CheckProspectiveNpcCollision:
+  case NativeAction::PlaySound:
+  case NativeAction::OpenPrayerWindow:
+  case NativeAction::ClosePrayerWindow:
+  case NativeAction::WindowAnimationActive:
+  case NativeAction::AdvanceEncounterEffects:
+  case NativeAction::CheckContentIntegrity:
+  case NativeAction::ReadMovedThisTick:
+  case NativeAction::InflictSunstrokeCheck:
+  case NativeAction::FadePauseActors:
+  case NativeAction::FadeRestoreActors:
+  case NativeAction::FadeShowSprites:
+  case NativeAction::FadeRefreshSprites:
+  case NativeAction::FadeHideBlinkSprites:
+  case NativeAction::FadeRows:
+  case NativeAction::FadeColumns:
+  case NativeAction::FadeResetDissolve:
+  case NativeAction::FadeDissolve:
+  case NativeAction::FadeFinishTask:
+  case NativeAction::FadeReleaseController:
+  case NativeAction::ChooseRandom:
+  case NativeAction::NpcInitialDirection:
+  case NativeAction::RefreshGiftAppearance:
+  case NativeAction::DirectionFromLeader:
+    return false;
   case NativeAction::SetMovingDirection:
   case NativeAction::GetDirection:
   case NativeAction::SetMovementSpeed:
@@ -79,6 +116,42 @@ ActionBindings::ActionBindings(GameVersion version) {
   };
   using K = ActionRequestKind;
   using A = NativeAction;
+  add(K::CallEngine, 0xc20000, 0xc20000, A::InflictSunstrokeCheck);
+  add(K::CallEngine, 0xc46e46, 0xc44bca, A::YieldToText);
+  add(K::CallEngine, 0xc46adb, 0xc44857, A::TargetAngle);
+  add(K::CallEngine, 0xc0a8dc, 0xc0a8bb, A::TargetReached);
+  add(K::CallEngine, 0xc0aa6e, 0xc0aa4d, A::SetDirectionFrame, 2);
+  add(K::CallEngine, 0xc0a864, 0xc0a843, A::CopyPartyPosition, 1);
+  add(K::CallEngine, 0xc0a86f, 0xc0a84e, A::CopySpritePosition, 2);
+  add(K::CallEngine, 0xc0a841, 0xc0a820, A::PlaySound, 2);
+  add(K::CallEngine, 0xc0ca4e, 0xc0ca30, A::VelocityDistanceSleep);
+  add(K::CallEngine, 0xc0a938, 0xc0a917, A::CaptureSpriteTarget, 2);
+  add(K::CallEngine, 0xc0a94e, 0xc0a92d, A::FaceNpcTowardActor, 2);
+  add(K::CallEngine, 0xc0a959, 0xc0a938, A::FaceSpriteTowardActor, 2);
+  add(K::CallEngine, 0xc0a964, 0xc0a943, A::SetMovementBounds, 4);
+  add(K::CallEngine, 0xc47269, 0xc44fed, A::CheckMovementBounds);
+  add(K::CallEngine, 0xc05e76, 0xc060a4, A::CheckProspectiveTerrain);
+  add(K::CallEngine, 0xc064a6, 0xc066d4, A::CheckProspectiveNpcCollision);
+  add(K::CallEngine, 0xc49841, 0xc46e8b, A::OpenPrayerWindow);
+  add(K::CallEngine, 0xc2ea74, 0xc2e98d, A::ClosePrayerWindow);
+  add(K::CallEngine, 0xc2eacf, 0xc2e9e8, A::WindowAnimationActive);
+  add(K::CallEngine, 0xc4a7b0, 0xc47c19, A::AdvanceEncounterEffects);
+  add(K::CallEngine, 0xc09f43, 0xc09f22, A::FadePauseActors);
+  add(K::CallEngine, 0xc09f71, 0xc09f50, A::FadeRestoreActors);
+  add(K::CallEngine, 0xc4cb4f, 0xc49e1f, A::FadeShowSprites);
+  add(K::CallEngine, 0xc4cb8f, 0xc49e5f, A::FadeRefreshSprites);
+  add(K::CallEngine, 0xc4cbe3, 0xc49eb3, A::FadeHideBlinkSprites);
+  add(K::CallEngine, 0xc4cc2f, 0xc49eff, A::FadeRows);
+  add(K::CallEngine, 0xc4cd44, 0xc4a014, A::FadeColumns);
+  add(K::CallEngine, 0xc4ceb0, 0xc4a180, A::FadeResetDissolve);
+  add(K::CallEngine, 0xc4ced8, 0xc4a1a8, A::FadeDissolve);
+  add(K::CallEngine, 0xc4cc2c, 0xc49efc, A::FadeFinishTask);
+  add(K::WriteGameWord, 0xb4a8, 0xb67c, A::FadeReleaseController);
+  add(K::CallEngine, 0xc1ffd3, 0xc1fd04, A::CheckContentIntegrity);
+  add(K::CallEngine, 0xc0c35d, 0xc0c33f, A::ReadMovedThisTick);
+  add(K::CallEngine, 0xc46914, 0xc44690, A::NpcInitialDirection);
+  add(K::CallEngine, 0xc46957, 0xc446d3, A::SetDirectionAndRefresh);
+  add(K::CallEngine, 0xc0c353, 0xc0c335, A::RefreshGiftAppearance);
   add(K::CallEngine, 0xc0a65f, 0xc0a63e, A::SetDirection);
   add(K::CallEngine, 0xc0a651, 0xc0a630, A::SetMovingDirection, 1);
   add(K::CallEngine, 0xc0a673, 0xc0a652, A::GetDirection);
@@ -127,6 +200,7 @@ ActionBindings::ActionBindings(GameVersion version) {
   add(K::CallEngine, 0xc05ece, 0xc060fc, A::EnemyVerticalObstacles);
   add(K::CallEngine, 0xc0c48f, 0xc0c471, A::EnemyDistanceBand);
   add(K::CallEngine, 0xc0c4af, 0xc0c491, A::EnemyShortDistanceBand);
+  add(K::CallEngine, 0xc0c4f7, 0xc0c4d9, A::DirectionFromLeader);
   add(K::CallEngine, 0xc46b65, 0xc448e1, A::CaptureEnemyLeaderTarget);
   add(K::CallEngine, 0xc0c62b, 0xc0c60d, A::EnemyChaseAngle);
   add(K::CallEngine, 0xc47044, 0xc44dc8, A::EnemyAngleVelocity);
@@ -163,27 +237,22 @@ ActionBindings::ActionBindings(GameVersion version) {
                         A::Unsupported, 0, ActionTemporaryInput::Independent});
   };
   independent(K::CallEngine, 0xc0778a, 0xc079da); // Mini-ghost orbit.
-  independent(K::CallEngine, 0xc09f82,
-              0xc09f61); // CHOOSE_RANDOM, inline bound.
+  add(K::CallEngine, 0xc09f82, 0xc09f61, A::ChooseRandom);
   independent(K::CallEngine, 0xc09fbb,
               0xc09f9a); // ACTIONSCRIPT_FADE_OUT, inline rate.
-  independent(K::CallEngine, 0xc0a841, 0xc0a820); // Play inline sound.
   independent(K::CallEngine, 0xc0a88d,
               0xc0a86c); // Queue two inline dialogue-pointer operands.
   independent(K::CallEngine, 0xc0a8b3, 0xc0a892); // Two inline actor operands.
+  independent(K::CallEngine, 0xc0a92d, 0xc0a90c); // Inline NPC target position.
+  independent(K::CallEngine, 0xc0a8c6, 0xc0a8a5); // Current actor target approach, fixed mode0.
   independent(K::CallEngine, 0xc0a943,
               0xc0a922); // Position of inline party member.
-  independent(K::CallEngine, 0xc0aa6e, 0xc0aa4d); // Inline direction and frame.
   independent(K::CallEngine, 0xc0c48f,
               0xc0c471); // Current actor interaction predicate.
   independent(K::CallEngine, 0xc0d59b,
               0xc0d563); // Battle/swirl state predicate.
-  independent(K::CallEngine, 0xc46adb,
-              0xc44857); // Position and actor variables.
   independent(K::CallEngine, 0xc46b65,
               0xc448e1); // Save leader position in actor variables.
-  independent(K::CallEngine, 0xc46e46,
-              0xc44bca); // Set action-script scene state to one.
   independent(K::CallEngine, 0xc46e74,
               0xc44bf8); // TEST_PLAYER_IN_AREA, actor variables.
   independent(K::CallEngine, 0xc4ece7,
@@ -207,7 +276,7 @@ BoundAction ActionBindings::compile(const ActionEngineRequest &request,
                                     const ActionScriptData &data) const {
   if (request.kind == ActionRequestKind::ClearTickCallback)
     return {NativeAction::ClearTickCallback, 0, 0, false,
-            ActionTemporaryInput::Independent};
+            ActionTemporaryInput::Independent, false, {}};
   const auto found =
       std::find_if(entries_.begin(), entries_.end(), [&](const auto &entry) {
         return entry.kind == request.kind &&
@@ -215,23 +284,45 @@ BoundAction ActionBindings::compile(const ActionEngineRequest &request,
       });
   if (found == entries_.end())
     return {};
-  if (found->operation == NativeAction::CreateActor) {
+  if (found->operation == NativeAction::ChooseRandom) {
+    const auto count = data.byte(request.parameters);
+    const unsigned first = std::uint16_t(request.parameters + 1);
+    ChooseRandomOperands values{count, {}};
+    values.choices.reserve(count ? count : 256);
+    for (unsigned i = 0; i < (count ? unsigned(count) : 256u); ++i) {
+      // The index is a wrapping word; the final source word load itself is
+      // a long indexed load and may read its high byte in the following bank.
+      const unsigned at = (request.parameters & 0xff0000) |
+                          std::uint16_t(first + i * 2);
+      values.choices.push_back(std::uint16_t(
+          data.byte(at) | unsigned(data.byte(at + 1)) << 8));
+    }
+    BoundAction result{found->operation, 0, 1u + unsigned(count) * 2, false,
+                       found->temporary_input, true, {}};
+    result.payload = std::move(values);
+    return result;
+  }
+  if (found->operation == NativeAction::CreateActor ||
+      found->operation == NativeAction::SetMovementBounds) {
     const auto word = [&](unsigned delta) {
       const unsigned cursor = (request.parameters & 0xff0000) |
                               ((request.parameters + delta) & 0xffff);
       // The original helper loads a whole word before incrementing its
       // 16-bit content cursor. Its FFFF high byte would escape into the
-      // following bank. None of the imported creation sites does this;
-      // reject that undeclared cross-bank dependency rather than wrap it.
+      // following bank. Reject that undeclared cross-bank dependency rather
+      // than wrap the high byte into the original content bank.
       if ((cursor & 0xffff) == 0xffff)
         throw std::invalid_argument(
-            "Actor creation word crosses its authored content bank");
+            "Compound actor operand word crosses its authored content bank");
       return std::uint16_t(data.byte(cursor) | unsigned(data.byte(cursor + 1))
                                                    << 8);
     };
     BoundAction result{found->operation,       0,   4, false,
-                       found->temporary_input, true};
-    result.payload = CreateActorOperands{word(0), word(2)};
+                       found->temporary_input, true, {}};
+    if (found->operation == NativeAction::CreateActor)
+      result.payload = CreateActorOperands{word(0), word(2)};
+    else
+      result.payload = MovementBoundsOperands{word(0), word(2)};
     return result;
   }
   if (found->parameter_bytes > 2)
@@ -244,7 +335,33 @@ BoundAction ActionBindings::compile(const ActionEngineRequest &request,
   }
   return {found->operation,       operand,
           found->parameter_bytes, false,
-          found->temporary_input, found->inline_parameters_known};
+          found->temporary_input, found->inline_parameters_known, {}};
+}
+
+std::uint16_t velocity_distance_sleep(const ActionActorState &actor,
+                                      std::uint16_t distance) {
+  // The source's BRANCHLTEQS follows a two-word CLC/SBC. Its N xor V
+  // predicate must retain the subtract-one boundary, including INT32_MIN.
+  const auto less_equal = [](std::uint32_t left, std::uint32_t right) {
+    const unsigned low_left = left & 0xffffu, low_right = right & 0xffffu;
+    const unsigned borrow = low_left <= low_right;
+    const unsigned high_left = left >> 16, high_right = right >> 16;
+    const unsigned result = (high_left - high_right - borrow) & 0xffffu;
+    const bool negative = (result & 0x8000u) != 0;
+    const bool overflow = ((high_left ^ high_right) & (high_left ^ result) & 0x8000u) != 0;
+    return negative != overflow;
+  };
+  const auto magnitude = [&](std::uint32_t value) {
+    return less_equal(0, value) ? value : 0u - value;
+  };
+  const auto x = magnitude(actor.velocity[0]), y = magnitude(actor.velocity[1]);
+  const auto divisor = less_equal(x, y) ? y : x;
+  const auto numerator = std::uint32_t(distance) << 16;
+  const bool negative = ((numerator ^ divisor) & 0x80000000u) != 0;
+  const auto unsigned_numerator = (numerator & 0x80000000u) ? 0u - numerator : numerator;
+  const auto unsigned_divisor = (divisor & 0x80000000u) ? 0u - divisor : divisor;
+  const auto quotient = unsigned_divisor ? unsigned_numerator / unsigned_divisor : 0xffffffffu;
+  return std::uint16_t(negative ? 0u - quotient : quotient);
 }
 
 NativeActionResult apply_action(const BoundAction &action,
@@ -256,7 +373,57 @@ NativeActionResult apply_action(const BoundAction &action,
   // scheduler applies movement/projection only at the corresponding phase.
   auto result = NativeActionResult{true, temporary, action.parameter_bytes};
   switch (action.operation) {
+  case NativeAction::CheckMovementBounds: {
+    const auto x = integer(actor, 0), y = integer(actor, 1);
+    result.value = x < actor.variables[0] ? 3 : x > actor.variables[1] ? 7 :
+                   y < actor.variables[2] ? 5 : y > actor.variables[3] ? 1 : 0;
+    break;
+  }
+  case NativeAction::SetMovementBounds: {
+    const auto &bounds = std::get<MovementBoundsOperands>(action.payload);
+    const auto x = integer(actor, 0), y = integer(actor, 1);
+    actor.variables[0] = std::uint16_t(x - bounds.x_extent);
+    actor.variables[1] = std::uint16_t(x + bounds.x_extent);
+    actor.variables[2] = std::uint16_t(y - bounds.y_extent);
+    actor.variables[3] = std::uint16_t(y + bounds.y_extent);
+    result.value = actor.variables[3];
+    break;
+  }
   case NativeAction::Unsupported:
+  case NativeAction::TargetAngle:
+  case NativeAction::TargetReached:
+  case NativeAction::SetDirectionFrame:
+  case NativeAction::CopyPartyPosition:
+  case NativeAction::CopySpritePosition:
+  case NativeAction::CaptureSpriteTarget:
+  case NativeAction::FaceNpcTowardActor:
+  case NativeAction::FaceSpriteTowardActor:
+  case NativeAction::CheckProspectiveTerrain:
+  case NativeAction::CheckProspectiveNpcCollision:
+  case NativeAction::PlaySound:
+  case NativeAction::OpenPrayerWindow:
+  case NativeAction::ClosePrayerWindow:
+  case NativeAction::WindowAnimationActive:
+  case NativeAction::AdvanceEncounterEffects:
+  case NativeAction::DirectionFromLeader:
+  case NativeAction::CheckContentIntegrity:
+  case NativeAction::ReadMovedThisTick:
+  case NativeAction::InflictSunstrokeCheck:
+  case NativeAction::FadePauseActors:
+  case NativeAction::FadeRestoreActors:
+  case NativeAction::FadeShowSprites:
+  case NativeAction::FadeRefreshSprites:
+  case NativeAction::FadeHideBlinkSprites:
+  case NativeAction::FadeRows:
+  case NativeAction::FadeColumns:
+  case NativeAction::FadeResetDissolve:
+  case NativeAction::FadeDissolve:
+  case NativeAction::FadeFinishTask:
+  case NativeAction::FadeReleaseController:
+  case NativeAction::ChooseRandom:
+  case NativeAction::NpcInitialDirection:
+  case NativeAction::RefreshGiftAppearance:
+  case NativeAction::SetDirectionAndRefresh:
   case NativeAction::ReleaseAppearance:
   case NativeAction::WithinLoadingArea:
   case NativeAction::RefreshFirstAndWithinArea:
@@ -281,6 +448,7 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::CaptureEnemyLeaderTarget:
   case NativeAction::EnemyChaseAngle:
   case NativeAction::EnemyDistanceSleep:
+  case NativeAction::VelocityDistanceSleep:
   case NativeAction::EnemyAngleVelocity:
   case NativeAction::EnemyAngleDirection:
   case NativeAction::SelectFourInitial:
@@ -291,6 +459,10 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::StepFourWalk:
   case NativeAction::StepEightAnimation:
     return {};
+  case NativeAction::YieldToText:
+    scene.action_script_state = 1;
+    result.value = 1;
+    break;
   case NativeAction::SetDirection:
     if (!(context.path_state & 0x8000))
       context.direction = temporary;
@@ -466,6 +638,14 @@ void run_actor_tick_callback(const ActionActorState &actor,
   case ActorTickCallback::EnemyPath:
     throw std::logic_error(
         "Native actor callback requires its world service");
+  case ActorTickCallback::TeleportLeader:
+  case ActorTickCallback::TeleportFollower:
+  case ActorTickCallback::TeleportFailureFollower:
+    // ActorWorld dispatches these through its bound ActorTickService before
+    // generic callbacks or physics. Travel's movement owner supplies that
+    // service and retains the actual party trail and collision window.
+    throw std::logic_error(
+        "Native teleport callback requires its actor tick service");
   case ActorTickCallback::None:
     break;
   case ActorTickCallback::Project:

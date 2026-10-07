@@ -56,6 +56,7 @@ LaunchOptions parse_options(int argc, char **argv) {
         if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: eb_cpp [options]\n"
                          "  --headless         Run without creating a window\n"
+                         "  --native-session N Continue save slot1..3 using the native engine\n"
                          "  --frames N         Stop after N hardware frames (0: unlimited)\n"
                          "  --steps N          Stop after N CPU step calls (0: unlimited)\n"
                          "  --buttons MASK     Hold a JOY1 bitmask, decimal or 0x hexadecimal\n"
@@ -98,6 +99,11 @@ LaunchOptions parse_options(int argc, char **argv) {
             options.original_timing = true;
         else if (arg == "--replay-only")
             options.replay_only = true;
+        else if (arg == "--native-session") {
+            const auto slot = parse_unsigned_integer(next(),arg);
+            if(slot<1 || slot>3) throw std::runtime_error("--native-session requires slot1..3");
+            options.native_continue_slot=unsigned(slot);
+        }
         else if (arg == "--headless")
             options.headless = true;
         else if (arg == "--vrr" || arg == "--no-vrr") {
@@ -201,6 +207,8 @@ LaunchOptions parse_options(int argc, char **argv) {
         throw std::runtime_error("--config and --no-config cannot be combined");
     if (options.import_only && options.import_rom.empty())
         throw std::runtime_error("--import-only requires --import-rom FILE");
+    if(options.native_continue_slot && options.original_timing)
+        throw std::runtime_error("--native-session cannot use --original-timing");
     return options;
 }
 

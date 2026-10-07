@@ -294,6 +294,239 @@ void requests_and_lifecycle(Fixture &f) {
     require(replacement != npc_actor && identity.actor_for_npc(230) == replacement,
             "NPC handoff reused stale graphical identity");
 }
+void retained_sprite_copy_and_attachment(Fixture &f) {
+    auto world=f.world();
+    auto source=spawn(0,0x1234,0xabcd);source.sprite=1;source.npc=17;
+    const auto last=*world.create_authored(source,{25,26});
+    source.npc=18;
+    source.action.position={0xfedc1234u,0x98764321u,0x11112222u};
+    const auto first=*world.create_authored(source,{4,5});
+    const auto destination=*world.create_authored(spawn(),{2,3});
+    auto &action=world.actor(destination).action();
+    action.position={0x5555abcdu,0x44441234u,0x3333fedcu};
+    action.velocity={1,2,3}; action.variables[6]=0x4567; action.priority=2;
+    const auto before=action;
+    require(world.first_authored_role_with_sprite(1)==4 &&
+                world.first_authored_role_with_npc(18)==4,
+            "Retained sprite/NPC lookup followed active creation order");
+    require(world.copy_sprite_position(destination,1)==0x9876 &&
+                action.position==AuthoredActorPosition{0xfedcabcdu,0x98761234u,0x3333fedcu} &&
+                action.velocity==before.velocity && action.variables==before.variables && action.priority==2,
+            "Sprite coordinate copy replaced fractions/Z/motion or selected wrong role");
+    const auto captured_position=action.position, captured_velocity=action.velocity;
+    require(world.capture_sprite_target(destination,1)==0x9876 &&
+                action.variables[6]==0xfedc && action.variables[7]==0x9876 &&
+                action.position==captured_position && action.velocity==captured_velocity,
+            "Sprite target capture changed coordinates/motion or lost wholeXY VAR6/7");
+    const auto saved_variables=action.variables;
+    rejects([&]{world.capture_sprite_target(destination,0xffff);},"Missing target alias was invented");
+    require(action.variables==saved_variables,"Rejected target selector partially changed VAR6/7");
+    world.retire(first);
+    require(world.first_authored_role_with_sprite(1)==4 &&
+                world.first_authored_role_with_npc(18)==4 && world.copy_sprite_position(destination,1)==0x9876 &&
+                world.capture_sprite_target(destination,1)==0x9876,
+            "Dormant selector residue lost its source whole-coordinate ownership");
+    const auto saved=action.position;
+    rejects([&]{world.copy_sprite_position(destination,0xffff);},"Missing source alias was invented");
+    require(action.position==saved,"Rejected sprite selector partially changed destination");
+    world.release_authored_appearance(4);
+    require(world.first_authored_role_with_sprite(1)==25 &&
+                world.first_authored_role_with_sprite(0xffff)==4,
+            "Retained released selector keys no longer follow numeric source order");
+    world.set_authored_draw_priority(25,3);
+    world.retire(last);
+    require(world.authored_draw_priority(25)==3,"Dormant draw priority was not retained");
+
+    auto attached=f.world();
+    const auto parent=*attached.create_authored(spawn(),{5,6});
+    const auto child=*attached.create_authored(spawn(),{1,2});
+    attached.actor(parent).appearance.select_four(0,0,0);
+    attached.actor(child).appearance.select_four(0,0,0);
+    attached.actor(parent).action().priority=2;
+    attached.actor(child).action().priority=0xc005;
+    attached.draw(256,f.palettes,1);
+    require(attached.actor(child).action().priority==0xc005 && !attached.ticks(),
+            "Initial attached capture advanced/cleared authoritative priority");
+    require(attached.advance_tick()==WorldTickResult::Complete &&
+                attached.actor(child).action().priority==0xc005,
+            "Persistent attachment draw cleared matching parent selector");
+    attached.draw(256,f.palettes,1);attached.draw(522,f.palettes,1);
+    require(attached.actor(child).action().priority==0xc005 && attached.ticks()==1,
+            "Repeated presentation changed actual attachment state");
+    attached.set_authored_draw_priority(1,0x8005);
+    require(attached.advance_tick()==WorldTickResult::Complete &&
+                attached.actor(child).action().priority==0,
+            "One-shot attachment was not cleared in its actual draw pass");
+    attached.draw(256,f.palettes,1);attached.draw(256,f.palettes,1);
+    require(!attached.actor(child).action().priority && attached.ticks()==2,
+            "Repeated one-shot capture ran another draw mutation");
+    attached.retire(parent);
+    attached.set_authored_draw_priority(1,0xc005);
+    attached.advance_tick();attached.draw(256,f.palettes,1);
+    require(attached.authored_draw_priority(5)==2 && attached.actor(child).action().priority==0xc005,
+            "Attached drawing lost retained dormant parent priority");
+}
+void movement_bounds_script(Fixture &f) {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        const auto call=version==eb::GameVersion::JP ? 0xc0a943u:0xc0a964u;
+        const std::vector<std::uint8_t> bytes{
+            0x42,std::uint8_t(call),std::uint8_t(call>>8),std::uint8_t(call>>16),
+            0xff,0xff,0,0x80,0x1f,4,0x06,2,0x19,10,0};
+        const auto scripts=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+        ActorWorld world(f.sprites,scripts,version);
+        auto spec=spawn();spec.action.position={0xffff1234u,0x8001abcdu,0x11112222u};
+        const auto id=world.create(spec);
+        require(world.advance_tick()==WorldTickResult::Complete && !world.request() && world.ticks()==1 &&
+                    world.actor(id).action().variables==std::array<std::uint16_t,8>{0,0xfffe,1,1,1,0,0,0} &&
+                    world.actor(id).action().position==spec.action.position,
+                "Actual actor scheduler did not execute compound bounds and retain its observed scalar return");
+        world.actor(id).action().variables[0]=0x1234;
+        require(world.advance_tick()==WorldTickResult::Complete && !world.request() && world.ticks()==2 &&
+                    world.actor(id).action().variables[0]==0x1234 &&
+                    world.actor(id).action().position==spec.action.position,
+                "Waiting bounds task repeated its state change or consumed an extra actor frame");
+    }
+}
+void movement_bounds_query_script(Fixture &f) {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        const auto call=version==eb::GameVersion::JP ? 0xc44fedu:0xc47269u;
+        const std::vector<std::uint8_t> bytes{0x42,std::uint8_t(call),std::uint8_t(call>>8),
+            std::uint8_t(call>>16),0x1f,4,0x06,2,0x19,6,0};
+        const auto scripts=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+        ActorWorld world(f.sprites,scripts,version);
+        auto spec=spawn();spec.action.position={0x80001234u,0x0002abcdu,0x11112222u};
+        spec.action.variables={0,0x7fff,1,3,55,66,77,88};
+        const auto id=world.create(spec);
+        require(world.advance_tick()==WorldTickResult::Complete && !world.request() && world.ticks()==1 &&
+                    world.actor(id).action().variables==std::array<std::uint16_t,8>{0,0x7fff,1,3,7,66,77,88} &&
+                    world.actor(id).action().position==spec.action.position,
+                "Actual actor scheduler did not publish the unsigned bounds query result before continuing");
+        world.actor(id).action().variables[4]=0x1234;
+        require(world.advance_tick()==WorldTickResult::Complete && !world.request() && world.ticks()==2 &&
+                    world.actor(id).action().variables[4]==0x1234 &&
+                    world.actor(id).action().position==spec.action.position,
+                "Waiting bounds query task repeated its continuation or consumed an extra frame");
+    }
+}
+void sprite_script_replacement(Fixture &f) {
+    for (const auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        const std::vector<std::uint8_t> bytes{
+            0x1d,0x34,0x12,0x07,12,0,0x06,7,0x19,0,0,0x09,
+            0x06,7,0x19,12,0,
+            0x14,0,2,1,0,0x06,1,0x19,17,0};
+        auto scripts=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0,17});
+        ActorWorld world(f.sprites,scripts,version);
+        auto spec=spawn(); spec.sprite=1; spec.behavior.physics=ActorPhysics::Stationary;
+        spec.action.position={0x1234abcd,0x5678cdef,0x9876fedc};
+        spec.action.velocity={1,2,3};spec.action.variables[7]=0x4567;
+        const auto later=*world.create_authored(spec,{14,15});
+        const auto first=*world.create_authored(spec,{3,4});
+        require(world.advance_tick()==WorldTickResult::Complete && world.actor(first).tasks().size()==2,
+                "Sprite replacement fixture did not create its real primary and child tasks");
+        auto &actor=world.actor(first);
+        actor.behavior.tick=ActorTickCallback::ProjectOffset;
+        actor.scripts_and_physics_enabled=false;actor.tick_callback_enabled=false;
+        const auto action=actor.action();const auto tasks=actor.tasks();
+        const auto later_tasks=world.actor(later).tasks();const auto order=world.actors();
+        const auto ticks=world.ticks();
+        world.replace_sprite_script(0x1234,0xffff);
+        require(actor.tasks().size()==tasks.size() && actor.tasks()[0].cursor==tasks[0].cursor &&
+                    !actor.scripts_and_physics_enabled && !actor.tick_callback_enabled,
+                "Missing sprite replacement evaluated its invalid script or changed a live task");
+        rejects([&]{world.replace_sprite_script(1,0xffff);},"Invalid replacement script was accepted");
+        require(actor.tasks().size()==tasks.size() && actor.tasks()[0].cursor==tasks[0].cursor &&
+                    actor.behavior.tick==ActorTickCallback::ProjectOffset &&
+                    !actor.scripts_and_physics_enabled && !actor.tick_callback_enabled,
+                "Rejected replacement partly cleared tasks or callback controls");
+        world.replace_sprite_script(1,1);
+        const auto replaced=actor.tasks();
+        require(replaced.size()==1 && replaced[0].id==tasks[0].id &&
+                    replaced[0].temporary==0x1234 && replaced[0].cursor==17 &&
+                    !replaced[0].sleep_frames && !replaced[0].stack_depth &&
+                    actor.behavior.tick==ActorTickCallback::None &&
+                    actor.scripts_and_physics_enabled && actor.tick_callback_enabled &&
+                    actor.action().position==action.position && actor.action().velocity==action.velocity &&
+                    actor.action().variables==action.variables && actor.action().animation==action.animation &&
+                    actor.action().priority==action.priority && actor.script_style()==0 &&
+                    world.actor(later).tasks().size()==later_tasks.size() &&
+                    world.actor(later).tasks()[0].cursor==later_tasks[0].cursor &&
+                    world.actors()==order && world.ticks()==ticks,
+                "Sprite replacement lost first numeric match, task identity/temporary, or retained actor state");
+        world.retire(first);
+        rejects([&]{world.replace_sprite_script(1,1);},"Dormant first sprite match revived or skipped its released script slot");
+        require(world.actor(later).tasks().size()==later_tasks.size() &&
+                    world.actor(later).tasks()[0].cursor==later_tasks[0].cursor && world.ticks()==ticks,
+                "Rejected dormant replacement changed a later duplicate actor");
+        rejects([&]{world.replace_sprite_script(0,1);},"Literal zero sprite selector was substituted for an active actor");
+        spec.sprite=0;
+        const auto zero=*world.create_authored(spec,{0,1});
+        world.replace_sprite_script(0,1);
+        require(world.actor(zero).tasks()[0].cursor==17,"Literal zero sprite did not select its actual role");
+        world.release_appearance(zero);
+        world.replace_sprite_script(0xffff,0);
+        require(world.actor(zero).tasks()[0].cursor==0 && !world.actor(zero).has_appearance() &&
+                    world.ticks()==ticks,"Literal FFFF sprite replacement changed selector or invented artwork/time");
+
+        ActorWorld pending(f.sprites,f.scripts,version);
+        const auto current=*pending.create_authored(spawn(1),{0,1});
+        require(pending.advance_tick()==WorldTickResult::NeedsEngine,"Replacement fixture lacked its executing script boundary");
+        const auto old_cursor=pending.actor(current).tasks()[0].cursor;
+        rejects([&]{pending.replace_sprite_script(0,0);},"Executing sprite script was replaced across its retained continuation");
+        require(pending.request() && pending.actor(current).tasks()[0].cursor==old_cursor && !pending.ticks(),
+                "Rejected executing replacement advanced its pending actual continuation");
+    }
+}
+void independent_target_frontiers(Fixture &f) {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP})
+        for (const auto helper : {std::array<unsigned,2>{0xc0a92d,0xc0a90c},
+                                  {0xc0a8c6,0xc0a8a5}}) {
+            const bool jp=version==eb::GameVersion::JP;
+            const auto pose=jp ? 0xc0a49eu:0xc0a4bfu, call=helper[jp];
+            const std::vector<std::uint8_t> bytes{0x42,std::uint8_t(pose),std::uint8_t(pose>>8),
+                std::uint8_t(pose>>16),0x42,std::uint8_t(call),std::uint8_t(call>>8),
+                std::uint8_t(call>>16),0x1f,0,0x09};
+            auto scripts=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+            ActorWorld world(f.sprites,scripts,version,AppearanceData{});
+            const auto id=world.create(spawn());
+            require(world.advance_tick()==WorldTickResult::NeedsEngine &&
+                        world.actor(id).appearance.displayed() &&
+                        world.request()->binding.operation==NativeAction::Unsupported &&
+                        world.request()->diagnostic.authored_identifier==call &&
+                        !world.request()->diagnostic.inline_length_known && !world.ticks(),
+                    "Shared pose proof bypassed its real independent unported target service");
+            const auto action=world.actor(id).action();
+            rejects([&]{world.respond();},"Independent target contract made an unported callee executable");
+            require(world.request() && world.actor(id).action().position==action.position &&
+                        world.actor(id).action().variables==action.variables && !world.ticks(),
+                    "Rejected target response mutated actor or completed its tick");
+        }
+}
+void velocity_task_response(Fixture &f) {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        const auto call=version==eb::GameVersion::JP ? 0xc0ca30u:0xc0ca4eu;
+        const std::vector<std::uint8_t> bytes{0x1d,6,0,0x42,std::uint8_t(call),
+            std::uint8_t(call>>8),std::uint8_t(call>>16),0x14,0,2,1,0,0x09};
+        auto scripts=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+        ActorWorld world(f.sprites,scripts,version);
+        auto spec=spawn();spec.action.velocity[0]=0x10000;
+        const auto id=world.create(spec);
+        require(world.advance_tick()==WorldTickResult::NeedsEngine &&
+                    world.request()->binding.operation==NativeAction::VelocityDistanceSleep &&
+                    world.request()->action.temporary==6,
+                "Velocity wait did not suspend its actual authored task");
+        rejects([&]{world.respond(6,1,6);},"Velocity wait accepted an invented inline operand");
+        world.respond(6,0,6);
+        require(world.actor(id).tasks().front().sleep_frames==6,
+                "Velocity quotient was not published to the actual current task");
+        require(world.advance_tick()==WorldTickResult::Complete &&
+                    world.actor(id).tasks().front().sleep_frames==5 && world.actor(id).action().variables[0]==0,
+                "Velocity quotient did not set the actual current task sleep");
+        for(unsigned tick=0;tick<5;++tick) world.advance_tick();
+        require(world.actor(id).action().variables[0]==0,"Velocity task resumed before exact countdown");
+        world.advance_tick();
+        require(world.actor(id).action().variables[0]==1,"Velocity task did not resume after exact countdown");
+    }
+}
 void authored_roles(Fixture &f) {
     auto world = f.world();
     const auto untagged = world.create(spawn());
@@ -488,6 +721,8 @@ void appearance_services(Fixture &f) {
     spec.action.variables[2] = spec.action.variables[3] = 1;
     spec.appearance_context.footstep_owner = true;
     const auto a = *walking.create_authored(spec,{0,1}), b = *walking.create_authored(spec,{1,2});
+    require(walking.actor(a).authored_role()==0 && walking.actor(b).authored_role()==1,
+            "Footstep ownership fixture lost its separate authored roles");
     walking.appearance_scene().footstep_role=1;
     for (unsigned tick = 1; tick <= 3; ++tick) {
         require(walking.advance_tick() == WorldTickResult::Complete, "Native eight-direction animation stopped");
@@ -626,6 +861,12 @@ int main() {
         ordering_and_physics(fixture);
         camera_refresh_ordering(fixture);
         requests_and_lifecycle(fixture);
+        retained_sprite_copy_and_attachment(fixture);
+        movement_bounds_script(fixture);
+        movement_bounds_query_script(fixture);
+        sprite_script_replacement(fixture);
+        independent_target_frontiers(fixture);
+        velocity_task_response(fixture);
         authored_roles(fixture);
         appearance_release(fixture);
         rendering_isolation(fixture);

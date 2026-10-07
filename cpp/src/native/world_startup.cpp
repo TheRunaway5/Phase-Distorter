@@ -4,6 +4,11 @@
 #include <stdexcept>
 
 namespace eb::native {
+void set_teleport_state(WorldSessionState &session, AppearanceSceneContext &appearance,
+                       std::uint16_t destination, std::uint16_t style) noexcept {
+  appearance.teleport_destination = std::uint8_t(destination);
+  session.teleport_style = std::uint8_t(style);
+}
 namespace {
 void require(bool value, const char *message) {
   if (!value) throw std::logic_error(message);
@@ -85,7 +90,7 @@ struct WorldStartup::Operation::State {
     leader.leader_direction = g.leader_direction;
     leader.walking_style = g.walking_style;
     o.control.moved_this_tick = g.reserved_90;
-    leader.movement_flags = g.reserved_92;
+    leader.area_character_style = g.reserved_92;
     o.control.x_fraction = g.reserved_80;
     o.control.y_fraction = g.reserved_84;
     o.control.trodden_surface_flags = g.trodden_tile_type;
@@ -108,6 +113,7 @@ struct WorldStartup::Operation::State {
     }
     o.clock.flavor = g.text_flavour;
     o.session.elapsed_timer = g.elapsed_timer;
+    o.session.teleport_box_destination = g.reserved_c3;
     // FILE_MENU_LOOP's actual Continue arm follows LOAD_GAME_SLOT.
     o.queue.reset_after_restore();
     o.hotspots.restore(g, owner.resources_);
@@ -133,7 +139,7 @@ WorldStartup::WorldStartup(const saves::ContinueResources &resources,
               o.runtime.uses(o.inventory) &&
               o.refresh.bound_to(o.party, o.actors, o.interactions, o.clock) &&
               o.refresh.uses(o.updater) &&
-              &o.area_character_style == &o.interactions.state().movement_flags &&
+              &o.area_character_style == &o.interactions.state().area_character_style &&
               o.bootstrap.uses(o.actors, o.party, o.formation, o.trail,
                                o.control, o.maintenance, o.following) &&
               o.creation.uses(o.party, o.actors, o.party_data, o.formation,
@@ -224,6 +230,12 @@ WorldStartup::Operation::service() const noexcept { return state_->pending; }
 WorldRuntime::Operation *WorldStartup::Operation::runtime_operation() noexcept {
   return state_->runtime.get();
 }
+void WorldStartup::Operation::respond_bicycle_dismount() {
+  auto &s=*state_;
+  require(s.pending==WorldStartupService::BicycleDismount && bool(s.tail),
+          "Startup has no pending bicycle child");
+  s.tail->respond_bicycle_dismount(); s.pending.reset();
+}
 std::span<const WorldPartyCreatedActor>
 WorldStartup::Operation::created_party() const noexcept { return state_->created; }
 dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
@@ -307,7 +319,7 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
         o.actors.reset_scripts();
         o.actors.initialize_scene_objects();
         o.clock.action_scripts_disabled = 0;
-        o.windows.prompt_state().battle_mode = 0;
+        o.control.encounter.mode = 0;
         o.session.input_disable_frames = 0;
         o.spawn.npcs = NpcSpawnMode::Initial;
         o.spawn.enemies = true;

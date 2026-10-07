@@ -48,6 +48,11 @@ public:
     std::unique_ptr<Operation> begin_weaken(dialogue::Conversation& parent);
     bool busy() const noexcept { return active_ != nullptr; }
     bool failed() const noexcept { return failed_ || dialogue_.failed(); }
+    bool uses(const ActionState& state, const Roster& roster, const Names& names,
+              const story::BattleDialogue& dialogue, const ActionResources& resources) const noexcept {
+        return &state_ == &state && &roster_ == &roster && &names_ == &names &&
+               &dialogue_ == &dialogue && resources_.get() == &resources;
+    }
 private:
     ActionState& state_;
     Roster& roster_;

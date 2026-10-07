@@ -1,0 +1,36 @@
+#include "content.hpp"
+
+namespace eb::native::session {
+Content::Content(std::span<const std::uint8_t> image, GameVersion v)
+    : version(v), integrity_difference(import_world_integrity_difference(image,v)),
+      text_animations(dialogue::TextAnimationResources::import(image,v)), program(dialogue::import_program(image, v).program),
+      fonts(dialogue::FontResources::import(image, v)),
+      windows(dialogue::WindowResources::import(image, v)),
+      window_art(dialogue::WindowInitializationResources::import(image, v)),
+      menus(dialogue::MenuResources::import(image, v)),
+      world_menus(world::menu::Resources::import(image,v)),
+      substitutions(dialogue::SubstitutionResources::import(image, v)),
+      meters(party::MeterWindowResources::import(image, v)),
+      transformations(party::ItemTransformationResources::import(image, v)),
+      interactions(npcs::InteractionResources::import(image, v)),
+      map_text(npcs::MapTextResources::import(image, v)),
+      sprites(std::make_shared<SpriteResources>(image, sprite_catalog_layout(v))),
+      sprite_effects(image, sprite_catalog_layout(v), sprites),
+      scripts(import_action_scripts(image, v)),
+      npcs(std::make_shared<NpcCatalog>(image, npc_catalog_layout(v))),
+      enemies(std::make_shared<EnemySpawnData>(import_enemy_spawn_data(image, v))),
+      map(image, world_map_layout(v)), palettes(image, world_palette_layout(v)),
+      animations(image, world_palette_animation_layout(v)),
+      collision(image, world_collision_layout(v)), movement(image, world_movement_layout(v)),
+      walking(image, v), party(image, v), bootstrap(image, v),
+      continuing(std::make_shared<saves::ContinueResources>(image, v)),
+      startup(image, v), doors(WorldDoorResources::import(image, v)),
+      transitions(image, v), generated_input(image, v),
+      party_motion(import_party_movement_data(image, v)),
+      party_following(import_party_following_data(image, v)),
+      enemy_motion(image, v), appearances(import_appearance_data(image, v)),
+      creation(import_actor_creation_data(image, v)), growth(std::make_shared<CharacterGrowth>(image, v)), swirl(import_world_swirl_data(image)),
+      encounter_effects(import_world_encounter_effect_data(image, v)),
+      layers(image, v), music(image, v), teleports(image, v), teleport_resources(image,v), town_map(image,v),
+      floating_sprites(import_world_floating_sprite_data(image,v)), overlays(image, v, *sprites) {}
+} // namespace eb::native::session

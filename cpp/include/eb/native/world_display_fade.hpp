@@ -31,6 +31,10 @@ public:
   void begin_out(std::uint16_t magnitude, std::uint16_t delay);
   // Direct INIDISP mirror write used by the two original blank helpers.
   void force_blank(bool stop_fade = false) noexcept;
+  // Synchronous fade helpers clear this word but retain the adjacent NMI
+  // countdown. Their direct brightness writes do not start an NMI fade.
+  void clear_parameters() noexcept;
+  void write_brightness(std::uint8_t) noexcept;
   bool active() const noexcept { return state_.step != 0; }
   const WorldDisplayFadeState &state() const noexcept { return state_; }
   Frame preview_next_frame() const noexcept;

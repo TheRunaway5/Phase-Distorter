@@ -91,4 +91,15 @@ AppearanceServiceResult apply_appearance_action(const BoundAction &action, Actio
     appearance = std::move(updated_appearance);
     return result;
 }
+void select_scripted_pose(ActionActorState& actor, ActorActionContext& context,
+                          SpriteAppearance& appearance, std::uint8_t direction,
+                          std::uint8_t frame) {
+    auto next = appearance;
+    const auto animation = std::uint16_t(actor.variables[0] ? unsigned(frame) * 2 : frame);
+    if (actor.variables[0]) next.select_eight(direction, animation, context.surface_flags);
+    else next.select_four(direction, animation, context.surface_flags);
+    context.direction = direction;
+    actor.animation = animation;
+    appearance = std::move(next);
+}
 } // namespace eb::native

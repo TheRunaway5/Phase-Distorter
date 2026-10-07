@@ -22,6 +22,9 @@ std::shared_ptr<const EnemyResources> EnemyResources::import(
             return std::uint16_t(byte(offset) | unsigned(byte(offset + 1)) << 8);
         };
         auto& e = result->enemies_[id];
+        e.type = byte(27); e.miss_rate = byte(68);
+        e.death_type = byte(90); e.mirror_success = byte(93); e.max_called = byte(92);
+        e.death_text = word(49) | std::uint32_t(word(51)) << 16;
         e.gender = byte(26); e.sprite = word(28); e.hp = word(33); e.pp = word(35);
         e.experience = word(37) | std::uint32_t(word(39)) << 16;
         e.money = word(41); e.level = byte(54);

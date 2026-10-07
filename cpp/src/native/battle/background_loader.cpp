@@ -16,6 +16,7 @@ BackgroundLoader::BackgroundLoader(const BattleBackgroundScenes &resources,
   if (!frames.uses(display))
     throw std::invalid_argument("Background loader requires its actual display transport");
   (void)layers.at(1); (void)layers.at(3); (void)layers.at(7);
+  background_.bind_display(display_, layout_);
 }
 bool BackgroundLoader::uses(const BattleBackgroundScene &background,
     const PaletteBankState &colors, const PsiScratch &scratch,
@@ -70,9 +71,11 @@ void BackgroundLoader::load(BattleBackgroundPair pair, BattleArtworkPublication 
             display_.staged_scroll[1].x, display_.staged_scroll[1].y};
     start.secondary_scroll = {display_.staged_scroll[0].x, display_.staged_scroll[0].y};
   }
-  // Every authored lookup, artwork frontier and replacement allocation is
-  // admitted before LOAD's first timer, scratch, transport or display write.
-  auto next = resources_.prepare(pair, start, publication);
+  // Catalog and replacement allocation are admitted before LOAD mutates its
+  // owners. Unwritten artwork is supplied by this exact retained display;
+  // immutable catalog-only callers continue to reject that dependency.
+  auto next = resources_.prepare_impl(pair, start, publication, true);
+  next.bind_display(display_, layout_);
   const auto copy = [&](std::uint16_t destination, std::uint16_t count, std::uint8_t mode = 0) {
     auto transfer = display_.begin_transfer({PsiTransferKind::Vram, 0, count, destination, mode}, scratch_, fade_);
     if (!transfer->advance())

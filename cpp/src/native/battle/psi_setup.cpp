@@ -49,7 +49,7 @@ std::unique_ptr<PsiSetup::Operation> PsiSetup::begin(unsigned id) {
   if (active_ || abandoned_)
     throw std::logic_error("PSI setup already active or abandoned");
   (void)resources_->definition(id);
-  if (!(clock_.interrupt_mask & 0x80) &&
+  if (!(clock_.effective_interrupt_mask() & 0x80) &&
       (!(fade_.state().brightness & 0x80) || display_.pending_bytes()))
     throw std::logic_error(
         "Queued PSI transfer requires the native NMI publication owner");
@@ -112,7 +112,7 @@ bool PsiSetup::Operation::advance() {
   while (phase_ == 1) {
     if (transfer_) {
       if (!transfer_->advance()) {
-        if (!(o.clock_.interrupt_mask & 0x80))
+        if (!(o.clock_.effective_interrupt_mask() & 0x80))
           throw std::logic_error(
               "Queued PSI transfer requires the native NMI publication owner");
         wait_for(PsiSetupService::Publication);
@@ -126,7 +126,7 @@ bool PsiSetup::Operation::advance() {
     }
     // An IRQ callback may have queued new work after the preceding drain.
     if (o.display_.pending_bytes()) {
-      if (!(o.clock_.interrupt_mask & 0x80))
+      if (!(o.clock_.effective_interrupt_mask() & 0x80))
         throw std::logic_error(
             "Queued PSI transfer requires the native NMI publication owner");
       wait_for(PsiSetupService::Publication);

@@ -73,6 +73,7 @@ StartupGraphics::StartupGraphics(const BattleCombatants &catalog, BattleCombatan
               windows.uses(artwork) && artwork.bound_to(windows.output()) &&
               frame.uses_graphics(objects, colors, scratch, display, fade, windows, party),
           "Battle startup graphics must share the actual frame, windows and region");
+  windows.bind_ambient_register_source(scratch.bytes);
 }
 bool StartupGraphics::uses(const BattleCombatantScene &objects, const PaletteBankState &colors,
     const PsiScratch &scratch, const PsiDisplayState &display, const Frame &frame) const noexcept {

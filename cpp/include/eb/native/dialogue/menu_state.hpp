@@ -7,6 +7,9 @@ namespace eb::native::dialogue {
 // owns one instance alongside its option pool; operations borrow this state.
 struct MenuState {
     bool center_next_string{}, force_normal_font{}, restore_backup{}, early_tick_exit{}, force_left_alignment{};
+    // Retained source byte shared by the command text wrapper and its Help
+    // caller. JP's interaction queue can write this same adjacent owner.
+    std::uint8_t skip_adding_command_text{};
     std::uint16_t backup_first_option=0xffff, backup_selected_option=0xffff, backup_x{}, backup_y{};
     bool operator==(const MenuState&) const = default;
 };

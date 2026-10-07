@@ -27,6 +27,12 @@ struct AreaPalettes {
     // and restoration must retain them (some scenery zeros are control words).
     std::array<std::uint16_t, 6> scenery_zero{};
     std::array<std::uint16_t, 8> sprite_zero{};
+    // Complementary source word bits omitted by RGB projection. Bit zero is
+    // unused because each transparent control word is already retained whole.
+    std::array<std::uint16_t, 6> scenery_high_bits{};
+    std::array<std::uint16_t, 8> sprite_high_bits{};
+    std::uint16_t scenery_word(unsigned palette, unsigned color) const;
+    std::uint16_t sprite_word(unsigned palette, unsigned color) const;
 };
 
 // Owns authored palettes and area selections. Resolves story/day flag branches

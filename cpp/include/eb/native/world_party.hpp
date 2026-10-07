@@ -49,14 +49,21 @@ struct WorldPartyState {
     // Independent character words55/65. Startup does not reset either.
     std::array<std::uint16_t,6> selected_styles{}, last_trail_styles{};
     // Published at the actual maintenance/controller phases, never recomputed
-    // from live formation on a follower's read. Missing cache is explicit.
+    // from live formation on a follower's read. Cold BSS starts with role0
+    // and direction0; explicit absence remains an unowned cache.
     struct ProjectionInputs {
-        std::optional<unsigned> leader_role;
+        std::optional<unsigned> leader_role = 0;
         std::uint16_t direction{}, movement_mismatch{};
     } projection;
     std::array<std::uint16_t, 6> roles{}, trail_cursors{};
     WorldPartyGuest first_guest, second_guest;
 };
+// C0A864/C46C9B copy the selected party role's integer X/Y only. The
+// six display slots and the independent FF leader selector remain distinct;
+// dormant role coordinates are valid, while an unowned role is explicit.
+std::uint16_t copy_party_position(ActorWorld &, ActorId, const party::State &,
+                                  const WorldPartyState &, std::uint8_t selector);
+
 enum class WorldPartyService { RefreshMovementPolicy, RefreshWindowPalette };
 
 // UPDATE_PARTY and C032EC against the actual party and actor owners. Membership

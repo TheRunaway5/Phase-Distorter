@@ -418,9 +418,10 @@ void imported(const eb::GameAssets &assets, Original &source) {
   check(f.control.camera_focus ==
                 CameraTarget{AuthoredRoleRef(
                     *f.actors.actor(focused).authored_role())} &&
-            npc.request()->kind == dialogue::RequestKind::UnsupportedCommand &&
+            npc.request()->kind == dialogue::RequestKind::WorldControl &&
             npc.request()->selector == 0xe8 &&
-            npc.snapshot().consumed_bytes == 6,
+            npc.request()->world_control == WorldControlCommand{WorldControlCommandKind::ClearPlayerLock,0xff} &&
+            npc.snapshot().consumed_bytes == 7,
         "Actual Twoson bus prefix did not preserve its honest next-service "
         "frontier");
   dialogue::Runtime stop(imported.program, state);
@@ -433,9 +434,10 @@ void imported(const eb::GameAssets &assets, Original &source) {
             f.control.camera_focus ==
                 CameraTarget{AuthoredRoleRef(
                     *f.actors.actor(focused).authored_role())} &&
-            stop.request()->kind == dialogue::RequestKind::UnsupportedCommand &&
-            stop.request()->selector == 7,
-        "Actual stop prefix cleared focus or swallowed unported music");
+            stop.request()->kind == dialogue::RequestKind::ScriptMusic &&
+            stop.request()->selector == 7 &&
+            stop.request()->script_music==dialogue::ScriptMusicRequest{dialogue::ScriptMusicKind::Effect,5,0},
+        "Actual stop prefix cleared focus or swallowed its separate music owner");
   imported_scene(assets, imported.program, stage_start, f, focused);
   std::cout << (us ? "US" : "JP")
             << " imported_fragments=3 imported_scene_frames=2 "

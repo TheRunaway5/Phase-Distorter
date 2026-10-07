@@ -80,6 +80,21 @@ SpriteEffectContent::SpriteEffectContent(
 unsigned SpriteEffectContent::fade_width(unsigned group) const {
   return fade_widths_.at(group);
 }
+std::vector<std::uint8_t> SpriteEffectContent::planar_seed(unsigned group, unsigned pose) const {
+  const auto &pixels = tile_pixels_.at(group).at(pose);
+  const unsigned tiles = (pixels.size() - 8) / 64;
+  std::vector<std::uint8_t> result(tiles * 32 + 2);
+  for (unsigned tile = 0; tile < tiles; ++tile)
+    for (unsigned y = 0; y < 8; ++y)
+      for (unsigned x = 0; x < 8; ++x)
+        for (unsigned plane = 0; plane < 4; ++plane)
+          result[tile * 32 + (plane / 2) * 16 + y * 2 + (plane & 1)] |=
+              ((pixels[tile * 64 + y * 8 + x] >> plane) & 1) << (7 - x);
+  for (unsigned x = 0; x < 8; ++x)
+    for (unsigned plane = 0; plane < 2; ++plane)
+      result[tiles * 32 + plane] |= ((pixels[tiles * 64 + x] >> plane) & 1) << (7 - x);
+  return result;
+}
 SpriteEffectSeed SpriteEffectContent::seed(unsigned group, unsigned pose,
                                            bool authored_fade_grid) const {
   const auto &tiles = tile_pixels_.at(group).at(pose);
@@ -160,6 +175,17 @@ void SpriteEffectCanvas::publish() {
   target_.canvas = std::move(output);
   artwork_.apply_tiles(target_, 0,
                        artwork_.tile_columns() * artwork_.tile_rows());
+}
+void SpriteEffectCanvas::load_pixels(std::span<const std::uint8_t> source,
+                                   std::span<const std::uint8_t> destination) {
+  if (source.size() != width_ * height_ || destination.size() != source.size() ||
+      std::any_of(source.begin(), source.end(), [](auto p) { return p > 15; }) ||
+      std::any_of(destination.begin(), destination.end(), [](auto p) { return p > 15; }))
+    throw std::invalid_argument("Invalid retained sprite fade pixels");
+  auto next = std::make_shared<const std::vector<std::uint8_t>>(source.begin(), source.end());
+  pixels_.assign(destination.begin(), destination.end());
+  source_ = std::move(next);
+  publish();
 }
 void SpriteEffectCanvas::copy_row(unsigned y) {
   if (y >= height_)

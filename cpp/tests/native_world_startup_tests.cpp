@@ -34,8 +34,8 @@ void run(eb::GameVersion region,unsigned count,unsigned budget) {
         f.control.x_fraction==0x1234 && f.control.y_fraction==0x5678 &&
         f.talk.state().leader_x==expected.game.leader_x &&
         f.control.moved_this_tick==expected.game.reserved_90 &&
-        f.talk.state().movement_flags==expected.game.reserved_92 &&
-        f.maintenance.battle_mode_flag==0xabcd &&
+        f.talk.state().area_character_style==expected.game.reserved_92 &&
+        !f.control.encounter.mode && !f.windows.prompt_state().battle_mode &&
         f.windows.output().policy().text_speed==1 &&
         f.windows.prompt_state().text_speed_based_wait==60 &&
         f.enemies.population().maximum==10 && f.phone.timer==1687 && f.phone.queued==4 &&
@@ -65,6 +65,28 @@ void run(eb::GameVersion region,unsigned count,unsigned budget) {
   operation.reset();
   check(f.startup->failed() && !f.startup->busy(),"Abandoned startup could replay its consumed prefix");
 }
+void independent_reset(eb::GameVersion region) {
+  startup_test::Resources r(region);startup_test::Fixture f(r);
+  auto operation=f.startup->begin(f.snapshot());
+  for(unsigned work=0;operation->stage()!=WorldStartupStage::ResetWorld && work<100000;++work) {
+    const auto progress=operation->advance(1);
+    if(progress==dialogue::Progress::Suspended) {
+      auto *child=operation->runtime_operation();
+      check(child && child->service()==story::SceneService::Frame,"Pre-game reset test lost its actual frame child");
+      child->complete_frame({0,0});
+    }
+  }
+  check(operation->stage()==WorldStartupStage::ResetWorld,"Pre-game did not reach exact reset boundary");
+  f.windows.prompt_state().battle_mode=0xabcd;
+  f.control.encounter.mode=0x1234;
+  operation->advance(1);
+  check(operation->stage()==WorldStartupStage::CreateController &&
+        !f.control.encounter.mode && f.windows.prompt_state().battle_mode==0xabcd,
+        "World reset conflated encounter mode with rendering flag");
+  // The rest of this synthetic world-only rig has no battle frame owner.
+  f.windows.prompt_state().battle_mode=0;
+  f.drive(*operation);
+}
 void invalid(eb::GameVersion region) {
   startup_test::Resources r(region);startup_test::Fixture f(r);
   auto snapshot=f.snapshot();snapshot.state.game.text_speed=0;
@@ -80,7 +102,7 @@ void invalid(eb::GameVersion region) {
   npcs::Interactions other_talk(r.interactions,r.map_text,r.program,f.windows,f.actors,
                                 *r.collision,f.area);
   WorldPartyCreation other_creation(f.party,f.actors,*r.party_data,f.formation,f.updater,
-                                    f.spawn.prepared,f.trail,other_talk.state().movement_flags);
+                                    f.spawn.prepared,f.trail,other_talk.state().area_character_style);
   story::PartyFormation other_refresh(f.updater,f.party,f.actors,*r.party_data,f.formation,
                                       f.movement,other_talk,f.clock);
   WorldHotspots other_hotspots(region,f.hotspot_state,other_talk.state(),f.clock,
@@ -90,7 +112,7 @@ void invalid(eb::GameVersion region) {
       f.windows,f.party,f.actors,*f.runtime,other_talk,f.clock,f.formation,f.trail,
       f.control,f.maintenance,f.following,f.spawn,f.enemies,f.inventory,other_hotspots,
       f.queue,f.bootstrap,other_creation,f.updater,*r.party_data,other_refresh,
-      other_talk.state().movement_flags,f.scene_colors,f.session,f.random});});
+      other_talk.state().area_character_style,f.scene_colors,f.session,f.random});});
   check(!f.startup->failed()&&!f.party.party_count&&!f.actors.size(),
         "Foreign inventory rejection partially changed startup");
   auto busy=f.runtime->begin(story::TickKind::Frame);
@@ -145,5 +167,6 @@ void foreign_world(eb::GameVersion region) {
 }
 }
 int main(){try{for(auto r:{eb::GameVersion::US,eb::GameVersion::JP}) {
-  for(unsigned n:{1u,4u})for(unsigned budget:{1u,4096u})run(r,n,budget);invalid(r);failed_prefix(r);competing_frame(r);foreign_world(r);
+  for(unsigned n:{1u,4u})for(unsigned budget:{1u,4096u})run(r,n,budget);
+  independent_reset(r);invalid(r);failed_prefix(r);competing_frame(r);foreign_world(r);
 }std::cout<<"PASS native startup: "<<checks<<" checks\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

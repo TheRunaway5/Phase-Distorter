@@ -8,6 +8,10 @@ void check(bool condition, const char *message) {
     if (!condition)
         throw std::runtime_error(message);
 }
+BoundAction binding(NativeAction operation,unsigned operand=0,unsigned bytes=0) {
+    BoundAction result;result.operation=operation;result.operand=std::uint16_t(operand);
+    result.parameter_bytes=bytes;return result;
+}
 void bindings() {
     const std::array<std::uint8_t, 2> bytes{0x34, 0x12};
     ActionScriptData data(bytes, 0x30195);
@@ -27,6 +31,20 @@ void bindings() {
         check(result.handled && result.value == 0x1234 && result.parameter_bytes == 2 &&
                   context.movement_speed == 0x1234,
               "Native binding applies speed and returns consumed data");
+        for (const auto operation : {
+                 std::array<unsigned, 4>{0xc0a864,0xc0a843,unsigned(NativeAction::CopyPartyPosition),1},
+                 {0xc49841,0xc46e8b,unsigned(NativeAction::OpenPrayerWindow),0},
+                 {0xc2ea74,0xc2e98d,unsigned(NativeAction::ClosePrayerWindow),0},
+                 {0xc2eacf,0xc2e9e8,unsigned(NativeAction::WindowAnimationActive),0},
+                 {0xc4a7b0,0xc47c19,unsigned(NativeAction::AdvanceEncounterEffects),0}}) {
+            request.identifier = operation[jp];
+            const auto compiled=bindings.compile(request,data);
+            check(unsigned(compiled.operation)==operation[2] && compiled.parameter_bytes==operation[3] &&
+                      compiled.temporary_input==ActionTemporaryInput::Independent &&
+                      (!operation[3] || compiled.operand==0x34) &&
+                      !apply_action(compiled,0xabcd,actor,context,scene).handled,
+                  "Prayer actor binding lost regional operand/service ownership");
+        }
         request.identifier = 0xabcdef;
         const auto unknown = bindings.compile(request, data);
         check(unknown.operation == NativeAction::Unsupported, "Unknown routine remains unsupported");
@@ -97,6 +115,33 @@ void bindings() {
               sleep.operand == 0x1234 && sleep.temporary_input == ActionTemporaryInput::Independent &&
               !apply_action(sleep, 9, actor, context, scene).handled,
               "Enemy distance sleep must consume its authored distance and require its owner");
+        for (const auto service : {
+                 std::array<unsigned,4>{0xc0a86f,0xc0a84e,unsigned(NativeAction::CopySpritePosition),2},
+                 {0xc0a841,0xc0a820,unsigned(NativeAction::PlaySound),2},
+                 {0xc0ca4e,0xc0ca30,unsigned(NativeAction::VelocityDistanceSleep),0},
+                 {0xc0a938,0xc0a917,unsigned(NativeAction::CaptureSpriteTarget),2},
+                 {0xc0a94e,0xc0a92d,unsigned(NativeAction::FaceNpcTowardActor),2},
+                 {0xc0a959,0xc0a938,unsigned(NativeAction::FaceSpriteTowardActor),2},
+                 {0xc05e76,0xc060a4,unsigned(NativeAction::CheckProspectiveTerrain),0},
+                 {0xc064a6,0xc066d4,unsigned(NativeAction::CheckProspectiveNpcCollision),0}}) {
+            request.identifier=service[jp];
+            const auto compiled=bindings.compile(request,data);
+            check(unsigned(compiled.operation)==service[2] && compiled.parameter_bytes==service[3] &&
+                      (!service[3] || compiled.operand==0x1234) &&
+                      compiled.temporary_input==(service[2]==unsigned(NativeAction::VelocityDistanceSleep) ?
+                          ActionTemporaryInput::Observed : ActionTemporaryInput::Independent) &&
+                      !apply_action(compiled,7,actor,context,scene).handled,
+                  "Prayer inline sprite/sound or live velocity wait lost its actual owner contract");
+        }
+        for (const auto addresses : {std::array<unsigned,2>{0xc0a92d,0xc0a90c},
+                                     {0xc0a8c6,0xc0a8a5}}) {
+            request.identifier=addresses[jp];
+            const auto compiled=bindings.compile(request,data);
+            check(compiled.operation==NativeAction::Unsupported &&
+                      compiled.temporary_input==ActionTemporaryInput::Independent &&
+                      !compiled.inline_parameters_known && !apply_action(compiled,7,actor,context,scene).handled,
+                  "Independent target helper contract must keep its real unported boundary");
+        }
         request.kind = ActionRequestKind::SetTickCallback;
         request.identifier = jp ? 0xc0d7bf : 0xc0d7f7;
         const auto callback = bindings.compile(request, data);
@@ -106,12 +151,118 @@ void bindings() {
               "Enemy path callback did not select its typed actor phase");
     }
 }
+void velocity_wait() {
+    ActionActorState actor;
+    for (const auto sample : {
+             std::array<std::uint32_t,4>{0x10000,0,10,10},
+             {0xffff0000,0,10,10},{0x4000,0xffff8000,3,6},
+             {0,0,10,0xffff},{0,0,0x8000,1},
+             {0x10000,0,0xffff,0xffff},{0x80000000,0x10000,2,2},
+             {0x80000000,0x80000000,0x8000,1},
+             {0x7fffffff,0,0x7fff,0}}) {
+        actor.velocity={sample[0],sample[1],0x12345678};
+        const auto position=actor.position, velocity=actor.velocity;
+        check(velocity_distance_sleep(actor,std::uint16_t(sample[2]))==sample[3] &&
+                  actor.position==position && actor.velocity==velocity,
+              "Velocity task sleep lost signed32, subpixel, zero divisor or quotient-word behavior");
+    }
+}
+void movement_bounds_direction() {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        ActionBindings bindings(version);
+        const ActionScriptData data(std::vector<std::uint8_t>{0x09},0);
+        const ActionEngineRequest request{ActionRequestKind::CallEngine,1,
+            version==eb::GameVersion::JP ? 0xc44fedu:0xc47269u,0,0,7,0};
+        const auto bound=bindings.compile(request,data);
+        check(bound.operation==NativeAction::CheckMovementBounds && !bound.parameter_bytes &&
+                  bound.temporary_input==ActionTemporaryInput::Independent,
+              "Movement bounds direction lost its regional pure independent scalar contract");
+        for(const auto values : {
+            std::array<unsigned,7>{2,2,1,3,1,3,0}, {1,1,1,3,1,3,0}, {3,3,1,3,1,3,0},
+            {0,0,1,3,1,3,3}, {4,0,1,3,1,3,7}, {2,0,1,3,1,3,5}, {2,4,1,3,1,3,1},
+            {0x8000,2,0,0x7fff,1,3,7}, {0x7fff,2,0x8000,0xffff,1,3,3},
+            {2,0x8000,1,3,0,0x7fff,1}, {2,0x7fff,1,3,0x8000,0xffff,5},
+            {0xffff,0xffff,0xffff,0xffff,0xffff,0xffff,0}, {0,0,0,0,0,0,0},
+            {5,2,0xfff0,0x10,1,3,3}, {0xfff5,2,0xfff0,0x10,1,3,7}}) {
+            ActionActorState actor;
+            actor.position={std::uint32_t(values[0]<<16)|0x1234u,
+                            std::uint32_t(values[1]<<16)|0xabcdu,0x98765432u};
+            actor.velocity={1,2,3};actor.variables={std::uint16_t(values[2]),std::uint16_t(values[3]),
+                std::uint16_t(values[4]),std::uint16_t(values[5]),55,66,77,88};
+            const auto before=actor;ActorActionContext context;ActionSceneContext scene;
+            const auto result=apply_action(bound,0xabcd,actor,context,scene);
+            check(result.handled && !result.parameter_bytes && result.value==values[6] &&
+                      actor.variables==before.variables && actor.position==before.position &&
+                      actor.velocity==before.velocity && actor.animation==before.animation &&
+                      actor.priority==before.priority && actor.alive==before.alive,
+                  "Movement bounds direction lost unsigned inclusive edges/axis precedence or changed state");
+        }
+    }
+}
+void movement_bounds() {
+    for (const auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        ActionBindings bindings(version);
+        for (const auto x_extent : {0u,1u,0x7fffu,0x8000u,0xffffu})
+          for (const auto y_extent : {0u,1u,0x7fffu,0x8000u,0xffffu}) {
+            const std::array<std::uint8_t,4> bytes{
+                std::uint8_t(x_extent),std::uint8_t(x_extent>>8),
+                std::uint8_t(y_extent),std::uint8_t(y_extent>>8)};
+            ActionScriptData data(bytes,0x30195);
+            const ActionEngineRequest request{ActionRequestKind::CallEngine,1,
+                version==eb::GameVersion::JP ? 0xc0a943u:0xc0a964u,0,0,7,0x30195};
+            const auto bound=bindings.compile(request,data);
+            check(bound.operation==NativeAction::SetMovementBounds && bound.parameter_bytes==4 &&
+                      bound.temporary_input==ActionTemporaryInput::Independent &&
+                      std::get<MovementBoundsOperands>(bound.payload)==MovementBoundsOperands{
+                          std::uint16_t(x_extent),std::uint16_t(y_extent)},
+                  "Movement bounds lost its two literal words or independent input contract");
+            for (const auto x : {0u,1u,0x7fffu,0x8000u,0xffffu})
+              for (const auto y : {0u,1u,0x7fffu,0x8000u,0xffffu}) {
+                ActionActorState actor;
+                actor.position={std::uint32_t(x<<16)|0x1234u,std::uint32_t(y<<16)|0xabcdu,0x98765432u};
+                actor.velocity={0x80000000u,0xffff1234u,0x13572468u};
+                actor.variables={11,22,33,44,55,66,77,88};
+                actor.animation=0x1234;actor.priority=3;
+                const auto before=actor;
+                ActorActionContext context;ActionSceneContext scene;
+                const auto response=apply_action(bound,0xabcd,actor,context,scene);
+                const std::array<std::uint16_t,8> expected{
+                    std::uint16_t(x-x_extent),std::uint16_t(x+x_extent),
+                    std::uint16_t(y-y_extent),std::uint16_t(y+y_extent),55,66,77,88};
+                check(response.handled && response.parameter_bytes==4 && response.value==expected[3] &&
+                          actor.variables==expected && actor.position==before.position &&
+                          actor.velocity==before.velocity && actor.animation==before.animation &&
+                          actor.priority==before.priority && actor.alive==before.alive,
+                      "Movement bounds lost word wrap/scalar return or changed unrelated actor state");
+              }
+          }
+        BoundAction invalid;invalid.operation=NativeAction::SetMovementBounds;invalid.parameter_bytes=4;
+        ActionActorState actor;actor.variables.fill(0x1234);
+        ActorActionContext context;ActionSceneContext scene;
+        try { (void)apply_action(invalid,0,actor,context,scene);
+              throw std::runtime_error("Movement bounds accepted an absent typed payload"); }
+        catch(const std::bad_variant_access &) {}
+        check(actor.variables==std::array<std::uint16_t,8>{0x1234,0x1234,0x1234,0x1234,0x1234,0x1234,0x1234,0x1234},
+              "Malformed bounds payload partially changed actor variables");
+        const ActionScriptData wrapped(std::vector<ActionScriptBlock>{
+            {0x30000,{0,0x80}},{0x3fffe,{0xff,0xff}}},std::vector<std::uint32_t>{0x3fffe});
+        ActionEngineRequest request{ActionRequestKind::CallEngine,1,
+            version==eb::GameVersion::JP ? 0xc0a943u:0xc0a964u,0,0,7,0x3fffe};
+        check(std::get<MovementBoundsOperands>(bindings.compile(request,wrapped).payload)==
+                  MovementBoundsOperands{0xffff,0x8000},
+              "Second bounds word did not follow the source's wrapped 16-bit content cursor");
+        request.parameters=0x3ffff;
+        try { (void)bindings.compile(request,wrapped);
+              throw std::runtime_error("Bounds accepted an undeclared cross-bank word"); }
+        catch(const std::invalid_argument &) {}
+    }
+}
 void directions_and_collision() {
     ActionActorState actor;
     ActorActionContext context;
     ActionSceneContext scene;
     auto apply = [&](NativeAction operation, unsigned operand = 0, unsigned temporary = 0) {
-        return apply_action({operation, std::uint16_t(operand)}, temporary, actor, context, scene);
+        return apply_action(binding(operation,operand), temporary, actor, context, scene);
     };
     apply(NativeAction::SetDirection, 0, 6);
     check(context.direction == 6, "Direction follows temporary variable");
@@ -156,7 +307,8 @@ void phases() {
     actor.variables[0] = 0xfffc;
     actor.variables[1] = 8;
     ActorActionContext context;
-    ActionSceneContext scene{90, 180, 2, 3};
+    ActionSceneContext scene;
+    scene.camera_x=90;scene.camera_y=180;scene.overlay_camera_x=2;scene.overlay_camera_y=3;
     context.tick = ActorTickCallback::ProjectOffset;
     run_actor_tick_callback(actor, context, scene);
     check(context.projected_x == 6 && context.projected_y == 28, "Tick projection adds signed offsets");
@@ -181,6 +333,19 @@ void phases() {
     actor.position[0] = 0xffff8000;
     run_actor_projection(actor, context, scene);
     check(context.projected_x == -1, "Screen positions preserve signed wraparound");
+    for (const auto callback : {ActorTickCallback::TeleportLeader,
+                               ActorTickCallback::TeleportFollower,
+                               ActorTickCallback::TeleportFailureFollower}) {
+        context.tick = callback;
+        bool rejected = false;
+        try {
+            run_actor_tick_callback(actor, context, scene);
+        } catch (const std::logic_error &) {
+            rejected = true;
+        }
+        check(rejected,
+              "Teleport callbacks require the bound actor movement service");
+    }
 }
 void script_geometry() {
     ActionActorState actor;
@@ -189,18 +354,18 @@ void script_geometry() {
     actor.position = {0xfffe8123u, 0x80004567u, 0x00129876u};
     actor.variables[6] = 0x0001;
     actor.variables[7] = 0xffff;
-    auto result = apply_action({NativeAction::SnapshotPosition}, 123, actor, context, scene);
+    auto result = apply_action(binding(NativeAction::SnapshotPosition), 123, actor, context, scene);
     check(result.handled && result.value == 0x8000 && actor.variables[0] == 0xfffe &&
               actor.variables[1] == 0x8000,
           "Position snapshot stores whole world pixels and returns Y");
-    result = apply_action({NativeAction::RestoreTargetPosition}, 321, actor, context, scene);
+    result = apply_action(binding(NativeAction::RestoreTargetPosition), 321, actor, context, scene);
     check(result.handled && result.value == 0xffff && actor.position[0] == 0x00018123u &&
               actor.position[1] == 0xffff4567u && actor.position[2] == 0x00129876u &&
               actor.variables[0] == 0xfffe && actor.variables[1] == 0x8000,
           "Target restoration preserves fractions, height and earlier snapshot");
     for (const unsigned direction : {0u, 1u, 7u, 8u, 0x7fffu, 0x8000u, 0xffffu}) {
-        const auto angle = apply_action({NativeAction::DirectionToAngle}, direction, actor, context, scene);
-        const auto opposite = apply_action({NativeAction::OppositeDirection}, direction, actor, context, scene);
+        const auto angle = apply_action(binding(NativeAction::DirectionToAngle), direction, actor, context, scene);
+        const auto opposite = apply_action(binding(NativeAction::OppositeDirection), direction, actor, context, scene);
         check(angle.handled && angle.value == ((direction & 7) << 13) &&
                   opposite.handled && opposite.value == ((direction + 4) & 7),
               "Script direction arithmetic preserves authored 16-bit wrapping");
@@ -212,8 +377,8 @@ void shared_event_flags() {
     ActionActorState actor;
     ActorActionContext context;
     ActionSceneContext scene;
-    const BoundAction read{NativeAction::ReadEventFlag, 2, 2};
-    const BoundAction write{NativeAction::WriteEventFlag, 2, 2};
+    const auto read=binding(NativeAction::ReadEventFlag,2,2);
+    const auto write=binding(NativeAction::WriteEventFlag,2,2);
     check(!apply_action(read, 0, actor, context, scene).handled &&
               !apply_action(write, 1, actor, context, scene).handled && flags[0] == 0xa4,
           "Unbound flag owner must remain an explicit service request");
@@ -227,7 +392,7 @@ void shared_event_flags() {
           "Script observes external changes in the same authoritative flag owner");
     const auto before = flags;
     for (unsigned id : {0u, 1025u, 65535u})
-        check(!apply_action({NativeAction::WriteEventFlag, std::uint16_t(id), 2}, 1,
+        check(!apply_action(binding(NativeAction::WriteEventFlag,id,2), 1,
                             actor, context, scene).handled && flags == before,
               "Invalid authored flag must not access unrelated state");
 }
@@ -235,6 +400,9 @@ void shared_event_flags() {
 int main() {
     try {
         bindings();
+        velocity_wait();
+        movement_bounds();
+        movement_bounds_direction();
         directions_and_collision();
         phases();
         script_geometry();

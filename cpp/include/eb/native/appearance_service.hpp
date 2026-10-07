@@ -54,4 +54,8 @@ AppearanceServiceResult apply_appearance_action(const BoundAction &action, Actio
                                                 const AppearanceSceneContext &scene,
                                                 const AppearanceData &data, SpriteAppearance &appearance);
 
+// C0AA6E consumes two literal bytes. The eight-direction branch stores a
+// doubled byte offset, while the four-direction branch stores the raw phase.
+void select_scripted_pose(ActionActorState&, ActorActionContext&, SpriteAppearance&,
+                          std::uint8_t direction, std::uint8_t frame);
 } // namespace eb::native

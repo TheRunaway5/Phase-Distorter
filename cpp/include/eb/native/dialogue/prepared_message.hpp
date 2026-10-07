@@ -31,6 +31,7 @@ public:
     // US copies set only this side's enemy ID toFFFF; article stays unchanged.
     void copy_name(PreparedName, std::span<const std::uint8_t>);
     std::span<const std::uint8_t> name(PreparedName) const;
+    bool names_equal() const;
     // Raw retained US enemy ID/article state for the actual FIX_* producer and
     // article consumer. JP has no enemy-ID lookup and neither JP copy nor
     // printing changes this metadata. No automatic value is inferred from id.

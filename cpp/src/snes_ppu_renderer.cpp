@@ -338,7 +338,7 @@ uint8_t SceneReadView::sample_sprite_pixels(unsigned y, std::span<PpuPixel> resu
 // to sample, but it never changes these PPU registers or native composition.
 template <bool IncludeReference>
 GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
-    const SceneReadView &view, int x, unsigned y, const Pixel &object, bool margin) const {
+    const SceneReadView &view, int x, unsigned y, const Pixel &object, bool margin) {
     constexpr bool include_reference = IncludeReference;
     const bool outside_native = x < 0 || x >= 256;
     const bool outside_world =
@@ -351,6 +351,7 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
     if (margin && outside_native && presentation_intro_static_)
         main_screen = {0, -1, 0, true, 0};
     Pixel reference_main = main_screen, reference_sub = sub_screen;
+    int window_layer = -1;
     if (include_reference) {
         if (!outside_world && !(margin && outside_native && presentation_intro_static_))
             reference_main.color = presentation_reference_palette_[0];
@@ -367,7 +368,8 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
             continue;
         const bool scenery = presentation_layer_mask_ & (1 << layer);
         const bool screen_overlay = margin && (presentation_screen_overlay_layer_ & (1u << layer));
-        if (margin && ((outside_native && !scenery && !screen_overlay) ||
+        const bool moved_window = margin && presentation_left_windows_ && layer == presentation_ui_layer_;
+        if (margin && ((outside_native && !scenery && !screen_overlay && !moved_window) ||
                        (outside_world && scenery && !screen_overlay && !(layer == 4 && presentation_robot_ending_))))
             continue;
         // The Japanese logo's red field reaches the authored picture edges.
@@ -400,6 +402,11 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
                 continue;
             sample_x = source_x - scroll;
         }
+        if (moved_window) {
+            const auto window_x = presentation_window_sample_x(x, y);
+            if (!window_x) continue;
+            sample_x = *window_x;
+        }
         const Pixel candidate = layer == 4 ? object
                                            : view.sample_background_pixel(layer, sample_x, y + 1,
                                                                           margin && scenery ? this : nullptr);
@@ -407,6 +414,16 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
             continue;
         const bool masked = margin ? presentation_window_contains(view, layer, x, y)
                                    : view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
+        if constexpr (IncludeReference) {
+            // OVERWORLD_SETUP_VRAM and LOAD_BATTLE_BG put the two-bit window
+            // artwork at word $6000 and its page at $7c00 (BG3 / battle BG1).
+            // Use visible tile ownership, not a fixed screen rectangle or RGB.
+            // Lightning reuses this page; its source-tagged effect stays filtered.
+            if (source_window_layer(view, layer) && !(presentation_effect_layers_ & (1u << layer)) &&
+                (view.ppu_registers[0x2c] & (1u << layer)) &&
+                !((view.ppu_registers[0x2e] & (1u << layer)) && masked))
+                window_layer = int(layer);
+        }
         if ((view.ppu_registers[0x2c] & (1 << layer)) &&
             !((view.ppu_registers[0x2e] & (1 << layer)) && masked) &&
             candidate.priority > main_screen.priority)
@@ -474,6 +491,21 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
         include_reference ? finish(reference_main, reference_sub, presentation_reference_cgwsel_,
                                    presentation_reference_cgadsub_, presentation_reference_fixed_)
                           : 0;
+    if constexpr (IncludeReference) {
+        const unsigned output_x = unsigned(x + int((presentation_width_ - 256) / 2));
+        const auto index = std::size_t(y) * presentation_width_ + output_x;
+        presentation_effect_reference_[index] = reference;
+        presentation_effect_mask_[index] = result != reference;
+        // Battle enemies (including alternate/targeted spritemaps) use OBJ.
+        // Exempt the winning visible artwork, never its transparent footprint
+        // or an enemy hidden behind a BG. Keep the native palette/brightness
+        // animation exact instead of fading it through feedback history.
+        // The window fill also owns a prompt sprite drawn over its text.
+        presentation_unfiltered_mask_[index] =
+            (presentation_battle_scene_ && main_screen.layer == 4) ||
+            (window_layer >= 0 &&
+             (main_screen.layer == unsigned(window_layer) || main_screen.layer == 4));
+    }
     return {result, reference};
 }
 
@@ -481,12 +513,6 @@ uint32_t GameSceneRenderer::compose_presentation_pixel(const SceneReadView &view
                                                        const Pixel &object, bool margin) {
     const auto pixel = presentation_effects_enabled_ ? compose_pixel<true>(view, x, y, object, margin)
                                                      : compose_pixel<false>(view, x, y, object, margin);
-    if (presentation_effects_enabled_) {
-        const unsigned output_x = unsigned(x + int((presentation_width_ - 256) / 2));
-        const auto index = std::size_t(y) * presentation_width_ + output_x;
-        presentation_effect_reference_[index] = pixel.reference;
-        presentation_effect_mask_[index] = pixel.actual != pixel.reference;
-    }
     return pixel.actual;
 }
 

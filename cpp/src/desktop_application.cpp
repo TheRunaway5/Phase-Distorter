@@ -2,8 +2,9 @@
 #include "eb/asset_store.hpp"
 #include "eb/audio_output.hpp"
 #include "eb/desktop_display.hpp"
+#include "eb/desktop_presentation.hpp"
 #include "eb/display_preferences.hpp"
-#include "eb/game_session.hpp"
+#include "desktop_session.hpp"
 #include "eb/input_replay.hpp"
 #include "eb/launch_options.hpp"
 #include "eb/presentation_pipeline.hpp"
@@ -108,17 +109,9 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             display->start_panel(options.debug, program.title, preferences, game,
                                  default_asset_path ? "" : options.assets);
         InputReplay input(input_script(options.input_script), options.buttons);
-        GameSession session(program.image, game, !options.original_timing);
-        if (!options.original_timing) {
-            session.set_logical_clock_policy(LogicalClockPolicy::ActorFrames);
-            session.enable_native_sprite_runtime();
-        }
-        if (!options.save.empty())
-            load_save(options.save, session.save_memory());
-        // Flash detection consumes raw pictures; renderer effect masks are
-        // diagnostic metadata and are unnecessary for the automatic filter.
-        session.configure_presentation(settings.render_width(width * options.scale, height * options.scale),
-                                       false, settings.high_frame_rate() && settings.direct_rendering);
+        DesktopSession session(program.image, game, options);
+        configure_desktop_presentation(session, settings,
+            settings.render_width(width * options.scale, height * options.scale));
         const double native_rate = display ? display->frame_rate() : FramePacer::frame_rate;
         std::unique_ptr<DeviceAudioQueue> audio;
         if (display && options.audio)
@@ -137,6 +130,10 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
         std::vector<SaveStateSnapshotInfo> snapshot_list;
         const auto refresh_snapshots = [&](const std::string &message) {
             if (!display) return;
+            if (session.native()) {
+                display->set_snapshot_state({}, "Machine snapshots are unavailable in a native session", false);
+                return;
+            }
             try {
                 snapshot_list = snapshots.list();
                 display->set_snapshot_state(snapshot_list, message, true);
@@ -203,8 +200,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                                 // host reconfiguration can allocate or fail.
                                 presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
                                 if (audio) audio->clear();
-                                session.configure_presentation(display->render_width(), false,
-                                    settings.high_frame_rate() && settings.direct_rendering);
+                                configure_desktop_presentation(session, settings, display->render_width());
                                 presentation.restored_frame(session.presentation_frame(), std::chrono::steady_clock::now());
                                 display->adopt_debug(session.debug());
                                 message = "Loaded snapshot at frame " + std::to_string(session.frames());
@@ -224,7 +220,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                                 std::string("Snapshot operation failed: ") + error.what(), true);
                         }
                     }
-                    display->update_debug(session.debug());
+                    if (!session.native()) display->update_debug(session.debug());
                     display->update_swap_interval();
                     if (presentation.configure(settings, display->frame_rate(), display->presentation_rate(),
                                                std::chrono::steady_clock::now()) &&
@@ -236,10 +232,9 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                         presentation.reset_native_deadline(std::chrono::steady_clock::now());
                     }
                 }
-                session.configure_presentation(
+                configure_desktop_presentation(session, settings,
                     display ? display->render_width()
-                            : settings.render_width(width * options.scale, height * options.scale),
-                    false, settings.high_frame_rate() && settings.direct_rendering);
+                            : settings.render_width(width * options.scale, height * options.scale));
 
                 if (!presentation.simulation_due(std::chrono::steady_clock::now())) {
                     present_and_wait();

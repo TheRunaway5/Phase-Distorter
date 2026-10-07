@@ -22,6 +22,13 @@ translation targets are the US EarthBound and Japanese Mother 2 retail source
 configurations. The imported pack selects its matching compiled program.
 [Source navigation](docs/source-navigation.md) maps the hardware modules,
 generated game routines, register names and regional metadata for contributors.
+
+An explicit native Continue path is available with `--native-session N` and an
+existing regional save. It uses separate world, menu, action and outcome owners
+without running a gameplay CPU. See [native battle and desktop sessions](docs/native-battle-session.md)
+for launch details, the subfolder layout, validation and remaining game services.
+The [native world session](docs/native-world-session.md) adds command menus,
+field actions, authored doors, town maps and PSI travel through the same owners.
 [Game runtime](docs/game-runtime.md) describes the new dialogue, cutscene, entity,
 NPC and enemy continuations, their independent semantic implementation, and
 their differential verification against the retained executor.
@@ -281,6 +288,17 @@ fullscreen. Escape closes an open panel; otherwise it exits the game. Physical
 keyboard/controller input is captured while the panel is open. Scripted input
 continues independently. The Diagnostics tab displays copied CPU, sound, frame,
 and timing information without allowing game-state edits.
+
+For Steam Deck's [1280×800 display](https://www.steamdeck.com/en/tech), enable
+**Widescreen** and choose **16:10 (Steam Deck)**. Steam launch options
+`--aspect 16:10 --fullscreen` start directly in the fullscreen 16:10 view:
+
+```sh
+./build/cpp/eb_cpp --aspect 16:10 --fullscreen
+```
+
+The expanded game view fills the screen; fixed intro cards retain their
+authored aspect ratio before returning to the selected view.
 
 Widescreen adds picture on either side of the original 256×224 view. Map
 scenery uses data beyond the streamed tile buffer, battle patterns continue

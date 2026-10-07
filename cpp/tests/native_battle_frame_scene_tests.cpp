@@ -42,6 +42,18 @@ void transport(GameVersion version,unsigned depth) {
     check(a.display.scroll==second.scroll && commands(a.frame_display.screen())==commands(second),
           "An NMI with no pending screen latched new scroll or lost retained OAM");
     check(commands(first)!=commands(second),"Retained pending screen mutated after replacement");
+    a.frame_display.request_retained_screen();
+    check(a.frame_display.display_request()==1 && commands(a.frame_display.preview_screen())==commands(first),
+          "Retained request redrew objects or failed to select the first physical buffer");
+    a.frame_display.commit_publication();
+    check(commands(a.frame_display.screen())==commands(first) && a.display.scroll==first.scroll,
+          "Retained request lost the saved OAM/scroll pair");
+    for(unsigned i=0;i<256;++i)a.frame_display.request_retained_screen();
+    check(a.frame_display.display_request()==256 && !a.frame_display.pending(),
+          "Display request did not retain source16bit wrap and lowbyte NMI gate");
+    a.frame_display.commit_publication();
+    check(!a.frame_display.display_request() && commands(a.frame_display.screen())==commands(first),
+          "Lowbyte-zero publication selected a buffer or failed to clear the whole request");
 
     EncounterWindowMask low{},high{};
     for(unsigned y=0;y<224;++y) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "eb/native/battle/encounter_state.hpp"
 #include "eb/native/camera_refresh.hpp"
 #include "eb/native/npcs/interaction.hpp"
 #include "eb/native/party_trail.hpp"
@@ -39,6 +40,9 @@ struct WorldControlState {
   std::uint16_t direction_interval_ticks{}, direction_interval_previous_mode{};
   std::optional<CameraTarget> camera_focus;
   std::uint16_t bicycle_turn_frames{};
+  // BATTLE_MODE is the outer encounter request/debug mode. The independent
+  // BATTLE_MODE_FLAG remains in WindowHost::prompt_state().battle_mode.
+  battle::EncounterState encounter{0, 0, 0, 0, 0};
 };
 enum class WorldControlService {
   Walk,

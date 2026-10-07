@@ -1,4 +1,5 @@
 #include "eb/native/world_streaming.hpp"
+#include "eb/native/world/collision_window.hpp"
 #include "native_sprite_fixture.hpp"
 #include "native_world_movement_fixture.hpp"
 #include <algorithm>
@@ -145,6 +146,61 @@ void yields_terrain_and_gates() {
               "Enemy gate consumed RNG or changed NPC activation");
     }
 }
+void retained_terrain_binding() {
+    // A prepared area can differ from the collision cells currently retained
+    // by the map/camera owner. Enemy placement must read that owner throughout
+    // its real retry traversal, including across work-budget yields.
+    for (bool retained_solid : {false,true}) {
+        Fixture retained_fixture(320,128,retained_solid);
+        Fixture prepared_fixture(320,128,!retained_solid);
+        Scene reference(retained_fixture),unbound(prepared_fixture);
+        Scene small(prepared_fixture),large(prepared_fixture);
+        WorldCollisionWindow window;
+        window.load({64,64},reference.area);
+        // The actual loader writes sixty rows and retains four. A second load
+        // displaced by four rows gives this synthetic uniform fixture a full
+        // previously loaded ring, rather than assuming cold retained rows.
+        window.load({64,96},reference.area);
+        check(std::all_of(window.cells().begin(),window.cells().end(),
+                          [&](auto cell){return cell==(retained_solid?0xd0:0);}),
+              "Retained terrain fixture did not load its complete uniform ring");
+        const auto cells=window.cells();
+        const auto blocks=window.blocks();
+        for (auto scene : {&small,&large}) {
+            scene->streaming.bind_collision_window(window);
+            scene->streaming.begin_refresh({64,64},NpcStripAdmission::Admitted);
+            rejects([&]{scene->streaming.bind_collision_window(window);});
+        }
+        reference.streaming.begin_refresh({64,64},NpcStripAdmission::Admitted);
+        unbound.streaming.begin_refresh({64,64},NpcStripAdmission::Admitted);
+        complete(small.streaming,1);complete(large.streaming,4096);
+        complete(reference.streaming,3);complete(unbound.streaming,7);
+        compare(small,large);compare(small,reference);
+        check(small.streaming.work().terrain_queries==(retained_solid?120u:1u)&&
+              small.enemies.population().count==(retained_solid?0u:1u)&&
+              unbound.streaming.work().terrain_queries==(retained_solid?1u:120u)&&
+              unbound.enemies.population().count==(retained_solid?1u:0u)&&
+              small.random!=unbound.random&&
+              small.streaming.work().random_draws!=unbound.streaming.work().random_draws,
+              "Bound enemy terrain used prepared map cells or normalized retry RNG");
+        check(window.cells()==cells&&window.blocks()==blocks&&
+              small.world.ticks()==0&&large.world.ticks()==0,
+              "Enemy placement refreshed its borrowed map window or advanced actors");
+        WorldCollisionWindow other;other.load({64,64},unbound.area);
+        rejects([&]{small.streaming.bind_collision_window(other);});
+
+        // A later actual owner reload must be observed through the existing
+        // binding, rather than through a copied snapshot of the old cells.
+        Scene reloaded(prepared_fixture),reloaded_reference(prepared_fixture);
+        reloaded.streaming.bind_collision_window(window);
+        window.load({64,64},reloaded.area);
+        window.load({64,96},reloaded.area);
+        reloaded.streaming.begin_refresh({64,64},NpcStripAdmission::Admitted);
+        reloaded_reference.streaming.begin_refresh({64,64},NpcStripAdmission::Admitted);
+        complete(reloaded.streaming,2);complete(reloaded_reference.streaming,5);
+        compare(reloaded,reloaded_reference);
+    }
+}
 void initial_activation() {
     Fixture f(1024,1024); Scene s(f),disabled(f);
     s.streaming.begin_initial_activation({1024,1024},NpcStripAdmission::Admitted);
@@ -232,6 +288,6 @@ void scene_camera_completion() {
 }
 int main() { try {
     for(bool deletion:{false,true})for(bool tail:{false,true})camera_barrier(deletion,tail);
-    yields_terrain_and_gates();initial_activation();invalid_ownership();failed_work_cannot_replay();scene_camera_completion();
-    std::cout<<"PASS native streaming: shared RNG and real terrain, work-budget invariance, camera barriers, actor traversal and initial activation\n";
+    yields_terrain_and_gates();retained_terrain_binding();initial_activation();invalid_ownership();failed_work_cannot_replay();scene_camera_completion();
+    std::cout<<"PASS native streaming: shared RNG and real terrain, retained-window retries and live owner reload, work-budget invariance, camera barriers, actor traversal and initial activation\n";
 } catch(const std::exception &e) { std::cerr<<e.what()<<'\n'; return 1; } }

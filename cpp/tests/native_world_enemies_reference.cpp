@@ -136,7 +136,7 @@ void run(const eb::GameAssets &assets){
     auto program=std::make_shared<CompiledActionProgram>(import_action_scripts(assets.image,assets.version),assets.version);
     Oracle source(assets);EnemySpawnState state;state.event_flags.resize(256);state.prepared.height=17;
     EnemyPopulation population{0,0,100,0,9,11,12,13,14,15,16};
-    unsigned strips=0,selectors=0,creations=0,terrain_probes=0,random_draws=0;
+    unsigned strips=0,selectors=0,border_selectors=0,undefined_border_chances=0,creations=0,terrain_probes=0,random_draws=0;
     for(auto axis:{CameraStripAxis::Row,CameraStripAxis::Column})for(int x:{-24,-16,-8,0,8,16,1000,1016,1024,1272,1280,32760})
         for(int y:{-24,-16,-8,0,8,16,1000,1016,1024,1272,1280,32760})for(unsigned gate=0;gate<4;++gate){
             state.enabled=gate!=1;state.monsters_disabled=gate==2;state.final_boss_defeated=gate==3;
@@ -170,8 +170,35 @@ void run(const eb::GameAssets &assets){
         source.compare(owner,world);++selectors;
         for(const auto &event:events){random_draws+=event[0]==0;creations+=event[0]==1;terrain_probes+=event[0]==2;}
     }
+    // Original16-bit products at left/right/top/bottom camera borders read
+    // neighboring declared content. Keep RAND/terrain/creation seams exactly
+    // as above, and prove the complete selector against both regional CPUs.
+    for(unsigned x:{0u,127u,128u,132u,0xeffcu,0xfffcu,0xfffdu})
+      for(unsigned y:{0u,74u,75u,159u,160u,164u,0xfffcu}) {
+        if(x<128&&y<160)continue;
+        context=assets.title+" border cell="+std::to_string(x)+","+std::to_string(y);
+        const unsigned column=std::uint16_t(x*8u)>>5,row=std::uint16_t(y*8u)>>4;
+        const auto mode=data->sector_lookups->butterfly_modes[std::uint16_t(row*64u+column*2u)/2];
+        if(mode>=6) {
+          bool rejected=false;try{(void)data->sector(x,y);}catch(const std::out_of_range&){rejected=true;}
+          check(rejected,"Undefined original border chance was invented");++undefined_border_chances;continue;
+        }
+        population={15,0,100,0,9,11,12,13,14,15,16};
+        state.debug_forced_encounter=state.bypass_chance=false;state.tileset=0;
+        std::fill(state.event_flags.begin(),state.event_flags.end(),0);
+        for(unsigned draw:{0u,255u}) {
+          Inputs input{0,39,0x100,0,draw};
+          source.configure(state,population,input);EnemySpawnCell cell{x,y,0,8,8};source.select(cell);
+          ActorWorld world(sprites,program);WorldEnemies owner(data,sprites,program->scripts(),population);
+          const auto events=native_select(owner,world,cell,state,input);
+          check(events==source.events,"Wrapped border selector event order differs");
+          source.compare(owner,world);++border_selectors;
+          for(const auto &event:events){random_draws+=event[0]==0;creations+=event[0]==1;terrain_probes+=event[0]==2;}
+        }
+      }
     check(creations&&terrain_probes&&random_draws,"Vacuous enemy selector coverage");
-    std::cout<<"PASS "<<assets.title<<": "<<strips<<" exact strip traversals, "<<selectors<<" real-content selectors, "<<random_draws
+    std::cout<<"PASS "<<assets.title<<": "<<strips<<" exact strip traversals, "<<selectors<<" real-content selectors, "
+             <<border_selectors<<" defined border selectors, "<<undefined_border_chances<<" explicit undefined chance rejections, "<<random_draws
              <<" ordered RNG draws, "<<creations<<" creations, "<<terrain_probes<<" terrain probes; exact population/identity/placement\n";
 }
 }

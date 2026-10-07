@@ -4,6 +4,11 @@
 #include <stdexcept>
 
 namespace eb::native::party {
+std::uint16_t Queries::inventory_item(std::uint16_t character,std::uint16_t position) const {
+    if(!character || character>State::character_count || !position || position>14)
+        throw std::out_of_range("Item number query leaves six owned inventories");
+    return state_.character(character).items[position-1];
+}
 std::uint16_t Queries::display_character(std::uint16_t position) const {
     if (!position || position > state_.display_order.size())
         throw std::out_of_range("Party display position must be1..6");
@@ -49,5 +54,21 @@ std::uint16_t Queries::conscious_count() const {
         if (conscious_at(index))
             ++count;
     return count;
+}
+std::uint16_t Queries::item_carrier(std::uint16_t selector,std::uint16_t item) const {
+    auto find=[&](std::uint16_t character) {
+        if(!character || character>State::character_count)
+            throw std::out_of_range("Inventory query leaves six owned character records");
+        const auto &items=state_.character(character).items;
+        for(const auto value:items)if(value==item)return character;
+        return std::uint16_t(0);
+    };
+    if(selector!=0xff)return find(selector);
+    for(unsigned index=0;index<state_.controlled_count;++index) {
+        if(index>=state_.party_order.size())
+            throw std::out_of_range("Inventory query leaves six owned membership bytes");
+        if(const auto character=find(state_.party_order[index]))return character;
+    }
+    return 0;
 }
 } // namespace eb::native::party

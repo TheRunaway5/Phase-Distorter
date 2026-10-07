@@ -47,6 +47,7 @@ struct ActorWorld::State {
     std::array<std::uint16_t, 8> variables{};
     AuthoredActorPose pose;
     std::uint16_t sprite{}, npc = 0xffff, enemy{};
+    std::uint16_t animation{}, priority{};
     ActorActionContext behavior;
     AppearanceActorContext appearance_context;
     AuthoredActorPause pause;
@@ -62,6 +63,9 @@ struct ActorWorld::State {
   std::optional<AppearanceData> appearance_data;
   AppearanceSceneContext appearance_scene;
   std::vector<WorldSoundEvent> sounds;
+  // Groups resolved by the actual completed C0A3A4 draw pass. Capture reads
+  // these without repeating a one-shot clear of the retained raw priority.
+  std::map<ActorId, std::uint16_t> drawing_priorities;
   std::optional<WorldActionRequest> request;
   std::optional<WorldCameraRefresh> camera_refresh;
   ActorId first{}, last{}, current{}, next{};
@@ -70,6 +74,7 @@ struct ActorWorld::State {
   WorldActorMovement *movement{};
   WorldPartyMovement *party_movement{};
   WorldPartyFollowing *party_following{};
+  ActorTickService *tick_service{};
   WorldEnemies *enemies{};
   WorldOverlayPlayback *overlays{};
   ActorId physics_current{};
@@ -151,6 +156,15 @@ void ActorWorld::clear_party_following(
   if (state_->party_following == &following)
     state_->party_following = nullptr;
 }
+void ActorWorld::bind_tick_service(ActorTickService &service) {
+  if(!service.uses(*this))throw std::invalid_argument("Dedicated actor tick belongs to another world");
+  if(state_->tick_service&&state_->tick_service!=&service)
+    throw std::logic_error("Native world already has a dedicated actor tick owner");
+  state_->tick_service=&service;
+}
+void ActorWorld::clear_tick_service(const ActorTickService &service) noexcept {
+  if(state_->tick_service==&service)state_->tick_service=nullptr;
+}
 void ActorWorld::bind_enemies(WorldEnemies &enemies) {
   if (state_->enemies && state_->enemies != &enemies)
     throw std::logic_error("Native world already has an enemy lifetime owner");
@@ -173,11 +187,11 @@ std::shared_ptr<const void> ActorWorld::identity_token() const {
 ActorId ActorWorld::create(const WorldActorSpec &spec) {
   return create_actor(spec, true);
 }
-ActorId ActorWorld::create_actor(const WorldActorSpec &spec, bool graphical) {
+ActorId ActorWorld::create_actor(const WorldActorSpec &spec, bool graphical, bool duplicate_npc) {
   auto &s = *state_;
   if (!spec.action.alive)
     throw std::invalid_argument("Cannot create a dead native actor");
-  if (spec.npc && s.npcs.contains(*spec.npc))
+  if (!duplicate_npc && spec.npc && s.npcs.contains(*spec.npc))
     throw std::invalid_argument("NPC already has an active native actor");
   auto actor = std::unique_ptr<WorldActor>(
       new WorldActor(s.scripts, s.sprites, spec, graphical));
@@ -272,6 +286,14 @@ ActorWorld::create_authored_script(unsigned script,
 
 std::optional<ActorId> ActorWorld::create_authored(const WorldActorSpec &spec,
                                                    AuthoredActorRoles roles) {
+  return create_authored(spec,roles,false);
+}
+std::optional<ActorId> ActorWorld::create_prepared_npc(const WorldActorSpec &spec) {
+  if (!spec.npc) throw std::invalid_argument("Prepared NPC creation requires its actual selector");
+  return create_authored(spec,{},true);
+}
+std::optional<ActorId> ActorWorld::create_authored(const WorldActorSpec &spec,
+                                                   AuthoredActorRoles roles, bool duplicate_npc) {
   auto &s = *state_;
   if (roles.first > roles.end || roles.end > s.role_actors.size())
     throw std::invalid_argument("Invalid authored actor role range");
@@ -283,7 +305,7 @@ std::optional<ActorId> ActorWorld::create_authored(const WorldActorSpec &spec,
   const auto role = *found;
   auto prepared = spec;
   prepared.appearance_context.phase_id = std::uint16_t(role);
-  const auto id = create(prepared);
+  const auto id = create_actor(prepared,true,duplicate_npc);
   if (s.enemies)
     s.enemies->reuse_authored_role(id, role, true);
   s.actors.at(id)->authored_role_ = role;
@@ -323,11 +345,23 @@ std::uint16_t ActorWorld::authored_variable(unsigned role, unsigned index) const
     return actor(*id).action().variables.at(index);
   return state_->dormant_roles.at(role).variables.at(index);
 }
+void ActorWorld::set_authored_variable(unsigned role,unsigned index,std::uint16_t value) {
+  if(const auto id=actor_for_role(role)) actor(*id).action().variables.at(index)=value;
+  else state_->dormant_roles.at(role).variables.at(index)=value;
+}
 void ActorWorld::set_authored_path_state(unsigned role, std::uint16_t value) {
   if (const auto id = actor_for_role(role))
     actor(*id).behavior.path_state = value;
   else
     state_->dormant_roles.at(role).behavior.path_state = value;
+}
+void ActorWorld::set_authored_tick_callback(unsigned role,ActorTickCallback callback) {
+  if(const auto id=actor_for_role(role))actor(*id).behavior.tick=callback;
+  else state_->dormant_roles.at(role).behavior.tick=callback;
+}
+void ActorWorld::set_authored_collision_object(unsigned role,std::int32_t value) {
+  if(const auto id=actor_for_role(role))actor(*id).behavior.collision_object=value;
+  else state_->dormant_roles.at(role).behavior.collision_object=value;
 }
 AuthoredActorPause ActorWorld::authored_pause(unsigned role) const {
   if (const auto id = actor_for_role(role)) {
@@ -368,6 +402,20 @@ void ActorWorld::set_authored_direction(unsigned role,
   else
     s.dormant_roles.at(role).pose.direction = direction;
 }
+void ActorWorld::refresh_authored_direction(unsigned role,std::uint16_t direction) {
+  if (authored_pose(role).direction==direction) return;
+  if (const auto id=actor_for_role(role)) {
+    auto &current=actor(*id);
+    current.behavior.direction=direction;
+    current.appearance.select_four(direction,current.action().animation,current.behavior.surface_flags);
+  } else {
+    auto &retained=state_->dormant_roles.at(role);
+    if (!retained.appearance || !retained.appearance->available())
+      throw std::logic_error("Direction refresh requires retained source sprite geometry");
+    retained.pose.direction=direction;
+    retained.appearance->select_four(direction,retained.animation,retained.behavior.surface_flags);
+  }
+}
 std::uint16_t ActorWorld::authored_sprite_selector(unsigned role) const {
   const auto &s = *state_;
   if (const auto id = s.role_actors.at(role)) {
@@ -406,6 +454,26 @@ std::uint16_t ActorWorld::authored_enemy_selector(unsigned role) const {
     if (const auto enemy = s.enemies->retired_enemy_type(role))
       return *enemy;
   return s.dormant_roles.at(role).enemy;
+}
+std::uint16_t ActorWorld::authored_draw_priority(unsigned role) const {
+  if (const auto id = actor_for_role(role))
+    return actor(*id).action().priority;
+  return state_->dormant_roles.at(role).priority;
+}
+void ActorWorld::set_authored_draw_priority(unsigned role, std::uint16_t priority) {
+  if (const auto id = actor_for_role(role)) {
+    actor(*id).action().priority = priority;
+    state_->drawing_priorities.erase(*id);
+  } else {
+    state_->dormant_roles.at(role).priority = priority;
+  }
+}
+std::optional<unsigned>
+ActorWorld::first_authored_role_with_npc(std::uint16_t npc) const {
+  for (unsigned role = 0; role < state_->role_actors.size(); ++role)
+    if (authored_npc_selector(role) == npc)
+      return role;
+  return std::nullopt;
 }
 void ActorWorld::set_authored_position(unsigned role,
                                        const AuthoredActorPosition &position) {
@@ -452,6 +520,38 @@ ActorWorld::first_authored_actor_with_npc(NpcId npc) const {
   return std::nullopt;
 }
 
+std::optional<unsigned>
+ActorWorld::first_authored_role_with_sprite(std::uint16_t sprite) const {
+  for (unsigned role = 0; role < state_->role_actors.size(); ++role)
+    if (authored_sprite_selector(role) == sprite)
+      return role;
+  return std::nullopt;
+}
+std::uint16_t ActorWorld::copy_sprite_position(ActorId destination,
+                                             std::uint16_t sprite) {
+  const auto role = first_authored_role_with_sprite(sprite);
+  if (!role)
+    throw std::out_of_range("Sprite coordinate selector has no owned source role");
+  const auto position = authored_position(*role);
+  auto &action = actor(destination).action();
+  const auto x = std::uint16_t(position[0] >> 16), y = std::uint16_t(position[1] >> 16);
+  action.position[0] = (std::uint32_t(x) << 16) | (action.position[0] & 0xffffu);
+  action.position[1] = (std::uint32_t(y) << 16) | (action.position[1] & 0xffffu);
+  return y;
+}
+
+std::uint16_t ActorWorld::capture_sprite_target(ActorId destination,
+                                               std::uint16_t sprite) {
+  const auto role = first_authored_role_with_sprite(sprite);
+  if (!role)
+    throw std::out_of_range("Sprite target selector has no owned source role");
+  const auto position = authored_position(*role);
+  auto &action = actor(destination).action();
+  action.variables[6] = std::uint16_t(position[0] >> 16);
+  action.variables[7] = std::uint16_t(position[1] >> 16);
+  return action.variables[7];
+}
+
 void ActorWorld::replace_script(ActorId id, std::uint32_t content_entry) {
   auto &s = *state_;
   auto &actor = *s.actors.at(id);
@@ -463,6 +563,29 @@ void ActorWorld::replace_script(ActorId id, std::uint32_t content_entry) {
   actor.tick_callback_enabled = true;
 }
 
+void ActorWorld::replace_sprite_script(std::uint16_t sprite,
+                                       std::uint16_t script) {
+  const auto role = first_authored_role_with_sprite(sprite);
+  if (!role) return;
+  const auto id = actor_for_role(*role);
+  // INIT_ENTITY_UNKNOWN2 loops forever on a released source script slot.
+  if (!id)
+    throw std::logic_error("Sprite script replacement selected a released source script slot");
+  replace_script(*id, state_->scripts->entry(script));
+}
+
+void ActorWorld::remove_npc_index(ActorId id) {
+  auto &s=*state_;
+  const auto npc=s.actors.at(id)->npc_;
+  if (!npc) return;
+  const auto found=s.npcs.find(*npc);
+  if (found==s.npcs.end() || found->second!=id) return;
+  // Preserve a surviving duplicate as the activation existence index. The
+  // source command itself still searches raw numeric roles in source order.
+  for (const auto &[other,actor]:s.actors)
+    if (other!=id && actor->npc_==npc) { found->second=other;return; }
+  s.npcs.erase(found);
+}
 bool ActorWorld::release_appearance(ActorId id) {
   auto &s = *state_;
   const auto found = s.actors.find(id);
@@ -471,8 +594,7 @@ bool ActorWorld::release_appearance(ActorId id) {
   auto &actor = *found->second;
   actor.inherited_sprite_ = actor.inherited_npc_ = 0xffff;
   const bool changed = actor.appearance_owned_ || actor.npc_.has_value();
-  if (actor.npc_)
-    s.npcs.erase(*actor.npc_);
+  remove_npc_index(id);
   actor.npc_.reset();
   actor.appearance_owned_ = false;
   actor.appearance.release();
@@ -510,6 +632,8 @@ bool ActorWorld::retire(ActorId id) {
     retained.emplace();
     retained->pose = authored_pose(*actor.authored_role_);
     retained->variables = actor.action().variables;
+    retained->animation = actor.action().animation;
+    retained->priority = actor.action().priority;
     retained->sprite = authored_sprite_selector(*actor.authored_role_);
     retained->npc = authored_npc_selector(*actor.authored_role_);
     retained->enemy = authored_enemy_selector(*actor.authored_role_);
@@ -550,8 +674,7 @@ bool ActorWorld::retire(ActorId id) {
       (s.request->origin == WorldActionOrigin::Script ||
        s.request->binding.operation == NativeAction::RunPartyFollower))
     s.request.reset();
-  if (actor.npc_)
-    s.npcs.erase(*actor.npc_);
+  remove_npc_index(id);
   if (actor.authored_role_) {
     const auto role = *actor.authored_role_;
     s.dormant_roles[role] = *retained;
@@ -561,6 +684,7 @@ bool ActorWorld::retire(ActorId id) {
     s.free_roles.insert(s.free_roles.begin(), role);
   }
   s.graphics.erase(id);
+  s.drawing_priorities.erase(id);
   s.actors.erase(found);
   if (s.overlays)
     s.overlays->retire_host_actor(id);
@@ -617,6 +741,17 @@ void ActorWorld::clear_collision_targets() {
     actor->behavior.collision_object = -1;
 }
 GameVersion ActorWorld::version() const { return state_->program->version(); }
+void ActorWorld::reset_encounter_objects() {
+  auto &s = *state_;
+  if (s.in_tick || (s.enemies && s.enemies->busy()))
+    throw std::logic_error("Encounter reset requires completed actors and enemies");
+  for (unsigned role = 0; role < 23; ++role) {
+    if (const auto id = actor_for_role(role)) actor(*id).behavior.collision_object = -1;
+    else s.dormant_roles[role].behavior.collision_object = -1;
+    set_authored_path_state(role, 0);
+    set_authored_sprite_hidden(role, false);
+  }
+}
 bool ActorWorld::in_tick() const { return state_->in_tick; }
 
 WorldActor &ActorWorld::actor(ActorId id) { return *state_->actors.at(id); }
@@ -687,7 +822,8 @@ void ActorWorld::respond(std::uint16_t value, unsigned parameter_bytes,
         "Native service response disagrees with its compiled operands");
   if (sleep_frames &&
       s.request->binding.operation != NativeAction::StaggerTaskByRole &&
-      s.request->binding.operation != NativeAction::EnemyDistanceSleep)
+      s.request->binding.operation != NativeAction::EnemyDistanceSleep &&
+      s.request->binding.operation != NativeAction::VelocityDistanceSleep)
     throw std::invalid_argument(
         "This native world service cannot assign task sleep");
   s.actors.at(s.request->actor)
@@ -817,6 +953,19 @@ WorldTickResult ActorWorld::advance_tick() {
       }
     }
     const auto callback = actor.behavior.tick;
+    if(actor.tick_callback_enabled&&(callback==ActorTickCallback::TeleportLeader||
+        callback==ActorTickCallback::TeleportFollower||callback==ActorTickCallback::TeleportFailureFollower)) {
+      if(!s.tick_service)throw std::logic_error("Dedicated teleport callback lacks its actual movement owner");
+      const auto callback_actor=s.current;
+      const auto previous_x=s.scene.camera_x,previous_y=s.scene.camera_y;
+      const bool refresh=s.tick_service->tick(callback_actor,callback);
+      s.current=s.next;s.actor_started=false;
+      if(refresh) {
+        s.camera_refresh=WorldCameraRefresh{callback_actor,previous_x,previous_y,s.scene.camera_x,s.scene.camera_y,s.ticks+1};
+        return WorldTickResult::NeedsCameraRefresh;
+      }
+      continue;
+    }
     if (actor.tick_callback_enabled &&
         callback == ActorTickCallback::PartyFollower) {
       const auto callback_actor = s.current;
@@ -908,14 +1057,22 @@ WorldTickResult ActorWorld::advance_tick() {
   }
   // Source drawing follows the completed physics/projection traversal. Overlay
   // clocks run once here; initial or repeated render capture never advances them.
-  if (s.overlays)
-    for (auto id = s.first; id; id = s.actors.at(id)->next_) {
-      const auto &actor = *s.actors.at(id);
-      if (actor.appearance_owned_ && actor.appearance.available() && actor.behavior.draw_world &&
-          actor.appearance.draw(actor.action(), actor.behavior.projected_x,
-                                actor.behavior.projected_y, actor.behavior.surface_flags).visible)
-        s.overlays->advance_draw(id);
-    }
+  for (auto id = s.first; id; id = s.actors.at(id)->next_) {
+    auto &actor = *s.actors.at(id);
+    if (!actor.appearance_owned_ || !actor.appearance.available() || !actor.behavior.draw_world ||
+        !actor.appearance.draw(actor.action(), actor.behavior.projected_x,
+                              actor.behavior.projected_y, actor.behavior.surface_flags).visible)
+      continue;
+    const auto raw = actor.action().priority;
+    const auto group = (raw & 0x8000u) ? authored_draw_priority(raw & 0x3fu) : raw;
+    if (group > 3)
+      throw std::out_of_range("Attached actor priority has no owned render group");
+    s.drawing_priorities[id] = group;
+    if ((raw & 0xc000u) == 0x8000u)
+      actor.action().priority = 0;
+    if (s.overlays)
+      s.overlays->advance_draw(id);
+  }
   s.in_tick = false;
   s.next = 0;
   s.physics_started = false;
@@ -939,6 +1096,12 @@ ActorWorld::draw(unsigned width, const SpritePalettes &palettes,
         actor->action(), actor->behavior.projected_x + extra,
         actor->behavior.projected_y, actor->behavior.surface_flags);
     picture.visible &= actor->behavior.draw_world;
+    // Before the first real pass, capture may read the same retained parent
+    // priority, but cannot execute C0A3A4's one-shot authoritative clear.
+    const auto raw = actor->action().priority;
+    const auto retained_group = s.drawing_priorities.find(id);
+    picture.draw_group = retained_group != s.drawing_priorities.end() ? retained_group->second :
+        (raw & 0x8000u) ? authored_draw_priority(raw & 0x3fu) : raw;
     if (s.overlays) {
       const auto fragments = s.overlays->fragments(id);
       picture.overlays.assign(fragments.begin(), fragments.end());

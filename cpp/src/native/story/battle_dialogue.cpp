@@ -65,6 +65,11 @@ std::unique_ptr<BattleDialogue::Operation> BattleDialogue::begin(dialogue::Locat
     active_ = operation.get();
     return operation;
 }
+std::unique_ptr<BattleDialogue::Operation> BattleDialogue::begin_raw(dialogue::Location location) {
+    auto operation = begin(location, {}, nullptr);
+    operation->raw_ = true;
+    return operation;
+}
 std::unique_ptr<BattleDialogue::Operation> BattleDialogue::begin_text(dialogue::Location location) {
     return begin(location, {}, nullptr);
 }
@@ -86,12 +91,12 @@ dialogue::Progress BattleDialogue::Operation::advance(unsigned budget) {
         if (parent_) conversation_.validate_start_nested(*parent_);
         else conversation_.validate_start();
         // PAD_STATE is held controller state, not PAD_PRESS or prompt input.
-        if (owner_.party_.auto_fight && (owner_.input_.state[0] & 0x8000)) {
+        if (!raw_ && owner_.party_.auto_fight && (owner_.input_.state[0] & 0x8000)) {
             owner_.party_.auto_fight = 0;
             owner_.prompts_.windows().clear_auto_fight_indicator();
         }
         if (number_) owner_.prepared_.set_number(*number_);
-        if (owner_.prompts_.windows().prompt_state().battle_mode)
+        if (!raw_ && owner_.prompts_.windows().prompt_state().battle_mode)
             owner_.prompts_.windows().output().policy().prompt_mode = 2;
         if (parent_) conversation_.start_nested(location_, *parent_);
         else conversation_.start(location_);
@@ -111,7 +116,7 @@ void BattleDialogue::Operation::respond() {
     owner_.check();
     require(owner_.active_ == this && pending_, "Battle dialogue has no message to acknowledge");
     require(conversation_.finished(), "Battle dialogue child has not finished");
-    owner_.prompts_.windows().output().policy().prompt_mode = 0;
+    if (!raw_) owner_.prompts_.windows().output().policy().prompt_mode = 0;
     pending_ = false;
     complete_ = true;
     owner_.active_ = nullptr;

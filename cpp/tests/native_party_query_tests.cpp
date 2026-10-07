@@ -54,6 +54,30 @@ void run(eb::GameVersion region) {
     rejects([&]{query.status(5,1);},"Membership scan exceeded six owned bytes");
     state.party_count=255;
     check(query.status(0,0xffff)==0,"Oversized membership count rejected an owned zero match");
+    state.party_order={4,2,6};state.controlled_count=3;
+    for(unsigned character=1;character<=6;++character)for(unsigned slot=1;slot<=14;++slot) {
+        state.character(character).items[slot-1]=std::uint8_t(character*37+slot);
+        check(query.inventory_item(character,slot)==std::uint8_t(character*37+slot),
+              "Item number query substituted party membership or inventory compaction");
+    }
+    for(auto character:{0u,7u,0x100u,0xffffu})
+        rejects([&]{query.inventory_item(character,1);},"Item number query read an unowned character alias");
+    for(auto slot:{0u,15u,0x100u,0xffffu})
+        rejects([&]{query.inventory_item(1,slot);},"Item number query narrowed an unowned position");
+    for(unsigned character=1;character<=6;++character)state.character(character).items.fill(0);
+    state.character(4).items[13]=202;state.character(2).items[0]=202;
+    check(query.item_carrier(0xff,202)==4,"Inventory query skipped a slot after an empty byte");
+    check(query.item_carrier(2,202)==2,"Inventory query substituted the membership scan for a direct record");
+    check(query.item_carrier(0xff,0x1ca)==0,"Inventory query narrowed the complete item word");
+    check(query.item_carrier(6,0)==6,"Inventory query fabricated a nonempty-item condition");
+    state.character(4).items[13]=0;
+    check(query.item_carrier(0xff,202)==2,"Inventory query retained stale item state");
+    state.controlled_count=0;
+    check(query.item_carrier(0xff,202)==0,"Inventory query ignored live controlled count");
+    rejects([&]{query.item_carrier(0,202);},"Inventory query read an unowned zero character alias");
+    state.controlled_count=7;state.party_order={1,2,3,4,5,6};
+    check(query.item_carrier(0xff,202)==2,"Inventory query rejected an owned early match");
+    rejects([&]{query.item_carrier(0xff,201);},"Inventory query exceeded owned membership bytes");
     state.party_count=1;state.party_order[0]=6;
     check(query.status(6,1)==188 && query.status(4,1)==0,"Queries did not observe live list replacement");
 }

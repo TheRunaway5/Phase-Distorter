@@ -237,6 +237,30 @@ bool OverworldSpriteRuntime::try_execute(MainCpu65816 &cpu, SnesBus &bus) {
     const unsigned pc = normalized_pc(cpu.program_counter), stack = cpu.stack_pointer;
     if (cpu.game_version != state.version || bus.game_version() != state.version)
         throw std::invalid_argument("Native sprite runtime region mismatch");
+    if (pc == (state.version == GameVersion::JP ? 0xc0e8b7u : 0xc0e8edu)) {
+        // C0E897 prepares all six roster entries after PSI teleport. Its
+        // 24 + roster-index assumption can name another live character when
+        // party removal leaves sparse actor roles (e.g. Ness 24, Jeff 26).
+        // Use the same role map as C03A94's relocation. Empty entries must not
+        // pass character -1 to C0780F and overwrite a live graphics pointer.
+        if (cpu.emulation_mode || cpu.data_bank != 0x7e || (cpu.status_register & 0x30) ||
+            cpu.direct_page > 0x1fe5)
+            state.unsupported("teleport arrival has an invalid party context", pc);
+        const auto ram = std::span<const std::uint8_t>(bus.work_ram);
+        const unsigned member = word(ram, cpu.direct_page + 2);
+        const unsigned roster = state.version == GameVersion::JP ? 0x9b3c : 0x988b;
+        if (member >= 6 || cpu.y_index != 24 + member ||
+            cpu.accumulator != std::uint16_t(ram[roster + member] - 1))
+            state.unsupported("teleport arrival does not match its roster entry", pc);
+        if (!ram[roster + member]) {
+            cpu.program_counter = (cpu.program_counter & 0xff0000) | std::uint16_t(pc + 4);
+            return true;
+        }
+        const unsigned role = word(ram, roster + 12 + member * 2);
+        if (role < 24 || role >= 30 || !state.actors[role].id)
+            state.unsupported("teleport arrival has no live party actor", pc);
+        cpu.y_index = role;
+    }
     if (state.surfaces.try_execute(cpu, bus))
         return true;
     if (try_native_actor_draw_order(cpu, bus))

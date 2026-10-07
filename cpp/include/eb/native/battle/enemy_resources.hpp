@@ -19,6 +19,8 @@ struct EnemyStats {
     std::uint8_t fire{}, freeze{}, flash{}, paralysis{}, hypnosis_brainshock{};
     std::uint8_t initial_status{}, row{};
     std::uint8_t action_pattern{}, final_argument{}, boss{}, gender{};
+    std::uint8_t type{}, miss_rate{}, death_type{}, mirror_success{}, max_called{};
+    std::uint32_t death_text{};
     std::array<std::uint16_t, 4> actions{};
     std::array<std::uint8_t, 4> arguments{};
     std::uint16_t final_action{};

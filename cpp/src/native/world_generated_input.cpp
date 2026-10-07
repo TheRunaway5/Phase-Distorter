@@ -1,5 +1,6 @@
 #include "eb/native/world_generated_input.hpp"
 #include "eb/native/world_walking.hpp"
+#include "eb/native/peripheral_state.hpp"
 #include <bit>
 #include <limits>
 #include <stdexcept>
@@ -60,7 +61,7 @@ std::uint16_t GeneratedInputData::pad(CollisionDirection direction) const {
   return pads_[unsigned(direction)];
 }
 std::uint16_t GeneratedInputData::angle(CollisionPoint from,
-                                        CollisionPoint to) const {
+                                        CollisionPoint to, PeripheralState* peripherals) const {
   const auto dx = wrap(unsigned(from.x) - to.x),
              dy = wrap(unsigned(from.y) - to.y);
   unsigned x = signed_word(dx) < 0 ? wrap(0u - dx) : dx;
@@ -75,9 +76,12 @@ std::uint16_t GeneratedInputData::angle(CollisionPoint from,
                             (dx == 0               ? 4
                              : signed_word(dx) < 0 ? 0
                                                    : 1);
-  if (quadrant & 12)
+  // PLX/BEQ jumps directly to the divider when X is zero, including a
+  // coincident point. Only nonzero X with zero Y takes the cardinal shortcut.
+  if (dx != 0 && dy == 0)
     return angle_bases_[quadrant];
   const unsigned numerator = y >= 256 ? 65535 : y << 8;
+  if (peripherals) peripherals->divide_word(std::uint16_t(numerator), std::uint8_t(x));
   const unsigned quotient = x ? numerator / x : 65535;
   unsigned step = 0;
   while (step < angle_thresholds_.size() && quotient >= angle_thresholds_[step])

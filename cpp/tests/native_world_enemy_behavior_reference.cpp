@@ -85,7 +85,7 @@ struct Oracle {
     put(current + 2, role(f, id) * 2);
     put(game + 176 - shift, f.control.automatic_mode);
     put(game + 142 - shift, f.leader.walking_style);
-    put(battle, f.prompt.battle_mode);
+    put(battle, f.control.encounter.mode);
     put(door, f.navigation.using_door);
     put(movement_flags, f.leader.movement_flags);
     put(intangible, f.actors.appearance_scene().intangibility_ticks);
@@ -381,6 +381,14 @@ void helpers(Assets &assets) {
           }
         }
   actor.behavior.path_state = 0;
+  for(unsigned dx:{0u,1u,2u,0x7fffu,0x8000u,0x8001u,0xfffeu,0xffffu})
+    for(unsigned dy:{0u,1u,2u,0x7fffu,0x8000u,0x8001u,0xfffeu,0xffffu}) {
+      f.leader.leader_x=std::uint16_t(0x1234+dx);f.leader.leader_y=std::uint16_t(0x4321+dy);
+      seed_behavior(o,f,id);
+      context=assets.a.title+" live leader direction "+std::to_string(dx)+","+std::to_string(dy);
+      check(o.run(o.jp?0xc0c4d9:0xc0c4f7)==behavior.direction_from_leader(id),
+            "Actual entity/leader direction differs");
+    }
   f.actors.appearance_scene().intangibility_ticks = 0;
   for (unsigned count = 0; count <= 6; ++count)
     for (unsigned display : {0u, 1u, 4u, 5u, 6u, 255u}) {
@@ -660,7 +668,7 @@ unsigned imported_behavior_tasks(const eb::GameAssets &original) {
       o.put(fingerprint, actor.appearance.fingerprint());
       o.put(o.game + 130 - o.shift, 384);
       o.put(o.game + 134 - o.shift, 384);
-      unsigned contacts = 0, obstacles = 0, predicates = 0, steering = 0,
+      unsigned contacts = 0, obstacles = 0, steering = 0,
                sleeps = 0;
       const auto starting_position = actor.action().position;
       for (unsigned frame = 0; frame < (mode == 2 ? 48u : 160u); ++frame) {
@@ -721,7 +729,6 @@ unsigned imported_behavior_tasks(const eb::GameAssets &original) {
             break;
           case NativeAction::EnemyContactActive:
             f.actors.respond(f.contact->active());
-            ++predicates;
             break;
           case NativeAction::WithinLoadingArea: {
             const auto &a = f.actors.actor(request.actor);

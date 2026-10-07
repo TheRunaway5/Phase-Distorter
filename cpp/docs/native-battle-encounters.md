@@ -34,10 +34,13 @@ whether its action is permitted, after its real pre-dispatch dead-player and
 focus work. Execute that action before requesting another actor. Round completion
 admits the following command phase. Escape/cancel/defeat remain typed outcomes.
 
-The command-menu body's rendering/navigation/submenus, action executor, subsequent
-status recovery, victory/defeat/return sequence and complete `INIT_BATTLE` lifecycle
-are separate migration work. These interfaces never acknowledge those bodies as
-executed. Mode zero is the original background/PSI debug viewer, not an encounter.
+`battle::Encounter` now coordinates the actual command menu, action executor,
+recovery and outcomes through real child operations. `CommandMenu` owns rendered
+selection, Goods/PSI submenus, targeting and cancel/backtracking; actions have
+separate modules under `native/battle/actions`. The complete ordinary caller and
+world return have regional source references. See [native desktop sessions](native-battle-session.md)
+for the composition, launch option and remaining game/cinematic frontiers.
+Mode zero is the original background/PSI debug viewer, not an encounter.
 
 ## Sprite-zero hardware dependency
 

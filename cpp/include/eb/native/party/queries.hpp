@@ -24,6 +24,11 @@ class Queries {
     // follow controlled_order. Bounds are checked at the actual record read.
     std::uint16_t first_conscious() const;
     std::uint16_t conscious_count() const;
+    // FIND_ITEM_IN_INVENTORY2 scans all14 positions, including slots after
+    // an empty byte. FF uses live party_order through controlled_count.
+    // Its result is the owning character ID; full-width item words remain raw.
+    std::uint16_t item_carrier(std::uint16_t selector,std::uint16_t item) const;
+    std::uint16_t inventory_item(std::uint16_t character,std::uint16_t position) const;
 
   private:
     const State& state_;

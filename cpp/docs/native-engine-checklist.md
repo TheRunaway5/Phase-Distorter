@@ -1,6 +1,6 @@
 # Native engine completion checklist
 
-Updated: 2026-10-02. Active scope: **all remaining engine work except audio**.
+Updated: 2026-10-05. Active scope: **all remaining engine work except audio**.
 
 This is the execution checklist for the current goal. Update it when work starts,
 lands, passes its acceptance checks, or exposes another required dependency.
@@ -16,11 +16,19 @@ explicit adapter; replacing audio sequencing, decoding or mixing is out of scope
 
 ### Current execution checklist
 
-Checkpoint20 is accepted at the native module/Runtime level. The desktop still
-uses GameSession; these checks do not establish a playable native session.
+The desktop now has an explicit native Continue path (`--native-session N`) that
+constructs `NativeSession` without a compatibility gameplay CPU. Regional
+integration fixtures complete a real overworld encounter, command menu, actions,
+victory and map return; repeated display sampling preserves gameplay and PCM.
+See [native battle/session scope](native-battle-session.md). This does not close
+the entire game checklist: title/new-game, game-over, general cinematic services
+and broader live/platform acceptance still require their own proof. World
+menus, field actions, doors and town maps are the current integration phase;
+see [native world/session scope](native-world-session.md) for its actual
+ownership, acceptance and remaining fidelity boundaries.
 
-Current verification on 2026-10-02: the desktop entry point still constructs
-`GameSession`. Both installed Linux executable paths now match SHA-256
+Historical installed verification on 2026-10-02: the default desktop path used
+`GameSession`. Both installed Linux executable paths matched SHA-256
 `88902764ac2a739e4b55c8c43152d1c92981e8a263e2000bd1eb7b4a38866dde`.
 This supersedes the historical installed hash below; matching executable files
 alone do not verify a native session or establish runtime acceptance.
@@ -35,48 +43,43 @@ alone do not verify a native session or establish runtime acceptance.
   creation and palette reset. It stops before map preparation.
 - [x] **R2 — Swirl setup correction:** reset all four window bounds; both
   regional source regressions fail on the old code and pass with the fix.
-- [ ] **G1/S2/I1 — Finish startup:** execute actual map loading, remaining
-  actor/window setup, fade and the first playable frame. Connect restored
-  ScenePalette colors and live actors to rendering and interaction.
-- [ ] **W3/W4 — Complete enemy behavior:** run unchanged roaming/chase/flee
-  scripts, starting with EVENT_19, then EVENT_24/28. Implement their actual
-  distance, targeting, flee, velocity and task-sleep dependencies.
-- [ ] **R2/G5 — Visible swirl and combat:** advance authored effects only on
-  their real caller phases; publish palette/window/layer changes to pixels;
-  continue through combat initialization, gameplay and world return.
+- [x] **G1/S2/I1 — Native Continue startup:** actual map loading, actor/window
+  setup, fade and first playable world frame through shared live owners.
+- [x] **R2/G5 — Integrated encounter:** actual visible swirl, command menu,
+  scheduling, actions, outcomes and map return in both regional session fixtures.
+  See the frozen battle/session delivery evidence for the accepted scope.
+- [x] **G2/G6/W5 — Native world session owners:** shared regional command menus,
+  field actions, authored doors, town maps and PSI travel now resume the native
+  world loop. The world/session document records focused acceptance and explicit
+  fidelity boundaries. A delivery requires its accompanying frozen-source,
+  platform, desktop and package receipts; this implementation checkpoint alone
+  does not establish those gates.
 - [ ] **W/G/S/R/I — Live integration and delivery:** finish the subsystem
   gates below, replace desktop GameSession, validate real gameplay, then
   install and exercise both Linux executable paths and release artifacts.
 
-Exact next steps are in [startup](native-bootstrap-next.md),
-[enemy behavior](native-enemy-behavior-next.md),
-[encounter entry](native-encounter-entry-next.md) and
-[visible encounter effects](native-encounter-effects-next.md).
-Audio implementation remains excluded.
+The older startup, enemy and encounter planning notes are historical dependency
+audits. Current integration boundaries are in the battle/session and world/session
+documents linked above. Audio implementation remains excluded.
 
-### Checkpoint21 in progress
+### Remaining full-engine integration
 
-These are implementation tasks, not accepted completion claims. A complete
-native desktop session has not been integrated or accepted.
+These are full-engine acceptance tasks. The explicit native Continue/battle
+route is integrated; it does not establish every map, menu, cinematic or ending.
 
-- [ ] **Enemy runtime:** finish seven typed behavior services and current-task
-  sleep; verify unchanged EVENT_19/24/28 plus actual Runtime bindings in both regions.
-- [ ] **Map transaction:** perform ordered cleanup, all-role collision reset,
-  same-combination artwork retention, palette publication and32+48 activation;
-  prove the original complete map-loader call and no extra game/input ticks.
-- [ ] **Startup continuation:** actual Buzz Buzz dialogue, timed deliveries,
-  window artwork and positioning; then real first actor frame and fade.
-- [ ] **Shared palette:** route actual window/area writes into one ScenePalette;
-  recolor cached indexed artwork at publication without an actor tick.
-- [ ] **Encounter display:** publish authored window rows and main/sub layer
-  policy, RGB5 color math and palette restoration in software and OpenGL.
-- [ ] **Restoration edge case:** resolve the authored shared-artwork battle
-  restore that resets frame/display state through its null publication target;
-  do not reinterpret it as palette index0 or silently acknowledge it.
-- [ ] **Live integration gaps:** map fade admission, overlay cursors and live
-  actor interaction geometry must have actual native owners.
-- [ ] **Acceptance:** coherent optimized/sanitized runs, regional source
-  comparisons, GPU pixels and a frozen-source linkage audit before closing items.
+- [ ] **Boot and persistence:** native title/new-game, save-write lifecycle,
+  defeat/respawn and restart through real authored callers.
+- [ ] **Story services:** general coffee/tea/name-entry/sound-stone/photo,
+  title/cast/credits and ending cinematics, plus unresolved action services.
+- [ ] **Adjacent storage:** retain the original owners reached by multiple JP
+  queued door keys and higher PSI teleport destination selectors.
+- [ ] **Text transport:** source physical VWF allocation and glyph DMA-ring
+  interleaving, distinct from accepted logical window artwork.
+- [ ] **Presentation metadata:** native effect-specific flash context and window
+  exemption masks through the existing frontend.
+- [ ] **Full-game acceptance:** coherent optimized/sanitized platform builds,
+  live controller/display testing and complete regional playthroughs before
+  replacing the default compatibility session.
 
 ### Ownership and verification
 
@@ -250,10 +253,12 @@ The inventory executable passes the native linkage audit
 (`native-linkage20l.log`); generating this report executes no original
 game instructions.
 
-The modules' passing checks do not check off I1/I4/I7: the desktop session
-still uses GameSession. The historical installed baseline is recorded in
-`installed20l.log`; the current executable hashes are recorded at the top of
-this checklist. Neither record establishes a complete native session.
+Those historical module checks did not check off I1/I4/I7: their desktop
+baseline used GameSession, as recorded in `installed20l.log`. The current
+optional `--native-session N` Continue path uses NativeSession and has separate
+integrated battle acceptance described in [native-battle-session.md](native-battle-session.md).
+The default title/new-game path still uses GameSession; neither the historical
+records nor battle acceptance establish a complete native game.
 
 For the logs without a directory above, use
 `build/verification/native-completion/`. Reference programs accept both

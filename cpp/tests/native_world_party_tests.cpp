@@ -1,6 +1,8 @@
 #include "eb/native/world_party.hpp"
 #include "native_sprite_fixture.hpp"
 #include <iostream>
+#include <algorithm>
+#include <tuple>
 #include <stdexcept>
 
 namespace {
@@ -92,6 +94,56 @@ void normal() {
           "Formation did not finish after both real services");
     rejects([&] { operation->respond(); });
 }
+bool same_action(const ActionActorState& a,const ActionActorState& b) {
+    return std::tie(a.position,a.velocity,a.variables,a.animation,a.priority,a.alive)==
+           std::tie(b.position,b.velocity,b.variables,b.animation,b.priority,b.alive);
+}
+bool same_behavior(const ActorActionContext& a,const ActorActionContext& b) {
+    return std::tie(a.direction,a.moving_direction,a.movement_speed,a.surface_flags,a.path_state,
+                    a.obstacle_flags,a.collision_object,a.physics,a.projection,a.tick,a.draw_world,
+                    a.projected_x,a.projected_y)==
+           std::tie(b.direction,b.moving_direction,b.movement_speed,b.surface_flags,b.path_state,
+                    b.obstacle_flags,b.collision_object,b.physics,b.projection,b.tick,b.draw_world,
+                    b.projected_x,b.projected_y);
+}
+void coordinate_copy() {
+    Fixture f;
+    const auto destination = *f.world.actor_for_role(24);
+    auto &actor = f.world.actor(destination);
+    f.party.party_count = 1; // Lookup still scans all six retained display slots.
+    f.party.display_order = {1, 2, 3, 1, 0, 17};
+    f.party.controlled_order = {5, 4, 3, 2, 1, 0};
+    f.state.roles = {29, 26, 25, 24, 27, 28};
+    f.state.current_leader_role = 23;
+    for (unsigned role=0; role<30; ++role)
+        if (role!=24) f.world.set_authored_position(role, {
+            (role*7919u << 16) | 0x2345u,
+            ((0xffffu-role*1543u) << 16) | 0xabcdu, 0x43215678});
+    for (std::uint8_t selector : {0, 1, 2, 3, 17, 255}) {
+        actor.action().position = {0x1111abcd, 0x22225678, 0xdeadbeef};
+        actor.action().velocity = {0x12345678, 0x87654321, 0xabcdef00};
+        const auto before = actor.action(); const auto behavior=actor.behavior;
+        const auto role = selector==255 ? 23u : f.state.roles.at(unsigned(
+            std::find(f.party.display_order.begin(), f.party.display_order.end(), selector)
+                -f.party.display_order.begin()));
+        const auto source=f.world.authored_position(role);
+        const auto result=copy_party_position(f.world,destination,f.party,f.state,selector);
+        auto expected=before;
+        expected.position[0]=(source[0]&0xffff0000u)|(before.position[0]&0xffffu);
+        expected.position[1]=(source[1]&0xffff0000u)|(before.position[1]&0xffffu);
+        check(same_action(actor.action(),expected) && same_behavior(actor.behavior,behavior) && result==(source[1]>>16),
+              "Party coordinate copy changed fractions/Z/velocity or selected the wrong role");
+    }
+    const auto before=actor.action();
+    rejects([&]{copy_party_position(f.world,destination,f.party,f.state,77);});
+    check(same_action(actor.action(),before),"Missing coordinate selector partially changed actor");
+    f.state.current_leader_role=30;
+    rejects([&]{copy_party_position(f.world,destination,f.party,f.state,255);});
+    check(same_action(actor.action(),before),"Unowned leader coordinate partially changed actor");
+    f.state.roles[0]=0xffff;
+    rejects([&]{copy_party_position(f.world,destination,f.party,f.state,1);});
+    check(same_action(actor.action(),before),"Unowned display role coordinate partially changed actor");
+}
 void failure() {
     { Fixture f; auto operation = f.formation.begin_update(); operation.reset();
       check(f.formation.failed() && !f.formation.busy(), "Abandoned formation was reusable");
@@ -130,6 +182,6 @@ void data() {
     rejects([&] { WorldParty bad(jp, f.world, f.data, f.state); });
 }
 } // namespace
-int main() { try { data(); normal(); failure();
+int main() { try { data(); normal(); coordinate_copy(); failure();
     std::cout << "PASS native party formation, positional trail cursors, guest HP and service lifetime\n";
 } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; } }

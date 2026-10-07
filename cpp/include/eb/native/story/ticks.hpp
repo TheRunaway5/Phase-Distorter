@@ -5,6 +5,7 @@
 #include "eb/native/party/meters.hpp"
 #include "eb/native/story/random.hpp"
 #include <functional>
+#include <optional>
 
 namespace eb::native::story {
 enum class TickKind {
@@ -30,6 +31,16 @@ struct TickState {
     // forcing a second publication. IRQ-only timing needs its actual H/V
     // interrupt owner; Scene currently admits NMI or an already-pending byte.
     std::uint8_t new_frame_started{}, interrupt_mask = 0x80;
+    // The low-WRAM mirror can be overwritten without a hardware write.
+    // Ordinary callers keep one synchronized value; null-destination palette
+    // restoration retains the real hardware enable before clearing the mirror.
+    std::optional<std::uint8_t> retained_hardware_interrupt_mask{};
+    std::uint8_t effective_interrupt_mask() const noexcept {
+        return retained_hardware_interrupt_mask.value_or(interrupt_mask);
+    }
+    void retain_interrupt_hardware() noexcept {
+        retained_hardware_interrupt_mask=effective_interrupt_mask();
+    }
     // Receipt for a completed real input poll, distinct from display IRQs.
     std::uint64_t input_polls{};
     // Completion receipt for accepted native NMI publication, independent of

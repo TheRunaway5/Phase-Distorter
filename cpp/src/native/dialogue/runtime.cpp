@@ -3,6 +3,20 @@
 #include <utility>
 
 namespace eb::native::dialogue {
+std::optional<unsigned> State::ambient_lookup() const {
+    if (!unfocused_register_alias) return unfocused_register_slot;
+    const auto bytes = unfocused_register_alias->word;
+    return unsigned(bytes[0]) | unsigned(bytes[1]) << 8;
+}
+std::optional<unsigned> State::ambient_slot() const {
+    if (!unfocused_register_alias) return unfocused_register_slot;
+    const auto stride = unfocused_register_alias->stride;
+    const auto delta = std::uint16_t(*ambient_lookup() * stride);
+    if (delta == std::uint16_t(0 - stride)) return 0xffff;
+    if (delta % stride == 0 && delta / stride < window_slots.size())
+        return delta / stride;
+    throw std::out_of_range("Unfocused register address leaves owned window banks");
+}
 WindowState &State::registers_at(unsigned slot) {
     const auto &id = window_slots.at(slot);
     return id ? windows.at(*id) : retired_window_banks.at(slot);
@@ -18,10 +32,11 @@ const WindowState &State::window() const {
     if (window_host_managed && windows.empty()) return dummy;
     if (focus) return windows.at(*focus);
     if (window_host_managed && !windows.empty()) {
-        if (!unfocused_register_slot)
+        const auto ambient = ambient_slot();
+        if (!ambient)
             throw std::logic_error("Unfocused open windows require the source ambient register slot");
-        if (*unfocused_register_slot == 0xffff) return dummy;
-        return registers_at(*unfocused_register_slot);
+        if (*ambient == 0xffff) return dummy;
+        return registers_at(*ambient);
     }
     return dummy;
 }
@@ -64,9 +79,18 @@ struct Runtime::Execution {
         BattleGrammar,
         Inventory,
         PartyQuery,
+        ItemQuery,
         ItemCommand,
         ScriptSound,
+        SpecialEvent,
+        ScriptMusic,
         WorldControl,
+        PlayerLock,
+        EntityLock,
+        NpcCommand,
+        FloatingSprite,
+        InteractionCommand,
+        Teleport,
         Substitution,
         WidthHint,
         MenuLabelFirst,
@@ -75,7 +99,8 @@ struct Runtime::Execution {
         MenuLayout,
         Tree,
         SubroutineCount,
-        SubroutineTarget
+        SubroutineTarget,
+        StatLetter
     };
     // JP1C11 has no authored operands after its selector. Keep its suspended
     // calls distinct from byte-gathering handlers so no next stream byte is
@@ -88,6 +113,7 @@ struct Runtime::Execution {
         std::uint8_t command{}, selector{};
         Location command_source{};
         ReferenceKey arguments{};
+        std::array<std::uint8_t,2> interaction_selectors{};
         unsigned argument_count{};
         bool skip_after_return{}, wrap_checked{};
         FormationStage formation{};
@@ -273,15 +299,20 @@ struct Runtime::Execution {
                 frame.handler = Handler::MenuLabelFirst;
             } else if (selector == 4)
                 ask(RequestKind::ResetMenu, source, command, selector);
-            else if (selector == 0x10 || selector == 0x16) {
+            else if (selector == 0x10 || selector == 0x16 || selector == 0x19) {
                 frame.selector = selector;
                 frame.argument_count = 0;
                 frame.handler = Handler::PartyQuery;
             } else if (selector == 0x20) {
                 ask(RequestKind::PartyQuery, source, command, selector);
                 pending->party_query = PartyQueryRequest{PartyQueryKind::ControlledCount};
+            } else if (selector == 0x21 || selector == 0x25) {
+                frame.selector = selector;
+                frame.handler = Handler::ItemQuery;
             } else if (selector == 0x1e || selector == 0x1f) {
                 ask(RequestKind::PreparedValue, source, command, selector);
+            } else if (selector == 0x28) {
+                frame.handler = Handler::StatLetter;
             } else
                 ask(RequestKind::UnsupportedCommand, source, command, selector);
         } else if (command == 0x1c) {
@@ -317,11 +348,15 @@ struct Runtime::Execution {
                 break;
             default: ask(RequestKind::UnsupportedCommand, source, command, selector); break;
             }
-        } else if (command == 0x1d && (selector == 3 || selector == 8 || selector == 0x0e)) {
+        } else if (command == 0x1d && selector == 0x0b) {
+            frame.selector=selector;frame.handler=Handler::ItemQuery;
+        } else if (command == 0x1d && selector == 0x20) {
+            ask(RequestKind::PreparedNamesEqual, source, command, selector);
+        } else if (command == 0x1d && (selector == 1 || selector == 3 || selector == 8 || selector == 9 || selector == 0x0e)) {
             frame.selector = selector;
             frame.argument_count = 0;
             frame.handler = Handler::ItemCommand;
-        } else if (command == 0x1d && (selector == 0x0d || selector == 0x19)) {
+        } else if (command == 0x1d && (selector == 0x0d || selector == 0x19 || selector == 0x0f)) {
             frame.selector = selector;
             frame.argument_count = 0;
             frame.handler = Handler::PartyQuery;
@@ -332,25 +367,60 @@ struct Runtime::Execution {
             ask(RequestKind::Selection, source, command, selector, selector == 9 ? 1 : 0);
         } else if (command == 0x1f) {
             switch (selector) {
+            case 0x00: case 0x07:
+                frame.selector = selector;
+                frame.argument_count = 0;
+                frame.handler = Handler::ScriptMusic;
+                break;
+            case 0x01:
+                ask(RequestKind::ScriptMusic, source, command, selector);
+                pending->script_music = ScriptMusicRequest{ScriptMusicKind::Stop, 0, 0};
+                break;
             case 0x02: frame.handler = Handler::ScriptSound; break;
+            case 0x21: frame.handler = Handler::Teleport; break;
+            case 0x15: case 0x16: case 0x17: case 0xe4: case 0xf1: case 0xf2:
+                frame.selector = selector;
+                frame.argument_count = 0;
+                frame.handler = Handler::NpcCommand;
+                break;
+            case 0x1a: case 0x1b: case 0xf3: case 0xf4:
+                frame.selector = selector;
+                frame.argument_count = 0;
+                frame.handler = Handler::FloatingSprite;
+                break;
+            case 0x41: frame.handler = Handler::SpecialEvent; break;
             case 0x30: case 0x31:
                 ask(RequestKind::SetFont, source, command, selector, selector - 0x30);
                 break;
             case 0x50: ask(RequestKind::InputLock, source, command, selector, 1); break;
             case 0x51: ask(RequestKind::InputLock, source, command, selector, 0); break;
             case 0x60: frame.handler = Handler::TimedWait; break;
+            case 0x61: ask(RequestKind::WaitActionScripts, source, command, selector); break;
             case 0x62: frame.handler = Handler::PromptMode; break;
+            case 0x63: case 0x66:
+                frame.selector=selector;frame.argument_count=0;
+                frame.handler=Handler::InteractionCommand;
+                break;
             case 0xa0: case 0xa1: case 0xa2:
                 ask(RequestKind::NpcGift, source, command, selector);
                 pending->npc_gift = selector == 0xa0 ? NpcGiftAction::Open :
                                     selector == 0xa1 ? NpcGiftAction::Close : NpcGiftAction::IsOpen;
                 break;
             case 0xc0: frame.handler = Handler::SubroutineCount; break;
+            case 0xe5: case 0xe8:
+                frame.selector = selector;
+                frame.handler = Handler::PlayerLock;
+                break;
+            case 0xe6: case 0xe7: case 0xe9: case 0xea:
+                frame.selector = selector;
+                frame.argument_count = 0;
+                frame.handler = Handler::EntityLock;
+                break;
             case 0xed:
                 ask(RequestKind::WorldControl, source, command, selector);
                 pending->world_control = WorldControlCommand{WorldControlCommandKind::StopAutomatic};
                 break;
-            case 0xee: case 0xef:
+            case 0xeb: case 0xec: case 0xee: case 0xef:
                 frame.selector = selector;
                 frame.argument_count = 0;
                 frame.handler = Handler::WorldControl;
@@ -422,25 +492,122 @@ struct Runtime::Execution {
         auto &frame = frames.back();
         const auto source = frame.command_source;
         const auto handler = frame.handler;
+        if (handler == Handler::InteractionCommand) {
+            const unsigned prefix=frame.selector==0x66?2:0;
+            const unsigned index=frame.argument_count++;
+            if(index<prefix)frame.interaction_selectors[index]=value;
+            else frame.arguments.at(index-prefix)=value;
+            if(frame.argument_count!=prefix+4)return;
+            const auto reference=std::uint32_t(frame.arguments[0])|
+                std::uint32_t(frame.arguments[1])<<8|std::uint32_t(frame.arguments[2])<<16|
+                std::uint32_t(frame.arguments[3])<<24;
+            auto slot=frame.interaction_selectors[0],id=frame.interaction_selectors[1];
+            if(prefix) {
+                if(!slot)slot=std::uint8_t(state.window().active.argument);
+                if(!id)id=std::uint8_t(state.window().active.working);
+            }
+            complete_handler();
+            ask(RequestKind::WorldControl,source,frame.command,frame.selector);
+            pending->world_control=WorldControlCommand{
+                prefix?WorldControlCommandKind::ActivateHotspot:WorldControlCommandKind::QueueText,
+                slot,0,id,reference};
+            return;
+        }
         if (handler == Handler::Tree) {
             tree(value);
+            return;
+        }
+        if (handler == Handler::Teleport) {
+            const auto destination=value?std::uint16_t(value):std::uint16_t(state.window().active.argument);
+            complete_handler();
+            ask(RequestKind::Teleport,source,frame.command,0x21,destination);
+            return;
+        }
+        if (handler == Handler::FloatingSprite) {
+            frame.arguments.at(frame.argument_count++) = value;
+            const bool create=frame.selector==0x1a || frame.selector==0xf3;
+            if (frame.argument_count != (create ? 3u : 2u)) return;
+            const auto selected = std::uint16_t(frame.arguments[0] | unsigned(frame.arguments[1]) << 8);
+            const auto icon = create ? value : std::uint8_t(0);
+            const auto kind = frame.selector==0x1a?WorldControlCommandKind::CreateFloatingNpc:
+                frame.selector==0x1b?WorldControlCommandKind::DeleteFloatingNpc:
+                frame.selector==0xf3?WorldControlCommandKind::CreateFloatingSprite:WorldControlCommandKind::DeleteFloatingSprite;
+            complete_handler();
+            ask(RequestKind::WorldControl, source, frame.command, frame.selector);
+            pending->world_control = WorldControlCommand{kind, selected, 0, icon};
+            return;
+        }
+        if (handler == Handler::NpcCommand) {
+            // The fifth byte is the final effect operand, consumed directly;
+            // the source shared gather storage contains only the first four.
+            if (frame.argument_count<frame.arguments.size()) frame.arguments[frame.argument_count]=value;
+            ++frame.argument_count;
+            const bool direction=frame.selector==0x16 || frame.selector==0xe4;
+            const unsigned count=direction?3:(frame.selector==0xf1||frame.selector==0xf2)?4:5;
+            if (frame.argument_count!=count) return;
+            auto selector=std::uint16_t(frame.arguments[0] | unsigned(frame.arguments[1])<<8);
+            auto parameter=std::uint16_t(frame.arguments[2]);
+            if (direction) {
+                if (!selector) selector=std::uint16_t(state.window().active.working);
+                if (!parameter) parameter=std::uint16_t(state.window().active.argument);
+                parameter=std::uint16_t(parameter-1);
+            } else parameter|=std::uint16_t(unsigned(frame.arguments[3])<<8);
+            const auto kind=frame.selector==0x15?WorldControlCommandKind::CreateSprite:
+                frame.selector==0x17?WorldControlCommandKind::CreateNpc:
+                frame.selector==0x16?WorldControlCommandKind::SetNpcDirection:
+                frame.selector==0xe4?WorldControlCommandKind::SetSpriteDirection:
+                frame.selector==0xf2?WorldControlCommandKind::SetSpriteScript:WorldControlCommandKind::SetNpcScript;
+            const auto effect=count==5?value:std::uint8_t(0);
+            complete_handler();
+            ask(RequestKind::WorldControl,source,frame.command,frame.selector);
+            pending->world_control=WorldControlCommand{kind,selector,effect,parameter};
+            return;
+        }
+        if (handler == Handler::EntityLock) {
+            frame.arguments.at(frame.argument_count++) = value;
+            if (frame.argument_count != 2) return;
+            const auto selector=std::uint16_t(frame.arguments[0] | unsigned(frame.arguments[1]) << 8);
+            const auto kind=frame.selector==0xe6?WorldControlCommandKind::SetNpcLock:
+                frame.selector==0xe7?WorldControlCommandKind::SetSpriteLock:
+                frame.selector==0xe9?WorldControlCommandKind::ClearNpcLock:WorldControlCommandKind::ClearSpriteLock;
+            complete_handler();
+            ask(RequestKind::WorldControl,source,frame.command,frame.selector);
+            pending->world_control=WorldControlCommand{kind,selector};
+            return;
+        }
+        if (handler == Handler::PlayerLock) {
+            complete_handler();
+            ask(RequestKind::WorldControl, source, frame.command, frame.selector);
+            pending->world_control = WorldControlCommand{
+                frame.selector==0xe5 ? WorldControlCommandKind::SetPlayerLock
+                                     : WorldControlCommandKind::ClearPlayerLock, value};
             return;
         }
         if (handler == Handler::WorldControl) {
             frame.arguments.at(frame.argument_count++) = value;
             if (frame.argument_count != 2) return;
-            const auto selector = std::uint16_t(frame.arguments[0] | unsigned(value) << 8);
+            const bool character = frame.selector == 0xeb || frame.selector == 0xec;
+            const auto selector = character ? std::uint16_t(frame.arguments[0])
+                                            : std::uint16_t(frame.arguments[0] | unsigned(value) << 8);
             complete_handler();
             ask(RequestKind::WorldControl, source, frame.command, frame.selector);
             pending->world_control = WorldControlCommand{
-                frame.selector == 0xee ? WorldControlCommandKind::FocusNpc : WorldControlCommandKind::FocusSprite,
-                selector};
+                character ? (frame.selector == 0xeb ? WorldControlCommandKind::HideCharacter
+                                                     : WorldControlCommandKind::ShowCharacter)
+                          : (frame.selector == 0xee ? WorldControlCommandKind::FocusNpc
+                                                     : WorldControlCommandKind::FocusSprite),
+                selector, character ? value : std::uint8_t(0)};
             return;
         }
         if (handler == Handler::WidthHint) {
             const auto word = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
             complete_handler();
             ask(RequestKind::WidthHint, source, frame.command, 0x11, word);
+            return;
+        }
+        if (handler == Handler::StatLetter) {
+            complete_handler();
+            ask(RequestKind::StatLetter, source, frame.command, 0x28, value);
             return;
         }
         if (handler == Handler::ScriptSound) {
@@ -455,6 +622,15 @@ struct Runtime::Execution {
                 byte ? byte : std::uint8_t(0x57), word};
             return;
         }
+        if (handler == Handler::ItemQuery) {
+            const auto item = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
+            complete_handler();
+            ask(RequestKind::ItemQuery, source, frame.command, frame.selector);
+            pending->item_query = ItemQueryRequest{
+                frame.command==0x1d?ItemQueryKind::SellPrice:
+                frame.selector==0x21?ItemQueryKind::Subtype2:ItemQueryKind::FindCondiment,item};
+            return;
+        }
         if (handler == Handler::ItemCommand) {
             frame.arguments.at(frame.argument_count++) = value;
             const unsigned count = frame.selector == 3 ? 1 : 2;
@@ -463,12 +639,12 @@ struct Runtime::Execution {
             if (frame.selector == 3) {
                 item.kind = ItemCommandKind::FindSpace;
                 item.character = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
-            } else if (frame.selector == 8) {
-                item.kind = ItemCommandKind::AddMoney;
+            } else if (frame.selector == 8 || frame.selector == 9) {
+                item.kind = frame.selector==8?ItemCommandKind::AddMoney:ItemCommandKind::SubtractMoney;
                 const auto literal = std::uint16_t(frame.arguments[0] | (unsigned(value) << 8));
                 item.amount = literal ? std::uint32_t(literal) : state.window().active.argument;
             } else {
-                item.kind = ItemCommandKind::Give;
+                item.kind = frame.selector==1?ItemCommandKind::Take:ItemCommandKind::Give;
                 // CC1D0E reads argument for the item before working for the
                 // recipient, after gathering both bytes. Neither is truncated
                 // to an authored byte when the zero fallback selects a word.
@@ -483,13 +659,19 @@ struct Runtime::Execution {
         }
         if (handler == Handler::PartyQuery) {
             frame.arguments.at(frame.argument_count++) = value;
-            const unsigned count = frame.command == 0x1d ? (frame.selector == 0x19 ? 1 : 3) :
+            const unsigned count = frame.command == 0x1d ? (frame.selector == 0x19 ? 1 : frame.selector==0x0f?2:3) :
                                    frame.selector == 0x10 ? 1 : 2;
             if (frame.argument_count != count) return;
             PartyQueryRequest query;
             if (frame.command == 0x1d && frame.selector == 0x19) {
                 query.kind = PartyQueryKind::FewerControlledThan;
                 query.amount = value ? std::uint32_t(value) : state.window().active.argument;
+            } else if ((frame.command == 0x19 && frame.selector == 0x19) ||
+                       (frame.command == 0x1d && frame.selector == 0x0f)) {
+                query.kind = PartyQueryKind::InventoryItem;
+                query.character = frame.arguments[0] ? std::uint16_t(frame.arguments[0]) :
+                                                       std::uint16_t(state.window().active.working);
+                query.position = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
             } else if (frame.selector == 0x10) {
                 query.kind = PartyQueryKind::DisplayCharacter;
                 query.position = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
@@ -553,6 +735,26 @@ struct Runtime::Execution {
         if (handler == Handler::TextAnimation) {
             complete_handler();
             ask(RequestKind::TextAnimation, source, frame.command, 8, value);
+            return;
+        }
+        if (handler == Handler::SpecialEvent) {
+            complete_handler();
+            ask(RequestKind::SpecialEvent, source, frame.command, 0x41);
+            pending->special_event = value;
+            return;
+        }
+        if (handler == Handler::ScriptMusic) {
+            if (frame.selector == 0 && frame.argument_count++ == 0) {
+                frame.arguments[0] = value;
+                return;
+            }
+            const auto track = value ? std::uint16_t(value) : std::uint16_t(state.window().active.argument);
+            const auto selector = frame.selector;
+            const auto parameter = selector == 0 ? frame.arguments[0] : std::uint8_t(0);
+            complete_handler();
+            ask(RequestKind::ScriptMusic, source, frame.command, selector);
+            pending->script_music = ScriptMusicRequest{
+                selector == 0 ? ScriptMusicKind::Change : ScriptMusicKind::Effect, track, parameter};
             return;
         }
         if (handler == Handler::MenuLabelFirst) {
@@ -899,6 +1101,11 @@ void Runtime::respond(Response response) {
             e.ask(RequestKind::ResetMenu, request.source, request.command, request.selector);
             return;
         }
+    } else if (request.kind == RequestKind::SpecialEvent) {
+        if (!request.special_event || !response.special_event_result)
+            throw std::logic_error("Special event requires its complete typed result");
+        const auto word = *response.special_event_result;
+        e.set_working(request.source, word | (word & 0x8000 ? 0xffff0000u : 0u));
     } else if (request.kind == RequestKind::BattleAnimation) {
         if (!request.battle_animation || !response.battle_animation_result)
             throw std::logic_error("Battle animation requires its complete typed result");
@@ -906,6 +1113,9 @@ void Runtime::respond(Response response) {
         // The original bool is sign-extended into the complete working dword.
         if (response.battle_animation_result->executed)
             e.set_working(request.source, response.battle_animation_result->value ? 1u : 0u);
+    } else if (request.kind == RequestKind::ItemQuery) {
+        if (!request.item_query) throw std::logic_error("Item query lacks its typed operand");
+        e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::ItemCommand) {
         if (!request.item_command || !response.item_result ||
             response.item_result->argument.has_value() != (request.item_command->kind == ItemCommandKind::Give))
@@ -920,9 +1130,25 @@ void Runtime::respond(Response response) {
         if (*request.npc_gift == NpcGiftAction::IsOpen) e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::PartyQuery) {
         if (!request.party_query) throw std::logic_error("Party query lacks its typed operands");
-        e.set_working(request.source, response.value);
+        if(request.party_query->kind == PartyQueryKind::InventoryItem) {
+            e.state.window().active.argument = response.value;
+            e.register_changed(request.source, RegisterKind::Argument, response.value);
+            if(request.command==0x1d && request.selector==0x0f) {
+                // CC1D0F publishes the item before REMOVE_ITEM and its real
+                // Teddy/party callbacks. Working remains live until return.
+                e.ask(RequestKind::ItemCommand,request.source,request.command,request.selector);
+                e.pending->item_command=ItemCommandRequest{ItemCommandKind::Remove,
+                    request.party_query->character,request.party_query->position};
+                return;
+            }
+            e.set_working(request.source, request.party_query->character);
+        } else e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::BattleGrammar) {
         if (!request.battle_grammar) throw std::logic_error("Battle grammar lacks its literal selector");
+        e.set_working(request.source, response.value);
+    } else if (request.kind == RequestKind::StatLetter) {
+        e.set_working(request.source, std::uint8_t(response.value));
+    } else if (request.kind == RequestKind::PreparedNamesEqual) {
         e.set_working(request.source, response.value);
     } else if (request.kind == RequestKind::PreparedValue) {
         if (!response.prepared_value)

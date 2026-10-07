@@ -103,7 +103,7 @@ struct PromptHost::Operation::Execution {
         shared.rolling_disabled = 1;
       if (const auto id = windows.state().focus)
         slot = windows.slot_for(*id);
-      else if (const auto ambient = windows.state().unfocused_register_slot;
+      else if (const auto ambient = windows.state().ambient_slot();
                ambient && *ambient < 8)
         slot = *ambient;
       if (command.show_prompt) {

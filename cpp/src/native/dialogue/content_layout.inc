@@ -3,7 +3,7 @@
 // Dictionaries: src/bankconfig/US/bank08.asm, immediately after E11SUMS;
 // pointer table: DISPLAY_TEXT's linked COMPRESSED_TEXT_PTRS operand ($c8cded).
 // earthbound.yml SHA-256 1fc78551e7bc6be1a8d76ee84e25c090cd7ca81213dfb3fcb1b6501f7fbae9b2
-constexpr std::array<ContentRange, 61> us_text_ranges{{
+constexpr std::array<ContentRange, 62> us_text_ranges{{
     {0x050000, 0x3711, "ESHOP0"},
     {0x053711, 0x36e2, "EEXPLGDS"},
     {0x056df3, 0x1029, "E13SKRB"},
@@ -63,11 +63,12 @@ constexpr std::array<ContentRange, 61> us_text_ranges{{
     {0x2f9a47, 0x04ad, "EBATTLE1"},
     {0x2f9ef4, 0x0406, "EGOODS2"},
     {0x2fa2fa, 0x0080, "UNKNOWN_EFA2FA"},
+    {0x2fa3b6, 0x00aa, "STATUS_WINDOW_TEXT"},
     {0x2fa460, 0x0273, "KEYBOARD"},
     {0x2fa6eb, 0x0024, "UNKNOWN7"},
 }};
 // mother2.yml SHA-256 ac9ed1d5fb4e22ecc057a5b9c453455b1eb415eb54637457520832435ac80d37
-constexpr std::array<ContentRange, 58> jp_text_ranges{{
+constexpr std::array<ContentRange, 59> jp_text_ranges{{
     {0x050000, 0x173e, "EEVENT0"},
     {0x05173e, 0x2162, "EEVENT1"},
     {0x0538a0, 0x1b45, "EEVENT2"},
@@ -124,6 +125,7 @@ constexpr std::array<ContentRange, 58> jp_text_ranges{{
     {0x09b91b, 0x0d56, "E12RAMA"},
     {0x09c671, 0x0ca4, "E15GUMI"},
     {0x09d315, 0x0a1b, "E14MAKYO"},
+    {0x09dd4e, 0x008a, "STATUS_WINDOW_TEXT"},
     {0x09ddd8, 0x048c, "KEYBOARD"},
     {0x09e27c, 0x0025, "UNKNOWN7"},
 }};

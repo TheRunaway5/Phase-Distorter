@@ -59,9 +59,11 @@ class PartyFormation {
                    npcs::Interactions &, TickState &);
     PartyFormation(const PartyFormation &) = delete;
     PartyFormation &operator=(const PartyFormation &) = delete;
+    void validate_begin() const;
     std::unique_ptr<Operation> begin();
     std::unique_ptr<TailOperation> begin_tail(WorldPartyService);
     bool uses(const WorldParty &updater) const noexcept { return &updater_ == &updater; }
+    bool uses(const ActorWorld& actors) const noexcept { return &actors_ == &actors; }
     bool uses(const party::State& party) const noexcept { return &party_ == &party; }
     bool uses(const npcs::Interactions &interactions) const noexcept { return &interactions_ == &interactions; }
     bool bound_to(const party::State &, const ActorWorld &, const npcs::Interactions &,

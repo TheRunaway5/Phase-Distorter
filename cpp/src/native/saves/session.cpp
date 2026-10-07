@@ -141,6 +141,14 @@ void restore_party(const PersistedState &s, party::State &live) {
     throw std::invalid_argument("Native party restore region mismatch");
   for (unsigned i = 0; i < 6; ++i) {
     live.character(i + 1) = s.characters[i].values;
+    auto &c = live.character(i + 1);
+    const auto &stored = s.characters[i];
+    c.miss_rate = stored.miss_rate;
+    c.boosted_speed = stored.boosted_speed;
+    c.boosted_guts = stored.boosted_guts;
+    c.boosted_vitality = stored.boosted_vitality;
+    c.boosted_iq = stored.boosted_iq;
+    c.boosted_luck = stored.boosted_luck;
     copy_field(s.characters[i].name, live.name_field(i + 1));
   }
   const auto &g = s.game;
@@ -160,14 +168,26 @@ void restore_party(const PersistedState &s, party::State &live) {
   live.controlled_count = g.controlled_count;
   live.party_status = g.party_status;
   live.auto_fight = g.auto_fight;
+  live.party_psi = g.party_psi;
   live.money_carried = g.money_carried;
   live.bank_balance = g.bank_balance;
+  live.battle_money_deposited = 0;
+  for (unsigned i = 0; i < g.reserved_c4.size(); ++i)
+    live.battle_money_deposited |= std::uint32_t(g.reserved_c4[i]) << (8 * i);
 }
 PersistedState capture_party(const party::State &live, PersistedState s) {
   if (s.version != live.version())
     throw std::invalid_argument("Native party capture region mismatch");
   for (unsigned i = 0; i < 6; ++i) {
     s.characters[i].values = live.character(i + 1);
+    const auto &c = live.character(i + 1);
+    auto &stored = s.characters[i];
+    stored.miss_rate = c.miss_rate;
+    stored.boosted_speed = c.boosted_speed;
+    stored.boosted_guts = c.boosted_guts;
+    stored.boosted_vitality = c.boosted_vitality;
+    stored.boosted_iq = c.boosted_iq;
+    stored.boosted_luck = c.boosted_luck;
     s.characters[i].name.fill(0);
     const auto name = live.name_field(i + 1);
     std::copy(name.begin(), name.end(), s.characters[i].name.begin());
@@ -190,8 +210,11 @@ PersistedState capture_party(const party::State &live, PersistedState s) {
   g.controlled_count = live.controlled_count;
   g.party_status = live.party_status;
   g.auto_fight = live.auto_fight;
+  g.party_psi = live.party_psi;
   g.money_carried = live.money_carried;
   g.bank_balance = live.bank_balance;
+  for (unsigned i = 0; i < g.reserved_c4.size(); ++i)
+    g.reserved_c4[i] = std::uint8_t(live.battle_money_deposited >> (8 * i));
   return s;
 }
 Session::Session(SaveArchive archive,

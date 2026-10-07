@@ -10,6 +10,29 @@ unsigned word(std::span<const std::uint8_t> bytes, unsigned at) {
     return bytes[at] | unsigned(bytes[at + 1]) << 8;
 }
 } // namespace
+std::uint16_t copy_party_position(ActorWorld &actors, ActorId destination,
+                                  const party::State &party,
+                                  const WorldPartyState &formation,
+                                  std::uint8_t selector) {
+    if (actors.version() != party.version())
+        throw std::invalid_argument("Party coordinate copy has a different region");
+    unsigned role = formation.current_leader_role;
+    if (selector != 0xff) {
+        const auto found = std::find(party.display_order.begin(),
+                                     party.display_order.end(), selector);
+        if (found == party.display_order.end())
+            throw std::out_of_range("Party coordinate selector has no owned role");
+        role = formation.roles.at(unsigned(found - party.display_order.begin()));
+    }
+    // Complete all fallible owner/role reads before touching the destination.
+    const auto position = actors.authored_position(role);
+    auto &action = actors.actor(destination).action();
+    const auto x = std::uint16_t(position[0] >> 16);
+    const auto y = std::uint16_t(position[1] >> 16);
+    action.position[0] = (std::uint32_t(x) << 16) | (action.position[0] & 0xffffu);
+    action.position[1] = (std::uint32_t(y) << 16) | (action.position[1] & 0xffffu);
+    return y;
+}
 WorldPartyData::WorldPartyData(std::span<const std::uint8_t> bytes, GameVersion version)
     : version_(version) {
     if (version != GameVersion::US && version != GameVersion::JP)

@@ -379,12 +379,80 @@ void run_cutscene_bounds(const eb::GameAssets &game, unsigned width) {
     f.frame(4368, 2048, true); // ordinary wide map returns immediately
     std::cout << "Cutscene camera/layer iris/color iris: width=" << width << " PASS\n";
 }
+
+void run_command_layout(const eb::GameAssets &game, unsigned width) {
+    ForestPathFixture f(game, "Left-edge commands over a direct scene", 6, width);
+    f.frame(4368, 2048, true);
+    const bool jp = game.version == eb::GameVersion::JP;
+    const unsigned records = jp ? 0x89c2 : 0x8650, size = jp ? 76 : 82,
+                   table = jp ? 0x8c26 : 0x88e4, head = jp ? 0x8c22 : 0x88e0;
+    for (unsigned i = 0; i < (jp ? 52u : 53u); ++i) store(*f.bus, table + i * 2, 0xffff);
+    const auto window = [&](unsigned slot, unsigned id, unsigned x, unsigned y, unsigned w, unsigned h) {
+        const unsigned at = records + slot * size;
+        store(*f.bus, table + id * 2, slot);
+        store(*f.bus, at, slot ? slot - 1 : 0xffff);
+        store(*f.bus, at + 2, slot == 2 ? 0xffff : slot + 1);
+        store(*f.bus, at + 4, id); store(*f.bus, at + 6, x); store(*f.bus, at + 8, y);
+        store(*f.bus, at + 10, w - 2); store(*f.bus, at + 12, h - 2);
+        for (unsigned row = y; row < y + h; ++row)
+            for (unsigned col = x; col < x + w; ++col) {
+                f.bus->video_ram[0xf800 + (row * 32 + col) * 2] = 1;
+                f.bus->video_ram[0xf801 + (row * 32 + col) * 2] = 0x3c;
+            }
+    };
+    window(0, 0, 1, 1, jp ? 12 : 13, 8);
+    window(1, 10, 1, 10, jp ? 9 : 8, 4);
+    window(2, 1, 12, 16, 19, 8);
+    store(*f.bus, head, 0); store(*f.bus, head + 2, 2);
+    f.bus->write_byte(0x2105, 9); f.bus->write_byte(0x2109, 0x7c);
+    f.bus->write_byte(0x210c, 6); f.bus->write_byte(0x212c, 5);
+    for (unsigned row = 0; row < 8; ++row) f.bus->video_ram[0xc011 + row * 2] = 255;
+    f.bus->palette_ram[60] = 0xff; f.bus->palette_ram[61] = 0x7f;
+    const auto render = [&] {
+        const auto ram = f.bus->work_ram;
+        const auto vram = f.bus->video_ram;
+        ++f.bus->completed_frames;
+        for (unsigned y = 0; y < 224; ++y) {
+            const auto view = f.view();
+            f.renderer.begin_scanline(view, y);
+            for (unsigned x = 0; x < 256; ++x)
+                f.bus->native_framebuffer[y * 256 + x] =
+                    f.renderer.compose_presentation_pixel(view, int(x), y, {}, false);
+            f.renderer.render_presentation_margins(view, y);
+            f.renderer.capture_direct_scanline(view, y);
+        }
+        require(ram == f.bus->work_ram && vram == f.bus->video_ram, "Command placement changed source state");
+        const auto scene = f.renderer.direct_scene();
+        require(bool(scene), "Left-edge menus forced direct scene rendering to fall back");
+        const auto raster = eb::rasterize_direct_scene({scene, {}});
+        const auto pixels = f.renderer.presentation_pixels(f.bus->native_framebuffer);
+        require(std::equal(raster.begin(), raster.end(), pixels.begin(), pixels.end()),
+                "Direct and scanline command placement differ");
+        require(raster[16 * width + 8] == 0xffffffff && raster[84 * width + 8] == 0xffffffff,
+                "Direct scene did not anchor commands and cash at the left edge");
+        require(raster[132 * width + (width - 256) / 2 + 96] == 0xffffffff,
+                "Direct scene moved unrelated dialogue");
+        return scene;
+    };
+    eb::DirectSceneMotion motion;
+    motion.submit(render()); motion.submit(render());
+    for (double fraction : {0., .25, .5, .75, 1.}) {
+        const auto pixels = eb::rasterize_direct_scene(motion.sample(fraction));
+        require(pixels[16 * width + 8] == 0xffffffff && pixels[84 * width + 8] == 0xffffffff,
+                "Direct scene motion shifted command/cash windows");
+    }
+    std::cout << "PASS " << game.title << " direct and raster left-edge command/cash layout width=" << width << '\n';
+}
 } // namespace
 int main(int argc, char** argv) {
     try {
-        if (argc != 3 || std::string(argv[1]) != "--assets")
-            throw std::runtime_error("Usage: presentation_scene_tests --assets FILE");
+        if (argc != 3 || (std::string(argv[1]) != "--assets" && std::string(argv[1]) != "--menus"))
+            throw std::runtime_error("Usage: presentation_scene_tests --assets FILE or --menus FILE");
         const auto game = eb::load_game_assets(argv[2], eb::asset_profiles());
+        if (std::string(argv[1]) == "--menus") {
+            for (unsigned width : {256u, 398u, 522u, 796u, 1024u}) run_command_layout(game, width);
+            return 0;
+        }
         for (unsigned width : {398u, 522u, 796u, 1024u}) run_cutscene_bounds(game, width);
         run_case(game, "Fourside tunnel left", 5, 26, 22, 25, 5632, 400);
         run_case(game, "Fourside tunnel right", 5, 26, 22, 25, 6144, 400);

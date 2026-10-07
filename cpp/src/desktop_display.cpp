@@ -276,6 +276,7 @@ struct DesktopDisplay::Impl {
             diagnostics.drawable_height = drawable_height;
             diagnostics.fullscreen = fullscreen();
             diagnostics.game_debug = debug_snapshot_;
+            diagnostics.machine_debug_available = session.machine_debug_available;
             diagnostics.cache = cache_info_;
             diagnostics.snapshots = snapshots_;
             diagnostics.snapshot_status = snapshot_status_;

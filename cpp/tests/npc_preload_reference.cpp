@@ -97,7 +97,7 @@ struct Fixture {
     cpu.program_counter = 0xcfff00; cpu.accumulator = a; cpu.x_index = x; cpu.y_index = y;
     if (far) cpu.execute_instruction<0x22>(entry, 4);
     else cpu.execute_instruction<0x20>(entry & 0xffff, 3);
-    for (unsigned steps = 0; steps < 250000; ++steps) {
+    for (unsigned steps = 0; steps < 2000000; ++steps) {
       if (cpu.program_counter == 0xcfff00 + (far ? 4 : 3) && cpu.stack_pointer == 0x1fff)
         return cpu.accumulator;
       cpu.step_instruction();
@@ -136,6 +136,35 @@ NpcPlacement anchor(const GameAssets &assets, unsigned id) {
     for (unsigned x = 0; x < 32; ++x)
       for (const auto &p : catalog.cell(x, y)) if (p.npc == id) return p;
   throw std::runtime_error("Missing authored NPC reference placement");
+}
+
+void room_entry_rows(const GameAssets &assets, MainCpuRuntime runtime) {
+  const NpcCatalog catalog(assets.image, npc_catalog_layout(assets.version, false));
+  for (unsigned center_x : {7632u, 7640u, 7648u, 7656u, 7664u}) {
+    const unsigned center_y = 488;
+    const unsigned combo = assets.image[source_profile(assets.version).rom_map_tileset_palette_sectors +
+        center_y / 128 * 32 + center_x / 256] >> 3;
+    std::vector<unsigned> expected;
+    for (unsigned width : {256u, 398u, 522u, 1024u}) {
+      context = assets.title + " room entry center=" + std::to_string(center_x) + "," +
+          std::to_string(center_y) + " width=" + std::to_string(width);
+      Fixture f(assets, width, runtime);
+      f.camera(center_x - 128, center_y - 112, combo);
+      f.put(f.enemy_enabled, 0);
+      f.bus.debug_read_wram = {}; f.bus.debug_write_wram = {};
+      f.bus.work_ram[0x0d] = 0x80; // Source forced-blank mirror for synchronous map loading.
+      f.put(0xa1, 0x2000); f.put(0xa3, 0x2000); // Source map decompression heap.
+      f.call(f.jp ? 0xc0140c : 0xc013f6, center_x, center_y);
+      if (width == 256) {
+        for (unsigned role = 0; role < 30; ++role)
+          if (f.get(f.npc + role * 2) < catalog.size()) expected.push_back(f.get(f.npc + role * 2));
+        std::cout << context << " canonical NPCs:";
+        for (auto id : expected) std::cout << ' ' << id;
+        std::cout << '\n';
+      } else for (auto id : expected)
+        check(f.contains(id), "Room-entry scan skipped a canonical NPC/prop");
+    }
+  }
 }
 
 // Walking executes these source JSL sites, not the isolated row/cell loaders.
@@ -526,6 +555,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
       const auto assets = load_game_assets(argv[i], asset_profiles());
       for (auto runtime : {MainCpuRuntime::Ported, MainCpuRuntime::Legacy}) {
+        room_entry_rows(assets, runtime);
         walking_column_handoff(assets, runtime); actual_edges(assets, runtime);
       }
       scene_gates(assets); source_guard(assets); priority_and_preview(assets);

@@ -13,6 +13,16 @@ class WorldActorMovement;
 class WorldPartyMovement;
 class WorldPartyFollowing;
 class WorldEnemies;
+class ActorWorld;
+// Dedicated source-scene callbacks run at the actual post-script tick phase.
+// The stable borrowed service cannot start another actor traversal or frame.
+class ActorTickService {
+public:
+  virtual ~ActorTickService() = default;
+  virtual bool uses(const ActorWorld &) const noexcept = 0;
+  // True means the callback actually invoked its source camera refresh.
+  virtual bool tick(ActorId, ActorTickCallback) = 0;
+};
 
 struct ActorHitbox {
   struct Extent {
@@ -145,6 +155,8 @@ public:
   void clear_party_movement(const WorldPartyMovement &) noexcept;
   void bind_party_following(WorldPartyFollowing &);
   void clear_party_following(const WorldPartyFollowing &) noexcept;
+  void bind_tick_service(ActorTickService &);
+  void clear_tick_service(const ActorTickService &) noexcept;
   // Stable borrowed lifetime owner, installed/cleared by WorldRuntime.
   // Script retirement snapshots enemy selectors through this real owner.
   void bind_enemies(WorldEnemies &);
@@ -156,6 +168,9 @@ public:
   // The assigned numeric role supplies the authored walking-animation phase.
   std::optional<ActorId> create_authored(const WorldActorSpec &spec,
                                          AuthoredActorRoles roles = {});
+  // CREATE_PREPARED_ENTITY_NPC writes an NPC selector after CREATE_ENTITY;
+  // unlike map activation it permits multiple active roles with that selector.
+  std::optional<ActorId> create_prepared_npc(const WorldActorSpec &spec);
   // Bare INIT_ENTITY preserves dormant geometry/appearance/behavior, resets
   // the actual script, callbacks, velocity and pose fields, and allocates a
   // new host identity. No graphics are created for a never-graphical role.
@@ -170,16 +185,26 @@ public:
   AuthoredActorPosition authored_position(unsigned role) const;
   AuthoredActorPose authored_pose(unsigned role) const;
   std::uint16_t authored_variable(unsigned role, unsigned index) const;
+  void set_authored_variable(unsigned role, unsigned index, std::uint16_t);
   ActorActionContext authored_behavior(unsigned role) const;
   void set_authored_path_state(unsigned role, std::uint16_t);
+  void set_authored_tick_callback(unsigned role,ActorTickCallback);
+  void set_authored_collision_object(unsigned role,std::int32_t);
   AuthoredActorPause authored_pause(unsigned role) const;
   void set_authored_pause(unsigned role, bool scripts_and_physics, bool tick);
   bool authored_sprite_hidden(unsigned role) const;
   void set_authored_sprite_hidden(unsigned role, bool);
   void set_authored_direction(unsigned role, std::uint16_t direction);
+  // C462FF updates only changed facing, then C0A443_ENTRY2 refreshes the
+  // retained four-direction frame, including a retired graphical role.
+  void refresh_authored_direction(unsigned role, std::uint16_t direction);
   std::uint16_t authored_sprite_selector(unsigned role) const;
   std::uint16_t authored_npc_selector(unsigned role) const;
   std::uint16_t authored_enemy_selector(unsigned role) const;
+  std::uint16_t authored_draw_priority(unsigned role) const;
+  void set_authored_draw_priority(unsigned role, std::uint16_t);
+  // Actual C4605A retained numeric lookup, independent of actor lifetime.
+  std::optional<unsigned> first_authored_role_with_npc(std::uint16_t) const;
   void set_authored_position(unsigned role, const AuthoredActorPosition &);
   // Replace only the whole coordinate (axis 0=X, 1=Y, 2=height), retaining
   // its fractional word. Neither form changes projection or actor activity.
@@ -195,12 +220,24 @@ public:
   std::optional<ActorId>
   first_authored_actor_with_sprite(unsigned sprite) const;
   std::optional<ActorId> first_authored_actor_with_npc(NpcId npc) const;
+  // C46028 scans all retained numeric roles, including dormant selector
+  // residue and never-created table entries. This does not require artwork.
+  std::optional<unsigned> first_authored_role_with_sprite(std::uint16_t) const;
+  // C46CC7 copies only whole XY from that retained role to the live actor.
+  // A missing selector's adjacent-table alias has no owned native source.
+  std::uint16_t copy_sprite_position(ActorId destination, std::uint16_t sprite);
+  // C46BBB retains selected whole XY in the current script's VAR6/7.
+  std::uint16_t capture_sprite_target(ActorId destination, std::uint16_t sprite);
   // Replace at a declared content root, preserving creation style, motion,
   // appearance, role and active-list order. Clears callback/pause controls.
   // The currently suspended interpreter is explicitly unsupported: source
   // self-replacement retains a local continuation and captured child links.
   // Other actors can be replaced during a tick and keep captured-next order.
   void replace_script(ActorId id, std::uint32_t content_entry);
+  // C461CC selects the first retained numeric sprite role, then resolves the
+  // literal script index in this world's own catalog. A miss is a no-op;
+  // a released or executing script slot remains an explicit boundary.
+  void replace_sprite_script(std::uint16_t sprite, std::uint16_t script);
   // Ordinary NPC graphical release preserves actor/task/list identity and
   // motion. Enemy counters and other world policy remain the scene owner's
   // responsibility. False means the actor or its appearance is already gone.
@@ -222,6 +259,10 @@ public:
   // Map loading resets collision targets for all authored roles, including
   // retired roles, without changing their movement, scripts or other metadata.
   void clear_collision_targets();
+  // INIT_BATTLE_OVERWORLD's exact ordinary-role prefix. Retains reserved
+  // party/controller roles and inactive-role geometry while clearing the
+  // first23 collision/path/hidden flags after the real map/teleport return.
+  void reset_encounter_objects();
   void bind_overlays(WorldOverlayPlayback &);
   void clear_overlays(const WorldOverlayPlayback &) noexcept;
   bool uses_overlays(const WorldOverlayPlayback &) const noexcept;
@@ -272,7 +313,9 @@ public:
 private:
   friend class WorldEnemies;
   struct State;
-  ActorId create_actor(const WorldActorSpec &, bool graphical);
+  ActorId create_actor(const WorldActorSpec &, bool graphical, bool duplicate_npc = false);
+  std::optional<ActorId> create_authored(const WorldActorSpec &, AuthoredActorRoles, bool duplicate_npc);
+  void remove_npc_index(ActorId);
   std::shared_ptr<const void> identity_token() const;
   std::unique_ptr<State> state_;
 };

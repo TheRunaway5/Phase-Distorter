@@ -50,6 +50,8 @@ public:
     std::uint8_t next_available_label(unsigned enemy) const;
     // Original BATTLE_ROUTINE's record-clear/highest-level reset prefix only.
     void clear();
+    // INSTANT_WIN_HANDLER clears the records but retains highest enemy level.
+    void clear_records();
     void initialize_player(unsigned slot, const party::State&, unsigned character);
     void initialize_enemy(unsigned slot, unsigned enemy);
     // Complete C2C32C: reinitialize slot8, retain only XY, mark taken-turn.

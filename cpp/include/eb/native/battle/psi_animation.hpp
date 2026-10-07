@@ -1,6 +1,8 @@
 #pragma once
 
 #include "eb/native/battle/palette_effects.hpp"
+#include "eb/native/peripheral_state.hpp"
+#include "eb/game_version.hpp"
 #include <cstddef>
 #include <memory>
 #include <span>
@@ -57,6 +59,8 @@ struct PsiTransfer {
 // a real transfer reads live scratch, with16-bit source-bank wrap.
 class PsiDisplayState {
 public:
+  void bind_peripherals(PeripheralState&, GameVersion);
+  PeripheralState* peripherals() const noexcept { return peripherals_; }
   using VramImage = std::array<std::uint8_t, 65536>;
   PsiDisplayState() = default;
   PsiDisplayState(const PsiDisplayState &) = delete;
@@ -110,6 +114,9 @@ public:
   VramImage vram() const noexcept;
   VramImage preview_vram(const PsiScratch &) const;
   void publish_pending(const PsiScratch &);
+  // Unset C2DE96 destination clears only the two byte ring cursors. The
+  // descriptors, pending byte credit and physical VRAM remain retained.
+  void reset_queue_indices() noexcept { read_ = write_ = 0; }
   std::uint16_t pending_bytes() const noexcept { return bytes_; }
   std::uint8_t producer_index() const noexcept {
     return std::uint8_t(write_ * 8);
@@ -131,6 +138,9 @@ public:
   std::array<PsiScroll, 4> staged_scroll{}, scroll{};
 
 private:
+  PeripheralState* peripherals_{};
+  std::uint32_t dma_constant_{};
+  void complete_dma(unsigned channel, const PsiTransfer&) noexcept;
   std::array<std::uint8_t, 0xd800> remaining_vram_{};
   void store_vram(const VramImage &) noexcept;
   // The32 physical records and raw byte counter have one authoritative owner.
@@ -185,6 +195,7 @@ public:
   void advance();
   bool busy(const WorldSwirlState &) const noexcept;
   const PsiAnimationState &state() const noexcept { return state_; }
+  bool failed() const noexcept { return failed_; }
   const PsiScratch &scratch() const noexcept { return scratch_; }
   const PsiDisplayState &display() const noexcept { return display_; }
   bool uses(const PsiAnimationState &, const PsiScratch &,

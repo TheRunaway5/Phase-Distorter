@@ -190,7 +190,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     ImGui::Checkbox("Widescreen", &settings.widescreen);
                     ImGui::BeginDisabled(!settings.widescreen);
                     constexpr std::array<const char*, 7> labels{
-                        "Game (256:224)", "4:3", "16:10", "16:9", "21:9", "Window", "Custom"};
+                        "Game (256:224)", "4:3", "16:10 (Steam Deck)", "16:9", "21:9", "Window", "Custom"};
                     constexpr std::array<AspectRatio, 7> values{
                         AspectRatio::Native, AspectRatio::FourThree, AspectRatio::SixteenTen,
                         AspectRatio::SixteenNine, AspectRatio::TwentyOneNine, AspectRatio::Window, AspectRatio::Custom};
@@ -309,6 +309,9 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Debug")) {
+                    if (!diagnostics.machine_debug_available)
+                        ImGui::TextWrapped("Machine debug controls are unavailable in a native session.");
+                    ImGui::BeginDisabled(!diagnostics.machine_debug_available);
                     ImGui::Checkbox("Infinite health (999/999)", &impl_->game_settings.infinite_hp);
                     ImGui::Checkbox("Infinite PSI / PP (999/999)", &impl_->game_settings.infinite_pp);
                     ImGui::Checkbox("Noclip", &impl_->game_settings.noclip);
@@ -354,6 +357,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     if(!state.status.empty())ImGui::TextWrapped("%s",state.status.c_str());
                     else if(!state.ready)ImGui::TextWrapped("Load a game to use teleport and party controls.");
                     ImGui::TextWrapped("Debug changes can affect saved progress. Cheat switches reset when you restart or switch games.");
+                    ImGui::EndDisabled();
                     ImGui::SeparatorText("Save state snapshots");
                     ImGui::TextWrapped("Save the current moment and return to it later. Snapshots are kept separately from your in-game save.");
                     const auto find_snapshot = [&](const std::string& id) {

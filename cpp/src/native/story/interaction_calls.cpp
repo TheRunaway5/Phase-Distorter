@@ -4,6 +4,10 @@
 namespace eb::native::story {
 namespace {
 void require(bool value,const char* message) { if(!value)throw std::logic_error(message); }
+dialogue::PromptHost& prompts(dialogue::MenuHost& menus) {
+    require(menus.prompts()!=nullptr,"Interaction caller requires the actual prompt owner");
+    return *menus.prompts();
+}
 dialogue::ReferenceKey reference(std::uint32_t value) {
     return {std::uint8_t(value),std::uint8_t(value>>8),std::uint8_t(value>>16),std::uint8_t(value>>24)};
 }
@@ -12,6 +16,7 @@ struct InteractionCalls::Execution {
     std::shared_ptr<const dialogue::Program> program;
     npcs::Interactions& interactions;
     dialogue::PromptHost& prompts;
+    dialogue::MenuHost* menus{};
     Scene& scene;
     EntityFadePending fade_pending;
     bool active{},poisoned{};
@@ -110,7 +115,8 @@ struct InteractionCalls::Operation::Execution {
             if(key==dialogue::ReferenceKey{}) {phase=quick?Phase::ClearInstant:Phase::PostTick;return;}
             const auto at=o.program->resolve(key);
             require(at.has_value(),"Non-null interaction reference has no dialogue content");
-            conversation=std::make_unique<dialogue::Conversation>(o.program,o.prompts);
+            if(o.menus) conversation=std::make_unique<dialogue::Conversation>(o.program,*o.menus);
+            else conversation=std::make_unique<dialogue::Conversation>(o.program,o.prompts);
             conversation->start(*at);scene=o.scene.begin(*conversation);return;
         }
         case Phase::ClearInstant:
@@ -140,6 +146,12 @@ struct InteractionCalls::Operation::Execution {
 InteractionCalls::InteractionCalls(std::shared_ptr<const dialogue::Program> p,npcs::Interactions& i,
                                    dialogue::PromptHost& h,Scene& s,EntityFadePending f)
     :execution_(std::make_unique<Execution>(std::move(p),i,h,s,std::move(f))) {}
+InteractionCalls::InteractionCalls(std::shared_ptr<const dialogue::Program> p,npcs::Interactions& i,
+                                   dialogue::MenuHost& h,Scene& s,EntityFadePending f)
+    :InteractionCalls(std::move(p),i,prompts(h),s,std::move(f)) {
+    require(&h.windows()==&i.windows(),"Interaction caller has a different menu window owner");
+    execution_->menus=&h;
+}
 InteractionCalls::~InteractionCalls()=default;
 std::unique_ptr<InteractionCalls::Operation> InteractionCalls::begin(bool quick,dialogue::ReferenceKey key,npcs::InteractionQueue* queue) {
     auto& e=*execution_;require(!e.active && !e.poisoned,"Interaction caller is active or abandoned");

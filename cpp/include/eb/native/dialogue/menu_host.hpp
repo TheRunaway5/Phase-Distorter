@@ -51,6 +51,8 @@ class MenuHost {
       private:
         friend class MenuHost;
         friend class Conversation;
+        friend class MenuPrinter;
+        friend class TextSubstitutions;
         friend class WindowGraphics;
         friend class WindowCommands;
         TextOutput::Owner callback_owner(TextOutput &) const;
@@ -65,6 +67,9 @@ class MenuHost {
     MenuHost(const MenuHost &) = delete;
     MenuHost &operator=(const MenuHost &) = delete;
     WindowHost &windows();
+    bool uses(const Program&,const MenuResources&) const noexcept;
+    std::unique_ptr<MenuPrinter::Operation> begin_print(MenuPrintCommand);
+    std::unique_ptr<MenuPrinter::Operation> begin_print(MenuPrintCommand, Operation&);
     PromptHost *prompts();
     MenuCommands &commands();
     Inventory &inventory();

@@ -5,21 +5,32 @@
 namespace eb::native::battle {
 void FrameDisplay::update_screen(const BattleCombatantFrame &objects) {
   Screen next{objects, display_.staged_scroll, next_buffer_};
-  pending_ = std::move(next);
+  buffers_[next_buffer_-1] = std::move(next);
+  display_request_ = next_buffer_;
+  next_buffer_ ^= 3;
+}
+void FrameDisplay::update_world_screen() {
+  Screen next{std::nullopt, display_.staged_scroll, next_buffer_};
+  buffers_[next_buffer_-1] = std::move(next);
+  display_request_ = next_buffer_;
   next_buffer_ ^= 3;
 }
 FrameDisplay::Screen FrameDisplay::screen() const {
   return {objects_, display_.scroll, 0};
 }
 FrameDisplay::Screen FrameDisplay::preview_screen() const {
-  return pending_ ? *pending_ : screen();
+  if (!pending()) return screen();
+  auto next = buffers_[pending_display_id() == 1 ? 0 : 1];
+  next.display_id = pending_display_id();
+  return next;
 }
 void FrameDisplay::commit_publication(bool disable_hdma, bool forced_blank) noexcept {
-  if (pending_) {
-    objects_ = std::move(pending_->objects);
-    display_.scroll = pending_->scroll;
-    pending_.reset();
+  if (pending()) {
+    const auto &next = buffers_[pending_display_id() == 1 ? 0 : 1];
+    objects_ = next.objects;
+    display_.scroll = next.scroll;
   }
+  display_request_ = 0;
   publish_hdma(disable_hdma, forced_blank);
 }
 void FrameDisplay::publish_hdma(bool disable_hdma, bool forced_blank) noexcept {

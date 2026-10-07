@@ -4,6 +4,14 @@
 #include <utility>
 
 namespace eb::native::dialogue {
+bool PreparedMessage::names_equal() const {
+    const auto target=name(PreparedName::Target),attacker=name(PreparedName::Attacker);
+    for(unsigned i=0;i<target.size();++i) {
+        if(target[i]!=attacker[i])return false;
+        if(!target[i])return true;
+    }
+    throw std::logic_error("Prepared-name comparison leaves retained string storage");
+}
 namespace {
 unsigned index(PreparedName selected) {
     switch (selected) {

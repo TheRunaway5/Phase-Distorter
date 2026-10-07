@@ -49,6 +49,43 @@ struct Fixture {
     enemy = world.spawn_enemy();
   }
 };
+void npc_facing(eb::GameVersion version, bool sprite = false) {
+  Fixture f(version);auto &world=f.world.actors;
+  const auto current=sprite?f.world.player:f.enemy;
+  const auto npc=sprite?f.enemy:f.world.create(3,42);
+  const auto role=*world.actor(npc).authored_role();
+  auto &source=world.actor(current), &target=world.actor(npc);
+  source.action().position={0x19001234,0x1300abcd,0x5678fedc};
+  target.action().position={0x18005678,0x1200cdef,0x11112222};
+  target.behavior.direction=0xffff;
+  const auto source_position=source.action().position,target_position=target.action().position;
+  const auto target_velocity=target.action().velocity;
+  const auto face = [&](std::uint16_t selector) {
+    if (sprite) f.behavior.face_sprite_toward_actor(current,selector);
+    else f.behavior.face_npc_toward_actor(current,selector);
+  };
+  const auto selector = sprite ? world.authored_sprite_selector(role) : std::uint16_t(42);
+  face(selector);
+  check(target.behavior.direction<8 && target.appearance.displayed() &&
+            source.action().position==source_position && target.action().position==target_position &&
+            target.action().velocity==target_velocity && !world.ticks() && !f.world.clock.frame_counter,
+        "NPC facing did not refresh the selected role or changed real actor movement/time");
+  const auto direction=target.behavior.direction;
+  const auto appearance=target.appearance.draw(target.action(),0,0,0).image;
+  face(selector);
+  check(target.behavior.direction==direction && target.appearance.draw(target.action(),0,0,0).image==appearance,
+        "Unchanged NPC facing uploaded another pose");
+  face(0x1234);
+  check(target.behavior.direction==direction && source.action().position==source_position &&
+            target.action().position==target_position && !world.ticks(),
+        "Missing NPC selector changed another role or advanced time");
+  world.retire(npc);
+  world.set_authored_direction(role,0xffff);
+  face(selector);
+  check(world.authored_pose(role).direction==direction && world.authored_position(role)==target_position &&
+            !world.actor_for_role(role) && !world.ticks(),
+        "Dormant NPC facing invented an actor or lost its retained pose owner");
+}
 void run(eb::GameVersion version) {
   Fixture f(version);
   auto &w = f.world;
@@ -158,8 +195,11 @@ void run(eb::GameVersion version) {
 } // namespace
 int main() {
   try {
-    for (auto version : {eb::GameVersion::US, eb::GameVersion::JP})
+    for (auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+      npc_facing(version);
+      npc_facing(version, true);
       run(version);
+    }
     std::cout << checks << " native enemy behavior checks passed\n";
   } catch (const std::exception &e) {
     std::cerr << e.what() << '\n';

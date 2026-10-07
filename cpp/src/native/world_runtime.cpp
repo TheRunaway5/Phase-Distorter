@@ -1,4 +1,6 @@
 #include "eb/native/world_runtime.hpp"
+#include "eb/native/world/collision_window.hpp"
+#include "eb/native/world_sprite_fade.hpp"
 #include "eb/native/story/battle_publication.hpp"
 #include "eb/native/party/inventory.hpp"
 #include "eb/native/world_actor_movement.hpp"
@@ -34,16 +36,37 @@ bool enemy_contact_service(NativeAction operation) {
 }
 bool enemy_behavior_service(NativeAction operation) {
   switch (operation) {
+  case NativeAction::TargetAngle:
+  case NativeAction::TargetReached:
   case NativeAction::EnemyDistanceBand:
   case NativeAction::EnemyShortDistanceBand:
   case NativeAction::CaptureEnemyLeaderTarget:
   case NativeAction::EnemyChaseAngle:
+  case NativeAction::DirectionFromLeader:
   case NativeAction::EnemyAngleVelocity:
   case NativeAction::EnemyAngleDirection:
   case NativeAction::EnemyDistanceSleep:
     return true;
   default:
     return false;
+  }
+}
+std::optional<WorldSpriteFadeTask> fade_task(NativeAction action) {
+  using A = NativeAction;
+  using T = WorldSpriteFadeTask;
+  switch (action) {
+  case A::FadePauseActors: return T::PauseActors;
+  case A::FadeRestoreActors: return T::RestoreActors;
+  case A::FadeShowSprites: return T::ShowSprites;
+  case A::FadeRefreshSprites: return T::RefreshSprites;
+  case A::FadeHideBlinkSprites: return T::HideBlinkSprites;
+  case A::FadeRows: return T::Rows;
+  case A::FadeColumns: return T::Columns;
+  case A::FadeResetDissolve: return T::ResetDissolve;
+  case A::FadeDissolve: return T::Dissolve;
+  case A::FadeFinishTask: return T::FinishTask;
+  case A::FadeReleaseController: return T::ReleaseController;
+  default: return {};
   }
 }
 void validate_flags(dialogue::WindowHost &windows, ActorWorld &actors) {
@@ -104,7 +127,9 @@ struct WorldRuntime::State : story::FrameBoundaryService {
   const WorldCollision &collision;
   ActorWorld &actors;
   WorldEnemies &enemies;
+  WorldActivation &activation;
   WorldMapArea &area;
+  WorldCollisionWindow *collision_window{};
   AreaPalettes &palettes;
   const WorldMap &map_content;
   const WorldPalettes &palette_content;
@@ -123,12 +148,13 @@ struct WorldRuntime::State : story::FrameBoundaryService {
   std::unique_ptr<WorldMaintenance> maintenance;
   const WorldControl *world_control{};
   const WorldInteractionQueue *interaction_queue{};
-  const WorldMaintenanceState *maintenance_state{};
+  WorldMaintenanceState *maintenance_state{};
   const party::ItemTransformationState *item_state{};
   WorldWalking *walking{};
   WorldEscalator *escalator{};
   WorldBicycle *bicycle{};
   WorldAutomatic *automatic{};
+  WorldSpriteFade *sprite_fade{};
   WorldBattleEntry *battle_entry{};
   WorldEnemyMovement *enemy_movement{};
   WorldEnemyContact *enemy_contact{};
@@ -138,7 +164,7 @@ struct WorldRuntime::State : story::FrameBoundaryService {
   WorldPartyFollowing *following{};
   WorldDoorTransitions *transitions{};
   const npcs::InteractionState *interaction_state{};
-  const npcs::Interactions *interactions{};
+  npcs::Interactions *interactions{};
   const party::Inventory *inventory{};
   std::vector<Operation *> stack;
   std::exception_ptr failure;
@@ -179,7 +205,7 @@ struct WorldRuntime::State : story::FrameBoundaryService {
         WorldSpawnControls &spawn, NpcStripAdmission policy,
         ActorRetentionReader reader, story::SceneView view)
       : windows(w), party(party), random(random), input(input), clock(clock),
-        collision(collision), actors(a), enemies(e), area(map),
+        collision(collision), actors(a), enemies(e), activation(activation), area(map),
         palettes(colors), map_content(maps), palette_content(palettes),
         animation_content(animations), controls(spawn), admission(policy),
         retention(std::move(reader)),
@@ -280,6 +306,14 @@ void WorldRuntime::check_operation(const Operation &operation) const {
           "Another operation owns the native world continuation");
 }
 void WorldRuntime::require_idle() const { check_idle(); }
+void WorldRuntime::require_content_boundary(Operation *parent) const {
+  if (!parent) {check_idle();return;}
+  require(&parent->runtime_==this,"Content work requires this runtime's actual parent");
+  check_operation(*parent);
+  require(!parent->done_ && !parent->maintenance_ && !parent->walking_ && !parent->escalator_ && !parent->automatic_,
+          "Content work cannot interrupt a movement or maintenance child");
+  state_->scene.require_content_boundary(parent->scene_);
+}
 bool WorldRuntime::uses(const party::Inventory &inventory) const noexcept {
   return state_->inventory == &inventory;
 }
@@ -317,7 +351,9 @@ void WorldRuntime::check_response(const Operation &operation) const {
 WorldRuntime::Operation::Operation(
     WorldRuntime &runtime, std::unique_ptr<story::Scene::Operation> scene,
     bool refresh)
-    : runtime_(runtime), scene_(std::move(scene)), refresh_(refresh) {}
+    : runtime_(runtime), owned_scene_(std::move(scene)), scene_(owned_scene_.get()), refresh_(refresh) {}
+WorldRuntime::Operation::Operation(WorldRuntime &runtime, story::Scene::Operation &scene)
+    : runtime_(runtime), scene_(&scene) {}
 WorldRuntime::Operation::~Operation() {
   if (!done_)
     runtime_.state_->abandoned = true;
@@ -345,6 +381,25 @@ std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_publication() {
   require(!state_->capture_dirty,
           "Changed world content must be captured before publication");
   return wrap(state_->scene.begin_publication());
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_retained_publication(Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->streaming.busy(), "Retained publication cannot interrupt map activation");
+  // The actual map palette spin runs NMI over the previously captured screen.
+  // Prepared content remains dirty until the normal map Capture stage; this
+  // wait cannot activate actors, capture new scenery or consume input.
+  return wrap(parent ? state_->scene.begin_nested_publication(*parent->scene_) :
+                       state_->scene.begin_publication());
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_nested_publication(Operation &parent) {
+  require_content_boundary(&parent);
+  require(!state_->streaming.busy() && !state_->capture_dirty,
+          "Changed world content must be captured before publication");
+  return wrap(state_->scene.begin_nested_publication(*parent.scene_));
+}
+dialogue::Conversation &WorldRuntime::dialogue_owner(Operation &parent) {
+  require_content_boundary(&parent);
+  return state_->scene.dialogue_owner(*parent.scene_);
 }
 std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_main_frame() {
   check_idle();
@@ -374,6 +429,41 @@ WorldRuntime::begin_nested(dialogue::Conversation &conversation,
   require(!parent.walking_ && !parent.escalator_ && !parent.automatic_,
           "Native movement must finish before nested dialogue");
   return wrap(state_->scene.begin_nested(conversation, *parent.scene_));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_nested(story::TickKind kind, Operation &parent) {
+  require_nested(parent);
+  return wrap(state_->scene.begin_nested(kind,*parent.scene_));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_actor_frame(story::ActorFrameService &service) {
+  require_content_boundary();
+  require(!state_->streaming.busy() && !state_->capture_dirty,
+          "Actor-frame phases require completed world content capture");
+  return wrap(state_->scene.begin_actor_frame(service));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_nested_actor_frame(story::ActorFrameService &service, Operation &parent) {
+  require_content_boundary(&parent);
+  require(!state_->streaming.busy() && !state_->capture_dirty,
+          "Actor-frame phases require completed world content capture");
+  return wrap(state_->scene.begin_nested_actor_frame(service,*parent.scene_));
+}
+void WorldRuntime::require_nested(const Operation &parent) const {
+  check_response(parent);
+  require(!parent.walking_ && !parent.escalator_ && !parent.automatic_,
+          "Native movement must finish before nested actor/frame lifecycle");
+  state_->scene.require_nested(*parent.scene_);
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::service_child(story::Scene::Operation &child, Operation &parent) {
+  check_response(parent);
+  require(child.uses(state_->scene) && child.is_child_of(*parent.scene_),
+          "Native nested runtime requires its actual scene child and parent");
+  require(!state_->capture_dirty, "Changed world content must be captured before nested work");
+  auto operation = std::unique_ptr<Operation>(new Operation(*this, child));
+  state_->stack.push_back(operation.get());
+  return operation;
+}
+story::Scene::Operation &WorldRuntime::scene_operation(Operation &parent) {
+  require_nested(parent);
+  return *parent.scene_;
 }
 void WorldRuntime::bind_interactions(npcs::Interactions &interactions) {
   check_idle();
@@ -492,6 +582,13 @@ void WorldRuntime::bind_bicycle(WorldBicycle &bicycle) {
           "Native bicycle must use this runtime's actual world owners");
   s.bicycle = &bicycle;
 }
+void WorldRuntime::bind_sprite_fade(WorldSpriteFade &fade) {
+  check_idle();
+  auto &s = *state_;
+  require((!s.sprite_fade || s.sprite_fade == &fade) && fade.uses(s.actors),
+          "Sprite fades require this runtime's actual actor owner");
+  s.sprite_fade = &fade;
+}
 void WorldRuntime::bind_automatic(WorldAutomatic &automatic) {
   check_idle();
   auto &s = *state_;
@@ -507,6 +604,20 @@ void WorldRuntime::bind_automatic(WorldAutomatic &automatic) {
   s.automatic = &automatic;
 }
 const story::Scene &WorldRuntime::scene() const noexcept { return state_->scene; }
+story::Scene &WorldRuntime::coordinator_scene() {
+  check_idle();
+  require(!state_->scene.busy(), "Scene construction borrow requires idle native ownership");
+  return state_->scene;
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::service_child(story::Scene::Operation &scene) {
+  check_idle();
+  require(scene.uses(state_->scene) && !scene.complete(),
+          "Native world can service only an unfinished child of its actual Scene");
+  require(!state_->capture_dirty, "Native scene child cannot bypass changed world capture");
+  auto operation = std::unique_ptr<Operation>(new Operation(*this, scene));
+  state_->stack.push_back(operation.get());
+  return operation;
+}
 void WorldRuntime::bind_battle_publication(story::BattlePublication &publication) {
   check_idle();
   auto &s = *state_;
@@ -594,6 +705,9 @@ void WorldRuntime::bind_encounter_effects(WorldEncounterEffects &effects) {
           "Encounter effects require this runtime's actual scene and battle owners");
   s.presentation->bind_encounter_effects(effects);
   s.encounter_effects = &effects;
+}
+bool WorldRuntime::uses(const WorldEncounterEffects &effects) const noexcept {
+  return state_->encounter_effects == &effects;
 }
 bool WorldRuntime::uses_map_load(
     const ActorWorld &actors, const WorldEnemies &enemies, const WorldMapArea &area,
@@ -709,6 +823,7 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         if (request->kind == WorldMaintenanceService::Control &&
             request->control &&
             request->control->kind == WorldControlService::RefreshCamera) {
+          if(s.collision_window)s.collision_window->refresh(request->control->camera,s.area);
           s.streaming.begin_refresh(request->control->camera, s.admission);
           maintenance_streaming_ = true;
           continue;
@@ -737,11 +852,156 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         scene_->respond_party_sprite_blink();
         break;
       case story::SceneService::CameraRefresh:
+        if(s.collision_window){const auto &camera=s.actors.camera_refresh();
+          require(bool(camera),"Collision camera update lost its actual actor refresh");
+          s.collision_window->refresh({camera->camera_x,camera->camera_y},s.area);}
         s.streaming.begin_actor_refresh(s.admission,
                                         [this] { scene_->respond_camera(); });
         break;
       case story::SceneService::ActorEngine: {
         const auto &request = scene_->actor_request();
+        if (request && request->origin == WorldActionOrigin::Script) {
+          if (const auto task = fade_task(request->binding.operation)) {
+            require(s.sprite_fade, "Actor fade task requires its actual fade owner");
+            const bool release = *task == WorldSpriteFadeTask::ReleaseController;
+            const bool result_used = *task == WorldSpriteFadeTask::Rows ||
+                                     *task == WorldSpriteFadeTask::Columns;
+            if (release)
+              require(request->action.kind == ActionRequestKind::WriteGameWord &&
+                          request->action.value == 0xffff,
+                      "Fade controller release requires the authored FFFF write");
+            else
+              require(result_used || request->binding.discard_result,
+                      "Actor fade callback has an unowned incidental result");
+            const auto value = s.sprite_fade->step(*task, request->actor);
+            require(value.has_value() == result_used,
+                    "Actor fade callback returned an inconsistent result");
+            scene_->respond_actor(value.value_or(0), request->binding.parameter_bytes);
+            break;
+          }
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::CopySpritePosition) {
+          const auto value = s.actors.copy_sprite_position(request->actor, request->binding.operand);
+          scene_->respond_actor(value, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::CaptureSpriteTarget) {
+          const auto value = s.actors.capture_sprite_target(request->actor, request->binding.operand);
+          scene_->respond_actor(value, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            (request->binding.operation == NativeAction::FaceNpcTowardActor ||
+             request->binding.operation == NativeAction::FaceSpriteTowardActor)) {
+          require(s.enemy_behavior && request->binding.discard_result,
+                  "Actor facing requires its actual angle owner and an unused incidental pose return");
+          if (request->binding.operation == NativeAction::FaceNpcTowardActor)
+            s.enemy_behavior->face_npc_toward_actor(request->actor, request->binding.operand);
+          else s.enemy_behavior->face_sprite_toward_actor(request->actor, request->binding.operand);
+          scene_->respond_actor({}, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::VelocityDistanceSleep) {
+          const auto value = velocity_distance_sleep(s.actors.actor(request->actor).action(),
+                                                     request->action.temporary);
+          scene_->respond_actor(value, request->binding.parameter_bytes, value);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::CopyPartyPosition) {
+          require(s.world_control, "Party coordinate copy requires the actual formation owner");
+          const auto value = copy_party_position(s.actors, request->actor, s.party,
+              s.world_control->formation(), std::uint8_t(request->binding.operand));
+          scene_->respond_actor(value, request->binding.parameter_bytes);
+          break;
+        }
+        if (s.world_control && request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::ReadMovedThisTick) {
+          scene_->respond_actor(s.world_control->state().moved_this_tick,
+                                request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            (request->binding.operation == NativeAction::OpenPrayerWindow ||
+             request->binding.operation == NativeAction::ClosePrayerWindow ||
+             request->binding.operation == NativeAction::WindowAnimationActive ||
+             request->binding.operation == NativeAction::AdvanceEncounterEffects)) {
+          require(s.encounter_effects, "Actor oval task requires the actual encounter effect owner");
+          auto &effects = *s.encounter_effects;
+          const auto action = request->binding.operation;
+          if (action == NativeAction::WindowAnimationActive) {
+            const bool active = scene_->window_animation_active(effects);
+            scene_->respond_actor(std::uint16_t(active), request->binding.parameter_bytes);
+          } else {
+            require(request->binding.discard_result,
+                    "Actor oval task has an unowned incidental result");
+            if (action == NativeAction::OpenPrayerWindow) effects.begin_oval(1);
+            else if (action == NativeAction::ClosePrayerWindow) effects.close_oval();
+            else effects.advance();
+            scene_->respond_actor({}, request->binding.parameter_bytes);
+          }
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::SetDirectionFrame &&
+            request->binding.discard_result) {
+          auto& actor = s.actors.actor(request->actor);
+          select_scripted_pose(actor.action(), actor.behavior, actor.appearance,
+                               std::uint8_t(request->binding.operand),
+                               std::uint8_t(request->binding.operand >> 8));
+          scene_->respond_actor({}, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::NpcInitialDirection) {
+          scene_->respond_actor(s.activation.initial_direction(s.actors, request->actor),
+                                request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::SetDirectionAndRefresh &&
+            request->binding.discard_result) {
+          auto &actor = s.actors.actor(request->actor);
+          const auto direction = request->action.temporary;
+          if (actor.behavior.direction != direction) {
+            actor.behavior.direction = direction;
+            actor.appearance.select_four(direction, actor.action().animation,
+                                         actor.behavior.surface_flags);
+          }
+          scene_->respond_actor({}, request->binding.parameter_bytes);
+          break;
+        }
+        if (s.interactions && request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::RefreshGiftAppearance &&
+            request->binding.discard_result) {
+          s.interactions->refresh_gift(request->actor);
+          scene_->respond_actor({}, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::InflictSunstrokeCheck) {
+          require(s.world_control && s.maintenance_state,
+                  "Sunstroke requires the actual world control and maintenance owners");
+          const auto value = inflict_sunstroke_check(
+              s.party, s.world_control->state(), *s.maintenance_state, s.random);
+          scene_->respond_actor(value, request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::ChooseRandom) {
+          const auto &choices =
+              std::get<ChooseRandomOperands>(request->binding.payload);
+          require(choices.choices.size() == (choices.count ? choices.count : 256u),
+                  "Random actor choice has incomplete imported operands");
+          const auto random = story::next_random(s.random);
+          const unsigned index = choices.count ? random % choices.count : random;
+          scene_->respond_actor(choices.choices.at(index),
+                                request->binding.parameter_bytes);
+          break;
+        }
         if (s.enemy_behavior && request &&
             request->origin == WorldActionOrigin::Script &&
             enemy_behavior_service(request->binding.operation)) {
@@ -749,12 +1009,18 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
           std::uint16_t result{};
           std::optional<std::uint16_t> sleep;
           switch (request->binding.operation) {
+          case NativeAction::TargetAngle:
+            result = behavior.target_angle(request->actor); break;
+          case NativeAction::TargetReached:
+            result = behavior.target_reached(request->actor); break;
           case NativeAction::EnemyDistanceBand:
             result = behavior.distance_band(request->actor); break;
           case NativeAction::EnemyShortDistanceBand:
             result = behavior.distance_band(request->actor, true); break;
           case NativeAction::CaptureEnemyLeaderTarget:
             result = behavior.capture_leader_target(request->actor); break;
+          case NativeAction::DirectionFromLeader:
+            result = behavior.direction_from_leader(request->actor); break;
           case NativeAction::EnemyChaseAngle:
             result = behavior.chase_angle(request->actor); break;
           case NativeAction::EnemyAngleVelocity:
@@ -915,6 +1181,12 @@ story::FrameRequirement WorldRuntime::Operation::frame_requirement() const {
   runtime_.check_response(*this);
   return scene_->frame_requirement();
 }
+void WorldRuntime::interrupt_publication() {
+  auto &s=*state_;
+  require(!s.abandoned && !s.failure,"Peripheral publication requires a healthy runtime");
+  try {s.scene.interrupt_publication(s.transitions?state_.get():nullptr);}
+  catch(...) {s.failure=std::current_exception();throw;}
+}
 void WorldRuntime::Operation::complete_publication() {
   runtime_.check_response(*this);
   const auto completed = runtime_.state_->scene.completed_frames();
@@ -958,6 +1230,8 @@ void WorldRuntime::Operation::respond_actor(std::uint16_t value,
       !maintenance_,
       "Native maintenance must complete before actor callback acknowledgment");
   const auto &request = scene_->actor_request();
+  require(!request || request->binding.operation != NativeAction::PlaySound,
+          "Actor PLAY_SOUND requires its actual typed audio command before acknowledgment");
   require(!runtime_.state_->enemy_movement || !request ||
               (request->binding.operation != NativeAction::RunEnemyPath &&
                request->binding.operation != NativeAction::ConsumeEnemyWaypoint),
@@ -982,6 +1256,10 @@ void WorldRuntime::Operation::respond_party_sprite_blink() {
   runtime_.check_response(*this);
   scene_->respond_party_sprite_blink();
 }
+void WorldRuntime::Operation::respond_bicycle_dismount() {
+  runtime_.check_response(*this);
+  scene_->respond_bicycle_dismount();
+}
 void WorldRuntime::Operation::respond_teddy_refresh() {
   runtime_.check_response(*this);
   scene_->respond_teddy_refresh();
@@ -1002,13 +1280,31 @@ void WorldRuntime::Operation::respond_script_sound() {
   else
     scene_->respond_script_sound();
 }
+dialogue::ScriptSoundRequest WorldRuntime::Operation::actor_sound() const {
+  runtime_.check_response(*this);
+  require(scene_ && !maintenance_, "Actor sound requires its actual scene without active maintenance");
+  const auto &request = scene_->actor_request();
+  require(request && request->origin == WorldActionOrigin::Script &&
+              request->binding.operation == NativeAction::PlaySound &&
+              request->binding.discard_result && request->binding.parameter_bytes == 2,
+          "Actor sound requires its pending literal sound operation and an unused incidental result");
+  const auto source = request->binding.operand;
+  const auto value = std::uint8_t(source);
+  return {value ? dialogue::ScriptSoundKind::QueueEffect : dialogue::ScriptSoundKind::DirectDriverCommand,
+          value ? value : std::uint8_t(0x57), source};
+}
+void WorldRuntime::Operation::respond_actor_sound() {
+  (void)actor_sound();
+  scene_->respond_actor({}, 2);
+}
 void WorldRuntime::Operation::respond_dialogue(dialogue::Response response) {
   runtime_.check_response(*this);
   scene_->respond_dialogue(response);
 }
 
-void WorldRuntime::prepare_area(CameraPosition destination, bool preserve_artwork) {
-  check_idle();
+void WorldRuntime::prepare_area(CameraPosition destination, bool preserve_artwork, Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->streaming.busy(),"Map preparation cannot replace active streaming");
   auto &s = *state_;
   const auto &sector =
       s.map_content.sector(destination.x / 256, destination.y / 128);
@@ -1029,14 +1325,16 @@ void WorldRuntime::prepare_area(CameraPosition destination, bool preserve_artwor
   s.palette_animation = std::move(animation);
   s.capture_dirty = true;
 }
-void WorldRuntime::clear_world_capture() {
-  check_idle();
-  state_->scene.clear_world_capture();
+void WorldRuntime::clear_world_capture(Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->streaming.busy(),"Capture clearing cannot interrupt streaming");
+  state_->scene.clear_world_capture(parent?parent->scene_:nullptr);
   state_->capture_dirty = true;
 }
-void WorldRuntime::refresh_world_capture() {
-  check_idle();
-  state_->scene.refresh_world_capture();
+void WorldRuntime::refresh_world_capture(Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->streaming.busy(),"Capture refresh cannot interrupt streaming");
+  state_->scene.refresh_world_capture(parent?parent->scene_:nullptr);
   state_->capture_dirty = false;
 }
 void WorldRuntime::reprepare_events() {
@@ -1044,36 +1342,50 @@ void WorldRuntime::reprepare_events() {
   state_->area.reprepare_events(state_->windows.state().event_flags);
   state_->capture_dirty = true;
 }
-bool WorldRuntime::advance_area_animation() {
+bool WorldRuntime::advance_area_animation(const WorldControlState &control) {
   check_idle();
   auto &s = *state_;
   require(!s.maintenance, "Bound world maintenance owns the animation phase");
-  if (s.windows.prompt_state().battle_mode)
+  require(!s.world_control || &s.world_control->state() == &control,
+          "Animation must borrow the actual world controller");
+  if (control.encounter.mode)
     return false;
   const bool map = s.area.advance_animation();
   const bool palette = s.palette_animation.advance();
   if (palette) {
     s.palettes.scenery = s.palette_animation.colors().scenery;
     s.palettes.scenery_zero = s.palette_animation.colors().scenery_zero;
+    s.palettes.scenery_high_bits = s.palette_animation.colors().scenery_high_bits;
     if (s.presentation) s.presentation->publish_scenery(s.palettes);
   }
   s.capture_dirty |= map || palette;
   return map || palette;
 }
-void WorldRuntime::begin_initial_activation(CameraPosition center) {
+void WorldRuntime::bind_collision_window(WorldCollisionWindow &window) {
   check_idle();
+  require(!state_->collision_window||state_->collision_window==&window,
+      "World runtime already has another collision window owner");
+  state_->streaming.bind_collision_window(window);
+  state_->collision_window=&window;
+}
+WorldCollisionWindow *WorldRuntime::collision_window() const noexcept{return state_->collision_window;}
+void WorldRuntime::begin_initial_activation(CameraPosition center, Operation *parent) {
+  require_content_boundary(parent);
   state_->streaming.begin_initial_activation(center, state_->admission);
   state_->capture_dirty = true;
 }
-void WorldRuntime::begin_refresh(CameraPosition camera) {
-  check_idle();
+void WorldRuntime::begin_refresh(CameraPosition camera, Operation *parent) {
+  require_content_boundary(parent);
+  if(state_->collision_window)state_->collision_window->refresh(camera,state_->area);
   state_->streaming.begin_refresh(camera, state_->admission);
   state_->capture_dirty = true;
 }
-bool WorldRuntime::advance_streaming(unsigned budget) {
-  check();
-  require(state_->stack.empty(),
-          "An actor callback owns this streaming continuation");
+bool WorldRuntime::advance_streaming(unsigned budget, Operation *parent) {
+  if (parent) require_content_boundary(parent);
+  else {
+    check();
+    require(state_->stack.empty(),"An actor callback owns this streaming continuation");
+  }
   return state_->streaming.advance(budget);
 }
 bool WorldRuntime::streaming() const { return state_->streaming.busy(); }
@@ -1101,6 +1413,10 @@ std::shared_ptr<const DirectSceneFrame> WorldRuntime::frame() const {
       "Native world publication is blocked until streaming and capture finish");
   return state_->scene.frame();
 }
+std::shared_ptr<const DirectSceneFrame> WorldRuntime::published_frame() const {
+  check();
+  return state_->scene.frame();
+}
 std::uint64_t WorldRuntime::completed_frames() const {
   return state_->scene.completed_frames();
 }
@@ -1111,3 +1427,18 @@ std::vector<WorldSoundEvent> WorldRuntime::take_sound_events() {
   return state_->scene.take_sound_events();
 }
 } // namespace eb::native
+
+namespace eb::native {
+void WorldRuntime::reload_camera(CameraPosition center, Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->streaming.busy(),"Camera reload cannot interrupt streaming");
+  auto &s = *state_;
+  s.activation.reset_after_reload(center);
+  auto &scene = s.actors.scene();
+  const CameraPosition camera{std::uint16_t(center.x - 128), std::uint16_t(center.y - 112)};
+  scene.camera_changed |= scene.camera_x != camera.x || scene.camera_y != camera.y;
+  scene.camera_x = camera.x;
+  scene.camera_y = camera.y;
+  s.capture_dirty = true;
+}
+}

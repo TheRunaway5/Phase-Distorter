@@ -15,9 +15,17 @@ struct EnemySpawnMember { unsigned count{}, enemy{}; };
 struct EnemySpawnDefinition { unsigned sprite{}, script{}; std::uint8_t terrain_mask{}, name_initial{}, level{}; };
 struct EnemyBattleBehavior { std::uint16_t run_away_flag{}; std::uint8_t run_away_state{}; };
 struct EnemySpawnSector { unsigned tileset{}, butterfly_chance{}; };
+// C02668's two independent wrapped word products can select neighboring
+// authored content when a camera strip crosses a map border. Retain only the
+// decoded scalar read domains at import; runtime selection never reads ROM.
+struct EnemySpawnSectorLookups {
+    std::array<std::uint8_t, 65536> tilesets{};
+    std::array<std::uint8_t, 32768> butterfly_modes{};
+};
 struct EnemySpawnData {
     std::array<unsigned, 128 * 160> cells{};
     std::array<EnemySpawnSector, 32 * 80> sectors{};
+    std::shared_ptr<const EnemySpawnSectorLookups> sector_lookups;
     std::vector<EnemySpawnEncounter> encounters;
     std::vector<std::vector<EnemySpawnMember>> battles;
     std::vector<EnemyBattleBehavior> battle_behaviors;
@@ -27,6 +35,7 @@ struct EnemySpawnData {
     // Authored signed strip conversion differs by content region.
     std::uint16_t negative_cell_prefix = 0xf000;
     unsigned encounter(unsigned x, unsigned y) const;
+    EnemySpawnSector sector(unsigned x, unsigned y) const;
 };
 EnemySpawnData import_enemy_spawn_data(std::span<const std::uint8_t> assets, GameVersion version);
 
@@ -127,7 +136,7 @@ class WorldEnemies {
     void random(EnemyRandomPurpose purpose);
     void select_battle(unsigned battle, bool duplicate_check, ActorWorld &world, bool debug = false);
     void finish_cell();
-    const EnemySpawnSector &sector() const;
+    EnemySpawnSector sector() const;
     std::shared_ptr<const EnemySpawnData> data_;
     std::shared_ptr<SpriteResources> sprites_;
     std::shared_ptr<const ActionScriptData> scripts_;

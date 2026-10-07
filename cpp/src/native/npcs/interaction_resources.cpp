@@ -43,6 +43,7 @@ InteractionResources::import(std::span<const std::uint8_t> image, GameVersion ve
         std::copy_n(image.begin() + first + 9, record.talk_reference.size(), record.talk_reference.begin());
         record.event_flag = word(image, first + 6);
         record.gift_value = word(image, first + 13);
+        std::copy_n(image.begin()+first+13,record.alternate_reference.size(),record.alternate_reference.begin());
     }
     for (unsigned direction = 0; direction < 8; ++direction) {
         const auto first = x_offsets + direction * 2;

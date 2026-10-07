@@ -57,6 +57,7 @@ class GameSceneRenderer {
     double presentation_fixed_aspect() const;
     std::span<const uint8_t> presentation_effect_mask() const { return presentation_effect_mask_; }
     std::span<const uint32_t> presentation_effect_reference() const { return presentation_effect_reference_; }
+    std::span<const uint8_t> presentation_unfiltered_mask() const { return presentation_unfiltered_mask_; }
 
     // Called at the original hardware boundaries, before any scanline pixels
     // are composed and immediately after each complete 544-byte OAM upload.
@@ -140,6 +141,23 @@ class GameSceneRenderer {
     bool presentation_effects_enabled_ = false;
     std::vector<uint8_t> presentation_effect_mask_;
     std::vector<uint32_t> presentation_effect_reference_;
+    std::vector<uint8_t> presentation_unfiltered_mask_;
+    // Derived from the source's live window list before each scanline. Only
+    // host sampling moves these windows; their RAM records and VRAM stay put.
+    struct UiWindow {
+        int left{}, top{}, right{}, bottom{};
+        bool left_edge{};
+        bool contains(int x, int y) const {
+            return x >= left && x < right && y >= top && y < bottom;
+        }
+    };
+    std::array<UiWindow, 8> presentation_ui_windows_{};
+    unsigned presentation_ui_window_count_{};
+    unsigned presentation_ui_layer_ = 4;
+    bool presentation_left_windows_{};
+    bool source_window_layer(const SceneReadView &view, unsigned layer) const;
+    void prepare_presentation_windows(const SceneReadView &view);
+    std::optional<int> presentation_window_sample_x(int x, unsigned y) const;
     // Per-scanline reference policy. Palette entries retain the current scene's
     // coordinates; only known transient effect contributions are replaced.
     std::array<uint16_t, 256> presentation_reference_palette_{};
@@ -254,7 +272,7 @@ class GameSceneRenderer {
     static_assert(sizeof(CompositePixel) == 8 && std::is_trivial_v<CompositePixel>);
     template <bool IncludeReference>
     CompositePixel compose_pixel(const SceneReadView &view, int x, unsigned y, const Pixel &object,
-                                 bool margin) const;
+                                 bool margin);
     void prepare_presentation_effects(const SceneReadView &view);
     void resize_presentation_width(const SceneReadView &view, unsigned width);
     void prepare_presentation_scene(const SceneReadView &view);

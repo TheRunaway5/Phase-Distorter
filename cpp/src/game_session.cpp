@@ -34,7 +34,7 @@ struct GameSession::State {
         return {hardware.presentation_pixels(),       hardware.presentation_width(),
                 hardware.presentation_fixed_aspect(), hardware.completed_frames,
                 hardware.presentation_effect_mask(),  hardware.presentation_effect_reference(), hardware.direct_scene(),
-                hardware.flashing_context()};
+                hardware.flashing_context(), hardware.presentation_unfiltered_mask()};
     }
 };
 
@@ -163,7 +163,7 @@ std::vector<std::uint8_t> GameSession::save_snapshot() const {
             state_->game_debug, state_->steps);
     auto payload = machine.release_bytes();
     std::array<std::uint8_t, 8> magic{'P', 'D', 'S', 'N', 'A', 'P', '0', '1'};
-    std::uint32_t format = 7;
+    std::uint32_t format = 8;
     auto version = game_version();
     auto content = snapshot_checksum(state_->hardware.cartridge_image());
     auto checksum = snapshot_checksum(payload);
@@ -182,7 +182,7 @@ void GameSession::load_snapshot(std::span<const std::uint8_t> snapshot) {
     std::vector<std::uint8_t> payload;
     file(magic, format, version, content, checksum);
     if (magic != std::array<std::uint8_t, 8>{'P', 'D', 'S', 'N', 'A', 'P', '0', '1'} ||
-        (format < 1 || format > 7))
+        (format < 1 || format > 8))
         throw std::runtime_error("Snapshot format is not supported by this build");
     if (version != game_version() || content != snapshot_checksum(state_->hardware.cartridge_image()))
         throw std::runtime_error("Snapshot belongs to different game content");

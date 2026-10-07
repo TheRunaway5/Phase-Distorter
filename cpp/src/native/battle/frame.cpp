@@ -63,7 +63,15 @@ bool Frame::uses_battle_palette(const PaletteBankState &colors,
     const WorldEncounterVisualState &visual) const noexcept {
   return &colors == &colors_ && &visual == &visual_;
 }
-void Frame::restore_battle_palettes() { background_.restore_palette(colors_); }
+void Frame::bind_palette_reset(BattleSceneFrameReset &reset) {
+  if (palette_reset_ && palette_reset_ != &reset)
+    throw std::logic_error("Battle frame already has another palette reset owner");
+  palette_reset_ = &reset;
+}
+void Frame::restore_battle_palettes() {
+  if (palette_reset_) background_.restore_palette(colors_,*palette_reset_);
+  else background_.restore_palette(colors_);
+}
 void Frame::restore_selected_layer_configuration() {
   apply_world_layer_configuration(layers_, layer_, visual_);
 }
@@ -81,6 +89,12 @@ void Frame::check() const {
   psi_.validate_begin();
 }
 void Frame::validate_begin() const { check(); }
+bool Frame::window_animation_active(const WorldEncounterEffects &effects) const {
+  if (failed_ || psi_.failed() || !effects.uses_swirl(swirl_state_) ||
+      !effects.uses_visual(visual_))
+    throw std::logic_error("Window animation status requires the actual PSI and swirl owners");
+  return effects.animation_active(psi_.state());
+}
 std::unique_ptr<Frame::Operation> Frame::begin() {
   check();
   auto operation = std::unique_ptr<Operation>(new Operation(*this));

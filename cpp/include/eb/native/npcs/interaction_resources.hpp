@@ -19,6 +19,7 @@ struct InteractionRecord {
     // types use this storage for an alternate-text DWORD; this field neither
     // resolves that pointer nor claims to contain its upper two bytes.
     std::uint16_t gift_value{};
+    dialogue::ReferenceKey alternate_reference{};
     bool operator==(const InteractionRecord &) const = default;
 };
 struct TalkProbeOffset {

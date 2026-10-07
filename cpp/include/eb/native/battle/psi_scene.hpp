@@ -21,7 +21,8 @@ public:
   compose(const BattleBackgroundSceneFrame &,
           const DirectSceneFrame::Effects &published_policy,
           unsigned width = 256, std::uint64_t frame = 0,
-          std::uint64_t identity = 0) const;
+          std::uint64_t identity = 0,
+          const DirectSceneFrame *published_background_layers = nullptr) const;
   unsigned bitdepth() const noexcept { return bitdepth_; }
   DirectSceneFrame::Layer layer() const noexcept {
     return bitdepth_ == 2 ? DirectSceneFrame::Layer::Background2

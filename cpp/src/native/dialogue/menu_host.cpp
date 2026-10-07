@@ -484,6 +484,19 @@ std::unique_ptr<WindowHost::Operation> MenuHost::begin_window(WindowCommand comm
         throw;
     }
 }
+bool MenuHost::uses(const Program& program,const MenuResources& resources) const noexcept {
+    return execution_->program->shares_content_with(program) && &execution_->printer.resources()==&resources;
+}
+std::unique_ptr<MenuPrinter::Operation> MenuHost::begin_print(MenuPrintCommand command) {
+    return execution_->printer.begin(command);
+}
+std::unique_ptr<MenuPrinter::Operation> MenuHost::begin_print(MenuPrintCommand command, Operation& parent) {
+    auto &output=windows().output();
+    const auto owner=parent.callback_owner(output);
+    // The synchronous source callback borrows its suspended parent's output
+    // activation; the printer enforces that ownership until it completes.
+    return execution_->printer.begin(command, owner);
+}
 TextOutput::Owner MenuHost::Operation::callback_owner(TextOutput &output) const {
     const auto &e = *execution_;
     require(&output == &e.output && e.owner && e.event && callback_event(*e.event),

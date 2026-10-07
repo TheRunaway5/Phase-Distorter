@@ -112,8 +112,10 @@ SubstitutionResources::import(std::span<const std::uint8_t> image, GameVersion v
     const auto source = layout(version);
     auto result = std::shared_ptr<SubstitutionResources>(new SubstitutionResources(version));
     const auto stats = bytes(image,source.stats,96 * 3);
-    for (unsigned i = 0; i < result->stats_.size(); ++i)
+    for (unsigned i = 0; i < result->stats_.size(); ++i) {
         result->stats_[i] = descriptor(source,stats[i * 3],word(stats,i * 3 + 1));
+        result->stat_tags_[i] = stats[i * 3];
+    }
     const auto items = bytes(image,source.items,254 * source.item_stride);
     result->item_table_.assign(items.begin(),items.end());
     result->item_stride_ = source.item_stride;
@@ -185,6 +187,19 @@ std::uint16_t SubstitutionResources::item_cost(unsigned id) const {
     (void)item_text_lengths_.at(id);
     const auto at = id * item_stride_ + item_name_size_ + 1;
     return std::uint16_t(item_table_[at] | unsigned(item_table_[at + 1]) << 8);
+}
+std::uint16_t SubstitutionResources::item_effect(unsigned id) const {
+    (void)item_text_lengths_.at(id);
+    const auto at=id*item_stride_+item_name_size_+4;
+    return std::uint16_t(item_table_[at] | unsigned(item_table_[at+1])<<8);
+}
+std::uint8_t SubstitutionResources::find_condiment(std::uint8_t food, std::span<const std::uint8_t,14> inventory) const {
+    if((item_properties(food).type&0x3c)!=0x20)return 0;
+    for(const auto item:inventory) {
+        if(!item)break;
+        if((item_properties(item).type&0x3c)==0x28)return item;
+    }
+    return 0;
 }
 ItemProperties SubstitutionResources::item_properties(unsigned id) const {
     (void)item_text_lengths_.at(id);

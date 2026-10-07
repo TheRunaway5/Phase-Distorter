@@ -196,10 +196,10 @@ void seed(Oracle &o, Fixture &f, unsigned character, unsigned cursor,
   f.leader.leader_y = at.y;
   f.leader.leader_direction = 2;
   f.leader.walking_style = style;
-  f.leader.movement_flags = 0x1234;
+  f.leader.area_character_style = 0x1234;
   f.leader.checked_surface_origin = {0x1234, 0x5678};
   f.leader.surface_flags = 0xabcd;
-  f.state = {0x1357, 0x2468, 0x8765, std::uint16_t(automatic), 0xa55a, true};
+  f.state = {0x1357, 0x2468, 0x8765, std::uint16_t(automatic), 0xa55a, true,0,0,0,0,{},0};
   f.prompt.debug = debug;
   f.input.state[0] = pad;
   f.clock.frame_counter = frame;
@@ -214,7 +214,7 @@ void seed(Oracle &o, Fixture &f, unsigned character, unsigned cursor,
   o.put(o.game(140), f.state.trodden_surface_flags);
   o.put(o.game(142), style);
   o.put(o.game(144), f.state.moved_this_tick);
-  o.put(o.game(146), f.leader.movement_flags);
+  o.put(o.game(146), f.leader.area_character_style);
   o.put(o.game(148), 24);
   o.put(o.game(176), automatic);
   o.put(o.l.intangible, intangible);
@@ -240,7 +240,7 @@ void compare(const Oracle &o, const Fixture &f, bool cleared, Counts &counts) {
        {140, f.state.trodden_surface_flags},
        {142, f.leader.walking_style},
        {144, f.state.moved_this_tick},
-       {146, f.leader.movement_flags},
+       {146, f.leader.area_character_style},
        {148, f.party.current_leader_role},
        {176, f.state.automatic_mode}}};
   for (const auto [offset, value] : game)

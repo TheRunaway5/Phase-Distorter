@@ -2,6 +2,7 @@
 
 #include "eb/native/dialogue/substitution_resources.hpp"
 #include "eb/native/dialogue/output.hpp"
+#include "eb/native/dialogue/menu_host.hpp"
 #include <functional>
 
 namespace eb::native::dialogue {
@@ -58,6 +59,7 @@ class TextSubstitutions {
     void configure(std::shared_ptr<const SubstitutionResources>, SubstitutionValues = {});
     std::unique_ptr<Operation> begin(SubstitutionCommand);
     std::unique_ptr<Operation> begin_nested(SubstitutionCommand, Conversation &);
+    std::unique_ptr<Operation> begin_nested(SubstitutionCommand, MenuHost::Operation &);
     std::unique_ptr<Operation> begin_nested(SubstitutionCommand, Operation &);
     WindowHost &windows();
   private:
@@ -66,6 +68,8 @@ class TextSubstitutions {
     friend class WindowCommands;
     explicit TextSubstitutions(WindowHost &);
     std::uint32_t read_number(StatKey, TextOutput::Owner) const;
+    std::uint8_t stat_letter(unsigned descriptor, TextOutput::Owner) const;
+    std::optional<std::uint16_t> query_item(const ItemQueryRequest &, TextOutput::Owner) const;
     std::unique_ptr<Operation> begin(SubstitutionCommand, TextOutput::Owner, bool owns);
     std::unique_ptr<Operation> begin(const Request &, TextOutput::Owner);
     struct Execution;

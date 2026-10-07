@@ -201,7 +201,7 @@ int main() {
         // The canonical window remains centered in wide scenes and extends its
         // edge bounds into the margins. Fractional geometry is still resolved
         // at output resolution; an inset/letterbox must not shift the mask.
-        for (unsigned width : {398u, 522u, 256u})
+        for (unsigned width : {358u, 398u, 522u, 256u})
             for (unsigned phase = 0; phase < 5; ++phase) {
                 auto effect = effect_scene(width, 82 + phase);
                 effect->effects->brightness = 15;
@@ -222,7 +222,7 @@ int main() {
             require(last.empty() || filtered.rgb != last, "Effect CRT lost fractional movement");
             last = filtered.rgb;
         }
-        std::cout << "148 GPU effect pictures matched software masks/layers/RGB5 arithmetic; CRT motion passed\n";
+        std::cout << "GPU effect pictures matched software masks/layers/RGB5 arithmetic, including 16:10; CRT motion passed\n";
         // Failed descriptors must fail explicitly and leave the next valid GPU
         // effect usable, rather than selecting an unfiltered/CPU fallback.
         for (bool invalid_fixed : {false, true}) {

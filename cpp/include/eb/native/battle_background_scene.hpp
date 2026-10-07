@@ -8,6 +8,9 @@
 namespace eb::native {
 namespace battle {
 struct PaletteBankState;
+class PsiDisplayState;
+struct BackgroundDisplayState;
+class BackgroundLoader;
 }
 struct BattleBackgroundPair {
   unsigned primary{}, secondary{}, style{};
@@ -36,6 +39,14 @@ enum class BattlePaletteDependency {
   // destination aliases low WRAM; a prior scene may retain a palette bank.
   // Palette colors alone cannot identify that destination or its shift policy.
   InactiveSecondaryDestination
+};
+// The source unset palette pointer writes32 zero bytes to the scene's low
+// mirrors. Palette storage cannot complete this operation by itself.
+class BattleSceneFrameReset {
+public:
+  virtual ~BattleSceneFrameReset() = default;
+  virtual void validate_scene_and_frame_reset() const = 0;
+  virtual void reset_scene_and_frame_state() = 0;
 };
 class BattlePaletteRestorationRequired : public std::runtime_error {
 public:
@@ -102,6 +113,7 @@ struct BattleBackgroundSceneFrame {
   BattleBackgroundBlend blend{};
   BattleBackgroundEffects effects;
   unsigned bitdepth = 4;
+  std::optional<BattleBackgroundArtworkDependency> retained_artwork{};
   // Native background-only scene. Enemy artwork, PSI, UI and the independent
   // swirl controller are composed by their owners. Sampling never advances
   // time.
@@ -115,11 +127,22 @@ struct BattleBackgroundSceneFrame {
   std::shared_ptr<const DirectSceneFrame>
   draw_layers(const ScenePalette &displayed, unsigned width = 256,
               std::uint64_t frame = 0, std::uint64_t identity = 0) const;
+  // Read physical published VRAM using the actual BGMODE/BGxSC/BGxNBA
+  // mirrors. Retained tiles, map aliases and priority bits belong to this
+  // display, not to the immutable compressed-artwork catalog.
+  std::shared_ptr<const DirectSceneFrame>
+  draw_published_layers(const ScenePalette &, std::span<const std::uint8_t, 65536>,
+                        const battle::BackgroundDisplayState &, unsigned width = 256,
+                        std::uint64_t frame = 0, std::uint64_t identity = 0) const;
 };
 class BattleBackgroundScenes;
 class BattleBackgroundScene {
 public:
   BattleBackgroundSceneFrame snapshot() const;
+  // The loader binds these stable borrowed owners. They must outlive the
+  // scene and its publisher. A foreign display is rejected before capture.
+  const battle::BackgroundDisplayState *
+  display_layout(const battle::PsiDisplayState &) const;
   const BattleBackgroundEffects &effects() const { return effects_; }
   const BattleBackground &primary() const { return primary_; }
   const std::optional<BattleBackground> &secondary() const {
@@ -134,6 +157,7 @@ public:
                            battle::PaletteBankState *publication = nullptr);
   void advance_flashes();
   void advance_letterbox();
+  void swap_final_distortion() { primary_.swap_final_distortion(); }
   void darken() { effects_.darkening = true; }
   void open_letterbox() { effects_.opening_letterbox = true; }
   void reflect(std::uint16_t duration) { effects_.reflect_duration = duration; }
@@ -156,11 +180,16 @@ public:
 
 
   std::optional<BattlePaletteDependency> palette_restoration_dependency() const;
+  // The persistent session owns zeroed loaded records until its actual LOAD.
+  // A prepared catalog scene is not evidence that that source caller ran.
+  void initialize_unloaded_record();
+  bool has_loaded_record() const noexcept { return loaded_record_; }
   // Complete ordinary C2DE96: restore both palette bases and the active
   // publication slots, including index0, without ticking any controller.
   // A shared-artwork reset dependency rejects before these mutations.
   void restore_palette(ScenePalette &);
   void restore_palette(battle::PaletteBankState &);
+  void restore_palette(battle::PaletteBankState &, BattleSceneFrameReset &);
   // Complete ordinary C2DE0F, including the inactive secondary working base.
   // These stage palette writes only; they do not request or complete a
   // transfer.
@@ -168,7 +197,12 @@ public:
   void halve_palette(battle::PaletteBankState &);
 
 private:
+  void restore_palette_bases();
+  bool loaded_record_ = true;
   friend class BattleBackgroundScenes;
+  friend class battle::BackgroundLoader;
+  void bind_display(const battle::PsiDisplayState &,
+                    const battle::BackgroundDisplayState &);
   struct Content;
   BattleBackgroundScene(std::shared_ptr<const Content>, BattleBackgroundPair,
                         BattleBackgroundStart);
@@ -184,6 +218,9 @@ private:
   BattleBackgroundBlend blend_{};
   BattleBackgroundEffects effects_;
   bool shared_artwork_{}, alternate_{};
+  std::optional<BattleBackgroundArtworkDependency> retained_artwork_;
+  const battle::PsiDisplayState *display_{};
+  const battle::BackgroundDisplayState *display_layout_{};
 };
 class BattleBackgroundScenes {
 public:
@@ -207,6 +244,9 @@ public:
       BattleArtworkPublication = BattleArtworkPublication::Ordinary) const;
 
 private:
+  friend class battle::BackgroundLoader;
+  BattleBackgroundScene prepare_impl(BattleBackgroundPair, BattleBackgroundStart,
+                                     BattleArtworkPublication, bool published) const;
   std::shared_ptr<const BattleBackgroundScene::Content> content_;
 };
 } // namespace eb::native

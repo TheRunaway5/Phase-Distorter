@@ -42,6 +42,19 @@ each platform. Separate US/JP asset-backed checks passed 240 horizontal source
 scan cases, 72 staged walking replays, sprite visibility and snapshot
 continuation. Source-backed scene checks passed 4,917,257 checks per region on
 Linux and Windows under Wine. Five packager regression checks passed.
+All three release archives passed CRC, full manifest/checksum, executable-mode
+and payload audits. The combined folder matches its ZIP, and all archive bytes
+are reproducible with identical inputs. Previous release archives are retained.
+
+All 28 exact extracted-package and launcher runs passed for both games: eight
+1,200-frame headless runs and twenty 180-frame desktop runs at 32:9 with the
+filter enabled, covering CRT off/on, 300 FPS, Uncapped and VRR settings. Linux
+and Wine match source-state summaries, native/presentation pictures, generated
+WAV bytes and corresponding desktop OpenGL readbacks. The desktop checks use
+private Xvfb/Mesa and dummy audio playback; they verify generated PCM, rather
+than a physical speaker or display. Build inputs remained unchanged throughout
+build and verification, and bundled binaries match their canonical launchers.
+
 Detailed local evidence is retained in `build/verification/viewport-handoff/`
 and `build/verification/release-0.2.1/`. These are bounded replays and fixtures,
 not a manual full-game playthrough or physical VRR/controller certification.

@@ -63,6 +63,20 @@ bool flag(std::span<const std::uint8_t> flags, unsigned id) {
 }
 } // namespace
 
+namespace {
+std::uint16_t raw_color(std::uint32_t argb, unsigned high) {
+    return std::uint16_t(((argb >> 19) & 31) | ((argb >> 11) & 31) << 5 |
+                         ((argb >> 3) & 31) << 10 | (high & 1) << 15);
+}
+}
+std::uint16_t AreaPalettes::scenery_word(unsigned palette, unsigned color) const {
+    const auto value=scenery.at(palette).at(color);
+    return color ? raw_color(value, scenery_high_bits.at(palette) >> color) : scenery_zero.at(palette);
+}
+std::uint16_t AreaPalettes::sprite_word(unsigned palette, unsigned color) const {
+    const auto value=sprites.at(palette).at(color);
+    return color ? raw_color(value, sprite_high_bits.at(palette) >> color) : sprite_zero.at(palette);
+}
 WorldPaletteLayout world_palette_layout(GameVersion version) {
     // SPRITE_GROUP_PALETTES, MAP_PALETTE_PTR_TABLE, end of map palette31,
     // GLOBAL_MAP_TILESETPALETTE_DATA. Verified independent US/JP link layouts.
@@ -159,8 +173,10 @@ AreaPalettes WorldPalettes::resolve(AreaPaletteId area, std::span<const std::uin
     result.animation_id = record.colors[48];
     for (unsigned p = 0; p < 6; ++p) result.scenery_zero[p] = record.colors[p * 16];
     for (unsigned p = 0; p < 6; ++p)
-        for (unsigned i = 1; i < 16; ++i)
+        for (unsigned i = 1; i < 16; ++i) {
             result.scenery[p][i] = argb(record.colors[p * 16 + i]);
+            result.scenery_high_bits[p] |= std::uint16_t((record.colors[p * 16 + i] >> 15) << i);
+        }
     auto colors = s.sprites;
     auto ratio = average(record.colors);
     for (unsigned c = 0; c < 3; ++c)
@@ -187,8 +203,10 @@ AreaPalettes WorldPalettes::resolve(AreaPaletteId area, std::span<const std::uin
         colors[4] = colors[record.special - 8];
     for (unsigned p = 0; p < 8; ++p) result.sprite_zero[p] = colors[p][0];
     for (unsigned p = 0; p < 8; ++p)
-        for (unsigned i = 0; i < 16; ++i)
+        for (unsigned i = 0; i < 16; ++i) {
             result.sprites[p][i] = i ? argb(colors[p][i]) : 0;
+            if (i) result.sprite_high_bits[p] |= std::uint16_t((colors[p][i] >> 15) << i);
+        }
     return result;
 }
 } // namespace eb::native

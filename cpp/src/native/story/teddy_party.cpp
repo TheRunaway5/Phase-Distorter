@@ -46,7 +46,17 @@ std::unique_ptr<TeddyParty::Operation> TeddyParty::begin() {
     active_ = operation.get();
     return operation;
 }
-TeddyParty::Operation::Operation(TeddyParty &owner) : owner_(owner) {}
+std::unique_ptr<TeddyParty::Operation> TeddyParty::begin_remove(std::uint16_t member) {
+    check();
+    if (active_ || creation_.busy() || updater_.busy())
+        throw std::logic_error("Teddy removal requires an idle party owner");
+    if (member != 16 && member != 17)
+        throw std::invalid_argument("Item removal requires an unowned non-Teddy membership wrapper");
+    auto operation = std::unique_ptr<Operation>(new Operation(*this, member));
+    active_ = operation.get(); return operation;
+}
+TeddyParty::Operation::Operation(TeddyParty &owner, std::optional<std::uint16_t> removed)
+    : owner_(owner), remove_first_(removed) {}
 TeddyParty::Operation::~Operation() {
     if (owner_.active_ == this) {
         owner_.active_ = nullptr;
@@ -160,6 +170,13 @@ dialogue::Progress TeddyParty::Operation::advance(unsigned budget) {
             }
             switch (phase_++) {
             case 0:
+                if (remove_first_) {
+                    const auto member = *remove_first_;
+                    remove_first_.reset();
+                    --phase_;
+                    remove(member);
+                    break;
+                }
                 selected_ = party::select_teddy_item(owner_.party_, *owner_.items_);
                 if (selected_ && owner_.contains(owner_.member(*selected_))) {
                     finish(); return dialogue::Progress::Finished;

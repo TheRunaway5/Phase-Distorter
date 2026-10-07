@@ -11,6 +11,7 @@
 #include "eb/native/world_runtime.hpp"
 #include "eb/native/world_scene_presentation.hpp"
 #include "eb/native/story/battle_publication.hpp"
+#include "eb/native/world_scene.hpp"
 #include "native_battle_frame_fixture.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include "native_interaction_test_assets.hpp"
@@ -534,8 +535,8 @@ void world_fade(eb::GameVersion version) {
   auto next=h.world.capture_next(valid);
   check(next->effects->brightness==2 && h.fade.state().brightness==2 && h.fade.state()!=original,
     "World publication did not commit exact shared fade preview");
-  check(h.screen.displayed_hdma_enable==0x6c && h.screen.hdma_enable==0x6c && h.screen.pending() &&
-    h.display.scroll[0]==battle::PsiScroll{},"World NMI failed post-fade HDMA or consumed battle screen");
+  check(h.screen.displayed_hdma_enable==0x6c && h.screen.hdma_enable==0x6c && !h.screen.pending() &&
+    h.display.scroll[0]==battle::PsiScroll{77,88},"World NMI failed shared OAM/scroll transport or post-fade HDMA");
   check(next->effects->windows[0]==std::array<std::uint8_t,4>{17,99,255,0} &&
     h.visual.window_left==std::array<std::uint8_t,2>{17,255} &&
     h.visual.window_right==std::array<std::uint8_t,2>{99,0},
@@ -552,8 +553,8 @@ void world_fade(eb::GameVersion version) {
   h.visual.window_left={11,12};h.visual.window_right={22,23};
   auto retained_blank=h.world.capture_next(valid);
   check(retained_blank->effects->brightness==0 && h.screen.hdma_enable==0x78 &&
-    h.screen.displayed_hdma_enable==0 && h.screen.pending(),
-    "Cold forced-blank NMI lost retained HDMA mirror or consumed battle screen");
+    h.screen.displayed_hdma_enable==0 && !h.screen.pending(),
+    "Cold forced-blank NMI lost retained HDMA mirror or restored a consumed display request");
   check(retained_blank->effects->windows[0]==std::array<std::uint8_t,4>{11,22,255,0} &&
     h.visual.window_left[0]==11 && h.visual.window_right[0]==22 &&
     h.visual.window_left[1]==255 && h.visual.window_right[1]==0,
@@ -566,6 +567,86 @@ void world_fade(eb::GameVersion version) {
 void immediate(eb::GameVersion version) {
   battle_frame_test::FrameFixture f(version,4);
   check(f.f.windows.palette_publication()==&f.publication,"Default immediate construction changed");
+}
+void prayer_world_publication(eb::GameVersion version,unsigned depth) {
+  HandoffFixture h(version,depth);auto &f=h.f;
+  h.world.bind_palette_transport(h.colors);
+  const auto serial=h.display.publication_serial();const auto clock=f.clock;
+  const auto input=f.input;const auto random=f.random;
+  rejects([&]{h.battle->bind_world_presentation(*h.battle);},
+    "Battle world routing admitted itself as the world publication");
+  rejects([&]{HandoffFixture other(version,depth);h.battle->bind_world_presentation(other.world);},
+    "Battle world routing admitted foreign publication owners");
+  ScenePalette unused_colors;
+  WorldScenePresentation same(unused_colors,h.visual,h.layers,h.selected);
+  same.bind_display_fade(h.fade);same.bind_frame_display(h.screen);same.bind_palette_transport(h.colors);
+  h.battle->bind_world_presentation(h.world);
+  h.battle->bind_world_presentation(h.world);
+  rejects([&]{h.battle->bind_world_presentation(same);},
+    "Battle world routing replaced its stable world presentation");
+  check(f.windows.palette_publication()==&h.world && h.display.publication_serial()==serial &&
+    f.clock.publications==clock.publications && f.input==input && f.random==random,
+    "World binding claimed the window sink or advanced live publication owners");
+  h.fade.begin_in(15,0);h.fade.commit_frame(h.fade.preview_next_frame());
+  for(unsigned i=1;i<256;++i)
+    h.colors.displayed[i/16][i%16]=i<32?0x7c00:i<128?0x001f:0x03e0;
+  h.colors.staged=h.colors.displayed;
+  f.output.policy().instant=true;f.output.begin_glyph(0x71);
+  check(f.output.advance()==dialogue::OutputProgress::Complete,"Prayer fixture glyph unexpectedly yielded");
+  f.windows.draw_tick();f.windows.publish_scene();
+  auto spec=battle_frame_test::actor();spec.behavior.projected_x=120;spec.behavior.projected_y=120;
+  const auto id=f.actors.create(spec);f.actors.actor(id).appearance.select_four(0,0,0);
+  const auto objects=f.actors.draw(256,f.palettes.sprites,731);
+  const auto source=draw_world_scene(f.area,f.palettes,{0,64,256,64,objects->frame,731},objects);
+  const auto original=eb::rasterize_direct_scene({source,{}});
+  const auto source_atlas=source->atlas;
+  check(std::any_of(source->quads.begin(),source->quads.end(),[](const auto &q){return q.object;}),
+    "Prayer fixture did not contain an actual ActorWorld draw list");
+  f.windows.prompt_state().battle_mode=0;
+  const auto readonly=h.battle->capture(*source);
+  const auto pixels=eb::rasterize_direct_scene({readonly,{}});
+  check(std::find(pixels.begin(),pixels.end(),0xffff0000)!=pixels.end(),
+    "Prayer publication lost its actual map pixels");
+  check(std::find(pixels.begin(),pixels.end(),0xff00ff00)!=pixels.end(),
+    "Prayer publication lost its actual world actor pixels");
+  check(std::find(pixels.begin(),pixels.end(),0xff0000ff)!=pixels.end(),
+    "Prayer publication lost its actual dialogue pixels");
+  check(readonly->scene_identity==source->scene_identity && readonly->frame==source->frame &&
+    readonly->palette_indices.empty() && source->atlas==source_atlas &&
+    eb::rasterize_direct_scene({source,{}})==original && h.display.publication_serial()==serial &&
+    h.colors.upload_mode==0 && f.actors.ticks()==0 && f.clock.input_polls==0,
+    "Read-only prayer capture mutated the source frame or advanced state");
+  f.windows.prompt_state().battle_mode=1;
+  const auto battle_pixels=eb::rasterize_direct_scene({h.battle->capture(*source),{}});
+  check(battle_pixels!=pixels && std::find(battle_pixels.begin(),battle_pixels.end(),0xff00ff00)==battle_pixels.end(),
+    "Live battle FLAG did not return to retained battle composition");
+  f.windows.prompt_state().battle_mode=0;
+  check(eb::rasterize_direct_scene({h.battle->capture(*source),{}})==pixels,
+    "Live world FLAG required another publication binding or lost retained world artwork");
+  h.colors.staged[2][1]=0x03ff;h.colors.upload_mode=24;
+  h.scratch.bytes[0]=7;h.display.queue_frame(0);
+  h.display.staged_scroll[0]={7,9};h.screen.update_world_screen();
+  h.fade.begin_out(1,0);
+  const auto fade=h.fade.state();const auto staged=h.colors.staged;const auto displayed=h.colors.displayed;
+  auto malformed=*source;malformed.palette_indices[0]=257;
+  rejects([&]{h.battle->capture_next(malformed);},"Malformed world stamp committed its NMI preview");
+  check(h.fade.state()==fade && h.colors.staged==staged && h.colors.displayed==displayed &&
+    h.colors.upload_mode==24 && h.display.publication_serial()==serial && !h.display.pending().empty() &&
+    h.screen.pending() && h.display.scroll[0]==battle::PsiScroll{},
+    "Rejected world capture consumed fade, palette, OAM scroll or shared PSI DMA");
+  const auto published=h.battle->capture_next(*source);
+  check(published->effects->brightness==14 && h.fade.state().brightness==14 &&
+    h.display.publication_serial()==serial+1 && h.display.pending().empty() && !h.screen.pending() &&
+    h.display.tilemap[0]==0x3007 && h.display.scroll[0]==battle::PsiScroll{7,9} &&
+    h.colors.displayed==staged && h.colors.upload_mode==0,
+    "World route failed the single actual fade/palette/OAM/PSI publication commit");
+  check(eb::rasterize_direct_scene({readonly,{}})==pixels && source->atlas==source_atlas &&
+    f.clock.publications==clock.publications && f.clock.input_polls==0 && f.actors.ticks()==0 &&
+    f.input==input && f.random==random,
+    "World NMI route changed retained frames or ran input/gameplay clocks");
+  const auto committed=h.fade.state();h.battle->complete_publication();
+  check(h.fade.state()==committed && h.display.publication_serial()==serial+1,
+    "World completion repeated its publication commits");
 }
 void direct_return_identity(eb::GameVersion version) {
   battle_frame_test::FrameFixture h(version,4);
@@ -602,7 +683,7 @@ int main() {
   try {
     for(auto version:{eb::GameVersion::US,eb::GameVersion::JP}) {
       immediate(version);world_fade(version);direct_return_identity(version);
-      for(unsigned depth:{2u,4u}) {handoff(version,depth);rejection(version,depth);publication_only(version,depth);}
+      for(unsigned depth:{2u,4u}) {handoff(version,depth);rejection(version,depth);publication_only(version,depth);prayer_world_publication(version,depth);}
     }
     std::cout<<"native battle publication handoff: "<<checks<<" checks passed\n";
   } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

@@ -55,6 +55,9 @@ class WorldActivation {
                     GameVersion version, CameraStreamOrigin origin = {});
 
     CameraStreamOrigin origin() const { return origin_; }
+    // C46914 reads the current live role selector, not the placement or its
+    // current facing. The same imported catalog also owns activation.
+    std::uint16_t initial_direction(const ActorWorld &, ActorId) const;
     // Begin source-ordered REFRESH_MAP_AT_POSITION strips. Starting another
     // traversal while one is pending is rejected. Origin commits only after
     // every NPC and enemy request has been consumed.
@@ -63,6 +66,9 @@ class WorldActivation {
     // scene cleanup and the Initial -> Streaming mode transition. No cleanup
     // is inferred from visibility. Center is the authored screen center.
     void begin_initial_load(CameraPosition center);
+    // RELOAD_MAP_AT_POSITION changes the completed camera origin only.
+    // It performs no NPC/enemy traversal or population mutation.
+    void reset_after_reload(CameraPosition center);
     const std::optional<CameraRefreshIntent> &request() const { return request_; }
     CameraPosition target_camera() const { return camera_; }
     std::vector<NpcActivation> activate_next(ActorWorld &world, const NpcActivationState &state,

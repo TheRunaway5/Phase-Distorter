@@ -7,6 +7,7 @@ namespace eb::native {
 class BattleCombatantScene;
 class WorldDisplayFade;
 class WorldLayerConfigurations;
+class BattleSceneFrameReset;
 struct WorldLayerSelection;
 namespace dialogue { class WindowHost; }
 namespace party { class State; class MeterWindows; }
@@ -55,6 +56,8 @@ public:
   Frame(Frame &&) = delete;
   Frame &operator=(Frame &&) = delete;
   void validate_begin() const;
+  // C2EACF reads the actual PSI counter and the same retained swirl owner.
+  bool window_animation_active(const WorldEncounterEffects &) const;
   // Complete startup graphical callers, without the other C2DB3F phases.
   void reset_graphics(); // C2E0E7
   void publish_combatants(); // C2F8F9 / UPDATE_SCREEN
@@ -64,7 +67,14 @@ public:
   bool busy() const noexcept { return active_; }
   bool shares_animation(const AnimationCommands &) const noexcept;
   GameVersion version() const noexcept;
+  bool uses(const Roster& roster, const FrameState& state, const PaletteBankState& colors, const PsiScratch& scratch) const noexcept {
+    return &roster_==&roster && &state_==&state && &colors_==&colors && &psi_.scratch()==&scratch;
+  }
   bool uses(const Roster &roster) const noexcept { return &roster_ == &roster; }
+  bool uses(const PsiAnimation& psi, const PaletteEffects& effects,
+            const WorldSwirlState& swirl) const noexcept {
+    return &psi_ == &psi && &palette_effects_ == &effects && &swirl_state_ == &swirl;
+  }
   bool uses(const BackgroundLoader&) const noexcept;
   bool uses(const DisplaySetup&) const noexcept;
   bool uses(const story::TickState &, const dialogue::WindowHost &,
@@ -79,6 +89,7 @@ public:
   bool uses(const ScenePalette &, const WorldEncounterVisualState &) const noexcept override { return false; }
   bool uses_battle_palette(const PaletteBankState &, const WorldEncounterVisualState &) const noexcept override;
   void restore_battle_palettes() override;
+  void bind_palette_reset(BattleSceneFrameReset &);
   void restore_selected_layer_configuration() override;
 private:
   void prefix();
@@ -103,6 +114,7 @@ private:
   const WorldLayerConfigurations &layers_;
   WorldLayerSelection &layer_;
   WorldSwirlState &swirl_state_;
+  BattleSceneFrameReset *palette_reset_{};
   WorldEncounterEffects swirl_;
   bool active_{}, failed_{};
 };

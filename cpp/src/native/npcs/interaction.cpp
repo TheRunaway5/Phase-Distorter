@@ -77,10 +77,12 @@ struct Interactions::Operation::Execution {
     CollisionPoint proposed;
     InteractionSelection result;
     bool done{};
-    explicit Execution(Interactions::Execution& e,InteractionAction a):owner(e),action(a) {
+    bool finder_only{};
+    explicit Execution(Interactions::Execution& e,InteractionAction a,bool finder=false):owner(e),action(a),finder_only(finder) {
         // Source TALK_TO creates/reopens standard window1 before FIND clears
         // interaction globals or reads the live party/actor state.
-        window=e.windows.begin({dialogue::WindowAction::Open,dialogue::WindowId{1},{},0});
+        if(finder)phase=Phase::BeginSearch;
+        else window=e.windows.begin({dialogue::WindowAction::Open,dialogue::WindowId{1},{},0});
     }
     void finish() { done=true;phase=Phase::Complete;owner.active=false; }
     void step() {
@@ -151,6 +153,7 @@ struct Interactions::Operation::Execution {
                 s.leader_direction=direction;leader.behavior.direction=direction;
                 leader.appearance.select_eight(direction,leader.action().animation,leader.behavior.surface_flags);
             }
+            if(finder_only){finish();return;}
             // The first probe did not publish its masked base. If the actor
             // already faces it, the global direction can still be odd here.
             if(s.interacting_npc==0xfffe) { result.reference=s.map_text.text;phase=Phase::Resolve; }
@@ -251,12 +254,26 @@ std::uint16_t Interactions::apply_gift(GiftAction action) {
     require(actor.has_appearance() && actor.appearance.available() && actor.npc().has_value(),
             "Gift command requires the selected actor's live NPC appearance");
     require(*actor.npc()==attached.npc_id,"Gift actor identity differs from its attached NPC metadata");
-    const auto& npc=e.resources->npc(*actor.npc());
+    refresh_gift(*e.state.interacting_actor);
+    return result;
+}
+void Interactions::refresh_gift(ActorId id) {
+    auto& e=*execution_;
+    require(!e.poisoned,"Abandoned interaction invalidated gift state");
+    const auto bound=e.actors.scene().event_flags;
+    const auto& text=e.windows.state();
+    require(bound.data()==text.event_flags.data() && bound.size()==text.event_flags.size(),
+            "Gift refresh lost its shared event flag storage");
+    auto& actor=e.actors.actor(id);
+    require(actor.has_appearance() && actor.appearance.available(),
+            "Gift refresh requires its live actor appearance");
+    const auto selector=actor.authored_role() ? e.actors.authored_npc_selector(*actor.authored_role())
+                                             : actor.npc().value_or(0xffff);
+    const auto& npc=e.resources->npc(selector);
     actor.behavior.direction=text.flag(npc.event_flag)?0:4;
     // C0A443_ENTRY2 refreshes from the existing animation word. It neither
     // advances the animation nor changes its walking fingerprint or motion.
     actor.appearance.select_four(actor.behavior.direction,actor.action().animation,actor.behavior.surface_flags);
-    return result;
 }
 dialogue::WindowHost& Interactions::windows() const { return execution_->windows; }
 ActorWorld& Interactions::actors() const { return execution_->actors; }
@@ -265,6 +282,19 @@ std::unique_ptr<Interactions::Operation> Interactions::begin(InteractionAction a
     auto& e=*execution_;require(!e.active && !e.poisoned,"Interaction already active or abandoned");
     auto op=std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(e,action)));
     e.active=true;return op;
+}
+std::unique_ptr<Interactions::Operation> Interactions::begin_find_checkable() {
+    auto &e=*execution_;require(!e.active && !e.poisoned,"Interaction already active or abandoned");
+    auto op=std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(e,InteractionAction::Check,true)));e.active=true;return op;
+}
+const InteractionRecord *Interactions::selected_npc() const {
+    const auto &e=*execution_;require(!e.active && !e.poisoned,"Interaction finder has not completed");
+    const auto id=e.state.interacting_npc;if(id==0 || id==0xffff || id==0xfffe)return nullptr;return &e.resources->npc(id);
+}
+bool Interactions::bicycle_blocked() {
+    auto &e=*execution_;require(!e.active && !e.poisoned,"Interaction collision query is unavailable");
+    const CollisionPoint point{e.state.leader_x,e.state.leader_y};e.state.checked_surface_origin=e.collision.origin(point,12);
+    e.state.surface_flags=e.collision.perimeter(e.area,point,12);return (e.state.surface_flags&0xc0)!=0;
 }
 Interactions::Operation::Operation(std::unique_ptr<Execution> e):execution_(std::move(e)) {}
 Interactions::Operation::~Operation() { if(!execution_->done) execution_->owner.poisoned=true; }

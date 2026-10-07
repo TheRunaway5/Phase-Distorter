@@ -4,12 +4,14 @@
 #include "native_overlay_test_assets.hpp"
 namespace map_load_test {
 using namespace eb::native;
-struct Fixture : startup_test::Fixture {
+// The host borrows the retained animation staging, so the storage base is
+// constructed before (and destroyed after) the base containing WindowHost.
+struct RetainedMapState { WorldMapLoadState load_state; };
+struct Fixture : RetainedMapState, startup_test::Fixture {
   WorldLayerConfigurations layer_data;
   WorldLayerSelection layers;
   WorldEncounterVisualState visual;
   WorldScenePresentation presentation;
-  WorldMapLoadState load_state;
   WorldStartupData startup_data;
   OverlaySprites overlay_data;
   WorldOverlayPlayback overlays;

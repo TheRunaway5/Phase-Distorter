@@ -339,6 +339,14 @@ void run(const char *path) {
                   "Original wallet return differs");
           source.compare(party, timers, random);
           ++source.totals.wallets;
+          party.money_carried=initial;
+          source.seed(party,timers,random);
+          source.begin(assets.version==GameVersion::US?0xc22272:0xc22111,0,0,amount);
+          require(source.next(),"Wallet decrease unexpectedly called a service");
+          require(inventory.subtract_wallet32(amount)==source.cpu.accumulator,
+                  "Original wrapped wallet decrease return differs");
+          source.compare(party,timers,random);
+          ++source.totals.wallets;
         }
     }
   } catch (const std::exception &e) {

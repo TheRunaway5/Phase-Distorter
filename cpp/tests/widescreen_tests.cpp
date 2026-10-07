@@ -31,7 +31,7 @@ void until(eb::SnesBus& bus, unsigned line) {
         bus.advance_cpu_cycles(1);
 }
 void intro_static(eb::GameVersion version) {
-    for (unsigned width : {400u, 1024u}) {
+    for (unsigned width : {358u, 400u, 1024u}) {
         auto bus = std::make_unique<eb::SnesBus>(std::array<uint8_t, 1>{0}, version);
         bus->set_presentation_width(width);
         bus->set_presentation_effects_enabled(width == 1024);
@@ -54,24 +54,17 @@ void intro_static(eb::GameVersion version) {
         const auto memory = bus->work_ram;
         const auto vram = bus->video_ram;
         until(*bus, 225);
-        check(bus->presentation_width() == width && bus->presentation_fixed_aspect() == 0,
-              "Giygas intro interference uses the full requested canvas");
-        if (bus->presentation_width() == width) {
-            const unsigned margin = (width - 256) / 2;
+        check(bus->presentation_width() == 256 && bus->presentation_fixed_aspect() == 4.0 / 3,
+              "Giygas intro interference retains the authored 4:3 canvas");
+        if (bus->presentation_width() == 256) {
             const auto pixels = bus->presentation_pixels();
-            check(pixels[0] == 0xff00ff00 && pixels[1] == 0xff000000 &&
-                      pixels[width - 2] == 0xff00ff00 && pixels[width - 1] == 0xff000000,
-                  "Animated intro static fills both margins without repeating the card");
-            bool center_matches = true;
-            for (unsigned y = 0; y < 224; ++y)
-                center_matches &= std::equal(pixels.begin() + y * width + margin,
-                    pixels.begin() + y * width + margin + 256, bus->native_framebuffer.begin() + y * 256);
-            check(center_matches, "Extending intro static preserves every native card pixel");
+            check(std::equal(pixels.begin(), pixels.end(), bus->native_framebuffer.begin()),
+                  "Intro static preserves every native card pixel");
             if (width == 1024)
                 check(std::equal(pixels.begin(), pixels.end(), bus->presentation_effect_reference().begin()),
-                      "Intro static reference pixels cover the same wide canvas");
+                      "Intro static reference pixels cover the same native canvas");
         }
-        check(bus->work_ram == memory && bus->video_ram == vram, "Intro static extension changed game memory");
+        check(bus->work_ram == memory && bus->video_ram == vram, "Intro presentation changed game memory");
         bus->write_byte(0x212d, 0);
         bus->write_byte(0x2130, 0);
         bus->write_byte(0x2131, 0);
@@ -134,7 +127,7 @@ void battle_exit(eb::GameVersion version) {
 void targeted_psi(eb::GameVersion version) {
     const auto& source = eb::source_profile(version);
     for (unsigned depth : {2u, 4u})
-        for (unsigned width : {400u, 1024u})
+        for (unsigned width : {358u, 400u, 1024u})
             for (int scroll : {-64, 64}) {
                 auto bus = std::make_unique<eb::SnesBus>(std::array<uint8_t, 1>{0}, version);
                 const unsigned layer = depth == 2 ? 1 : 0, base_palette = depth == 2 ? 32 : 0;
@@ -175,7 +168,7 @@ void targeted_psi(eb::GameVersion version) {
 void masked_world_camera(eb::GameVersion version) {
     const auto& source = eb::source_profile(version);
     enum class Mask { Disabled, Main, Sub, Color };
-    for (const unsigned width : {398u, 522u})
+    for (const unsigned width : {358u, 398u, 522u})
         for (const auto mask : {Mask::Disabled, Mask::Main, Mask::Sub, Mask::Color}) {
             std::vector<uint8_t> content(0x300000);
             // Adjacent sector rows describe a room narrowing on its left. The
@@ -261,7 +254,7 @@ void masked_world_camera(eb::GameVersion version) {
 }
 void entities(eb::GameVersion version) {
     const auto& source = eb::source_profile(version);
-    for (const unsigned width : {400u, 800u, 1024u})
+    for (const unsigned width : {358u, 400u, 800u, 1024u})
         for (const int x : {-180, -72, -16, 248, 256, 320, 440}) {
             if (x < -int((width - 256) / 2) || x + 16 > int((width + 256) / 2))
                 continue;

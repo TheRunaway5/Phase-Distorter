@@ -1,4 +1,5 @@
 #include "eb/native/world_enemy_contact.hpp"
+#include "eb/native/battle/psi_animation.hpp"
 #include "eb/native/world_battle_entry.hpp"
 #include "eb/native/world_enemy_movement.hpp"
 #include "eb/native/world_maintenance.hpp"
@@ -103,7 +104,26 @@ std::uint16_t WorldEnemyContact::enemy_type(ActorId id) const {
           "Native enemy contact requires an owned live enemy type");
   return std::uint16_t(*enemy);
 }
+void WorldEnemyContact::bind_palette_transport(battle::PaletteBankState &palette,
+                                               battle::PsiScratch &scratch) {
+  check();
+  require((!palette_transport_ || palette_transport_ == &palette) &&
+              (!scratch_ || scratch_ == &scratch),
+          "Contact palette transport is already bound");
+  encounter_.bind_palette_transport(palette);
+  palette_transport_ = &palette;
+  scratch_ = &scratch;
+}
 void WorldEnemyContact::grayscale() {
+  if (palette_transport_) {
+    for (unsigned i = 0; i < 256; ++i) {
+      const auto word = palette_transport_->staged_color(i);
+      scratch_->bytes[0x2000 + i * 2] = std::uint8_t(word);
+      scratch_->bytes[0x2001 + i * 2] = std::uint8_t(word >> 8);
+      colors_[i] = {std::uint8_t(word & 31), std::uint8_t((word >> 5) & 31),
+                    std::uint8_t((word >> 10) & 31)};
+    }
+  }
   backup_ = colors_;
   for (unsigned i = 0; i < 128; ++i) {
     const auto color = colors_[i];
@@ -136,7 +156,7 @@ void WorldEnemyContact::pause(ActorId id) {
   actor.tick_callback_enabled = false;
 }
 bool WorldEnemyContact::reduce(ActorId id) {
-  if (prompt_.battle_mode || navigation_.using_door)
+  if (control_.encounter.mode || navigation_.using_door)
     return false;
   auto &scene = actors_.appearance_scene();
   if (!(scene.battle_swirl_ticks && state_.touched == id)) {

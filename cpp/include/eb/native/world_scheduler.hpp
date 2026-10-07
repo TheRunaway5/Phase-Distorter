@@ -6,6 +6,7 @@
 
 namespace eb::native {
 class WorldScheduler;
+class WorldFoodStatus;
 struct AppearanceSceneContext;
 struct WorldMaintenanceState;
 namespace dialogue { class WindowHost; }
@@ -15,7 +16,7 @@ namespace story { struct TickState; }
 // These are named native operations, never original function addresses. Other
 // source scheduler clients require their own real native operations before
 // they can enter this catalog.
-enum class WorldScheduledCallback { EscalatorEnter, EscalatorExit, StairsEnter, StairsExit };
+enum class WorldScheduledCallback { EscalatorEnter, EscalatorExit, StairsEnter, StairsExit, FoodStatusReset };
 struct WorldScheduledTask {
   std::uint16_t frames_left{};
   WorldScheduledCallback callback{};
@@ -50,6 +51,9 @@ public:
   // silently discarding scheduled work would report a false completion.
   void clear_callbacks(const WorldSchedulerCallbacks &) noexcept;
   bool bound_to(const WorldSchedulerCallbacks &) const noexcept;
+  void bind_food_status(WorldFoodStatus &);
+  void clear_food_status(const WorldFoodStatus &) noexcept;
+  bool uses(const AppearanceSceneContext &appearance) const noexcept { return &appearance_ == &appearance; }
   bool uses(const dialogue::WindowHost &, const story::TickState &,
             const npcs::DadPhoneState &, const AppearanceSceneContext &,
             const WorldMaintenanceState &) const noexcept;
@@ -74,6 +78,7 @@ private:
   WorldMaintenanceState &maintenance_;
   std::array<WorldScheduledTask, 4> tasks_{};
   WorldSchedulerCallbacks *callbacks_{};
+  WorldFoodStatus *food_{};
   bool processing_{}, failed_{};
 };
 } // namespace eb::native

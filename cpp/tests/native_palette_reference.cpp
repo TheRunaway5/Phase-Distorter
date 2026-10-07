@@ -114,6 +114,14 @@ int main(int argc, char **argv) {
                                         " got=" + std::to_string(actual) +
                                         " expected=" + std::to_string(expected));
                             }
+                        for(unsigned p=0;p<14;++p)for(unsigned color=0;color<16;++color) {
+                            const unsigned at=0x240+(p*16+color)*2;
+                            const auto raw=std::uint16_t(reference.bus->work_ram[at]|unsigned(reference.bus->work_ram[at+1])<<8);
+                            const auto current=p<6?result.scenery_word(p,color):result.sprite_word(p-6,color);
+                            if(current!=raw)throw std::runtime_error(assets.title+" raw palette differs: group="+
+                                std::to_string(group)+" variant="+std::to_string(variant)+" palette="+std::to_string(p)+
+                                " index="+std::to_string(color)+" got="+std::to_string(current)+" expected="+std::to_string(raw));
+                        }
                         ++cases;
                     }
             }
@@ -125,7 +133,7 @@ int main(int argc, char **argv) {
                         throw std::runtime_error("Native world palette sector differs");
                 }
             std::cout << "PASS " << assets.title << " source palette cases=" << cases
-                      << " exact opaque colors=" << cases * 210 << " sectors=2560\n";
+                      << " exact raw words=" << cases * 224 << " exact opaque colors=" << cases * 210 << " sectors=2560\n";
         }
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

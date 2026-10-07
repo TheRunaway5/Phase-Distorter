@@ -14,6 +14,14 @@ void WorldDisplayFade::force_blank(bool stop_fade) noexcept {
   if (stop_fade) state_.step = 0;
   ++revision_;
 }
+void WorldDisplayFade::clear_parameters() noexcept {
+  state_.step = state_.delay = 0;
+  ++revision_;
+}
+void WorldDisplayFade::write_brightness(std::uint8_t value) noexcept {
+  state_.brightness = value;
+  ++revision_;
+}
 WorldDisplayFade::Frame WorldDisplayFade::preview_next_frame() const noexcept {
   Frame result;
   result.owner_ = this;

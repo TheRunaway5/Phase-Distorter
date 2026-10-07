@@ -73,6 +73,9 @@ public:
   WorldPartyCreation &operator=(const WorldPartyCreation &) = delete;
   std::unique_ptr<Operation> begin_insert(unsigned one_based_member);
   std::unique_ptr<Operation> begin_rebuild();
+  bool uses(const party::State& party, const ActorWorld& actors) const noexcept {
+    return &party_ == &party && &actors_ == &actors;
+  }
   bool busy() const { return active_ != nullptr; }
   bool failed() const { return failed_; }
   bool uses(const party::State &, const ActorWorld &, const WorldPartyData &,

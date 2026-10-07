@@ -35,9 +35,10 @@ std::uint64_t Roster::next_identity() {
     return ++identity_counter_;
 }
 void Roster::clear() {
-    records_ = {};
+    clear_records();
     highest_enemy_level_ = 0;
 }
+void Roster::clear_records() { records_ = {}; }
 void Roster::initialize_player(unsigned slot, const party::State& party, unsigned character) {
     auto& destination = records_.at(slot);
     if (party.version() != version()) throw std::invalid_argument("Battle and party regions differ");

@@ -60,6 +60,9 @@ class WindowGraphics {
     // Replaces actual native cells without publishing them or changing atlas
     // subscribers. Requires idle output and no queued transfer using staging.
     void retain_prepared_artwork(unsigned first, std::span<const WindowArtwork>);
+    // TELEPORT's map decompression occurs while its actual conversation is
+    // suspended. Borrow that continuation without acknowledging or entering it.
+    void retain_prepared_artwork(unsigned first, std::span<const WindowArtwork>, Conversation &);
     void prepare(const PartyNameInputs &, unsigned flavor);
     void prepare_nested(const PartyNameInputs &, unsigned flavor, Conversation &);
     void prepare_nested(const PartyNameInputs &, unsigned flavor, MenuHost::Operation &);
@@ -83,6 +86,7 @@ class WindowGraphics {
     void bind_cell(unsigned cell, const std::shared_ptr<TextImage> &);
     std::shared_ptr<TextImage> image(unsigned cell) const;
     void prepare(const PartyNameInputs &, unsigned, TextOutput::Owner);
+    void retain_prepared_artwork(unsigned, std::span<const WindowArtwork>, TextOutput::Owner);
     void prepare_owned(const PartyNameInputs &, unsigned, TextOutput::Owner);
     std::unique_ptr<Operation> begin_publication(ArtworkPublication, ArtworkDelivery,
                                                TextOutput::Owner);

@@ -62,6 +62,12 @@ class SpriteAppearance {
     void clear_flashing() noexcept { flashing_hidden_ = false; }
     bool available() const { return available_; }
     unsigned geometry_width() const { return resources_->definition(geometry_sprite_).width; }
+    unsigned geometry_height() const { return resources_->definition(geometry_sprite_).height; }
+    // Independent source spritemap bit4000, separate from flashing/draw-disabled.
+    bool fade_hidden() const noexcept { return fade_hidden_; }
+    void set_fade_hidden(bool hidden) noexcept { fade_hidden_ = hidden; }
+    const std::shared_ptr<const SpriteImage> &image() const noexcept { return image_; }
+    void replace_image(std::shared_ptr<const SpriteImage>);
 
     // Explicit authored startup invalidates only the animation key; retained
     // display/flashing state changes only through the following operation.
@@ -91,5 +97,6 @@ class SpriteAppearance {
     std::uint16_t fingerprint_ = 0xffff;
     bool flashing_hidden_ = false;
     bool available_ = true;
+    bool fade_hidden_{}, image_override_{};
 };
 } // namespace eb::native

@@ -12,6 +12,9 @@ unsigned packed(const MapTile &tile) {
 unsigned rgb(PaletteColor c){return c.red|unsigned(c.green)<<5|unsigned(c.blue)<<10;}
 void compare_map(const Oracle &o,const map_load_test::Fixture &f) {
   const bool jp=f.r.version==eb::GameVersion::JP;
+  for(unsigned i=0;i<f.load_state.animation_staging.size();++i)
+    check(o.bus->work_ram[0xc000+i]==f.load_state.animation_staging[i],
+          "Retained map animation staging differs");
   check(o.get(jp?0x46f4:0x436e)==f.load_state.loaded_combination &&
         o.get(jp?0x46f6:0x4370)==f.load_state.loaded_palette &&
         o.get(jp?0x46f8:0x4372)==f.area.tileset_id(),"Loaded content selection differs");
@@ -26,7 +29,7 @@ void compare_map(const Oracle &o,const map_load_test::Fixture &f) {
   for(unsigned i=0;i<256;++i)
     check((o.get(0x200+i*2)&0x7fff)==rgb(f.scene_colors[i]),"Complete map palette differs");
   for(unsigned i=0;i<224;++i)
-    check((o.get((jp?0x47fc:0x4476)+i*2)&0x7fff)==rgb(f.load_state.map_palette_backup[i]),"Map backup colors differ");
+    check(o.get((jp?0x47fc:0x4476)+i*2)==f.load_state.map_palette_backup[i],"Map backup colors differ");
   for(unsigned role=0;role<30;++role) {
     const auto actor=f.actors.actor_for_role(role);
     const unsigned script=actor?f.actors.actor(*actor).script_style():0xffff;
@@ -49,7 +52,7 @@ void compare_map(const Oracle &o,const map_load_test::Fixture &f) {
         color|=((o.bus->video_ram[tile*32+y*2+(plane/2)*16+(plane&1)]>>(7-x))&1)<<plane;
       check(color==f.area.graphics()[tile][y*8+x],"Loaded map artwork differs");}
   const auto origin=f.activation.origin();
-  check(o.get(jp?0x46fa:0x4374)==origin.x&&o.get(jp?0x46fc:0x4376)==origin.y,"Final streaming origin differs");
+  check(o.get(jp?0x46fa:0x4374)==std::uint16_t(origin.x)&&o.get(jp?0x46fc:0x4376)==std::uint16_t(origin.y),"Final streaming origin differs");
 }
 void run_map(const eb::GameAssets &assets,startup_test::Resources &resources,
              CameraPosition center,unsigned flag_pattern,unsigned flavor) {
@@ -137,7 +140,7 @@ void run_map(const eb::GameAssets &assets,startup_test::Resources &resources,
     check(f.area.graphics()==animated,"Same-combination reload replaced animated graphics");
     compare_map(source,f);
     for(unsigned i=0;i<256;++i)
-      check((source.get(0x10000+i*2)&0x7fff)==rgb(f.load_state.map_palette_scratch[i]),
+      check(source.get(0x10000+i*2)==f.load_state.map_palette_scratch[i],
             "Map scratch backup differs from complete original wipe");
   }
   ++cases;

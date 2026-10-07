@@ -5,6 +5,8 @@
 #include "eb/native/world_battle_entry.hpp"
 #include "eb/native/world_enemy_contact.hpp"
 #include "eb/native/world_enemy_movement.hpp"
+#include "eb/native/world_enemy_behavior.hpp"
+#include "eb/native/peripheral_state.hpp"
 #include "eb/native/world_door_transitions.hpp"
 #include "eb/native/world_input_playback.hpp"
 #include "eb/native/world_party_following.hpp"
@@ -14,6 +16,7 @@
 #include "native_dialogue_test_assets.hpp"
 #include "native_interaction_test_assets.hpp"
 #include "native_world_movement_fixture.hpp"
+#include "native_world_walking_fixture.hpp"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -286,13 +289,16 @@ struct Fixture {
   AreaPalettes palettes = colors.resolve({0, 0}, {});
   WorldPaletteAnimations animations = make_animations();
   WorldSpawnControls controls;
+  WorldControlState world_control;
   std::unique_ptr<WorldRuntime> runtime;
-  explicit Fixture(eb::GameVersion region, bool invalid_shape = false)
+  explicit Fixture(eb::GameVersion region, bool invalid_shape = false,
+                   std::shared_ptr<const ActionScriptData> custom_actions = {},
+                   std::optional<AppearanceData> appearance = {})
       : version(region), party(region), output(assets(region).fonts, text),
         windows(assets(region).input.import(), text, output),
         meters(windows, party, assets(region).meters),
-        sprites(make_sprites(invalid_shape ? 17 : 0)), actions(scripts(region)),
-        actors(sprites, actions, region),
+        sprites(make_sprites(invalid_shape ? 17 : 0)), actions(custom_actions ? std::move(custom_actions) : scripts(region)),
+        actors(sprites, actions, region, std::move(appearance)),
         activation(npcs, sprites, actions, region, {0, 8}),
         enemies(make_enemies(), sprites, actions, {0, 0, 2}),
         collision(collision_content.bytes, collision_content.collision_layout) {
@@ -426,6 +432,8 @@ void camera_streaming(eb::GameVersion version, bool erase_camera) {
             f.actors.actor(later).action().variables[0] == 0,
         "Camera did not suspend before later actors");
   rejects([&] { f.runtime->frame(); }, "Streaming allowed a frame sample");
+  check(f.runtime->published_frame() == initial,
+        "Streaming hid or replaced the immutable published screen");
   rejects([&] { operation->complete_frame({0, 0}); },
           "Streaming allowed input/frame completion");
   rejects([&] { f.runtime->begin(story::TickKind::WorldFrame); },
@@ -458,10 +466,13 @@ void initial_and_dirty_capture(eb::GameVersion version) {
   f.start();
   const auto random = f.random;
   const auto inputs = f.input;
+  const auto retained = f.runtime->published_frame();
   f.runtime->prepare_area({128, 112});
   f.runtime->begin_initial_activation({128, 112});
   rejects([&] { f.runtime->frame(); },
           "Initial streaming exposed the old world capture");
+  check(f.runtime->published_frame() == retained,
+        "Pending map preparation replaced the published screen");
   rejects([&] { f.runtime->begin(story::TickKind::Frame); },
           "Initial streaming admitted a frame");
   unsigned yields = 0;
@@ -473,6 +484,8 @@ void initial_and_dirty_capture(eb::GameVersion version) {
         "Initial streaming advanced time or skipped rows");
   check(f.random != random && f.runtime->streaming_work().terrain_queries > 0,
         "Initial activation omitted shared enemy RNG");
+  check(f.runtime->published_frame() == retained,
+        "Actor activation captured unpublished map content");
   rejects([&] { f.runtime->frame(); },
           "Activation published actors without their first real tick");
   rejects([&] { f.runtime->begin(story::TickKind::Frame); },
@@ -502,9 +515,32 @@ void initial_and_dirty_capture(eb::GameVersion version) {
           "Out-of-map preparation was accepted");
   check(f.runtime->frame() == committed && f.area.graphics() == art,
         "Rejected preparation changed live area/publication");
-  f.windows.prompt_state().battle_mode = 1;
-  check(!f.runtime->advance_area_animation() && f.runtime->frame() == committed,
+  f.world_control.encounter.mode = 1;
+  check(!f.runtime->advance_area_animation(f.world_control) && f.runtime->frame() == committed,
         "Battle advanced world animation");
+}
+void borrowed_nested_dialogue(eb::GameVersion version) {
+  Fixture f(version), foreign(version); f.start(); foreign.start();
+  auto &scene=f.runtime->coordinator_scene();
+  dialogue::Conversation text(program(version,{0x1f,0x41,17,2}),f.windows);
+  dialogue::Conversation other(program(version,{0x1f,0x41,17,2}),foreign.windows);
+  text.start(dialogue::EntryId{0});other.start(dialogue::EntryId{0});
+  auto parent=f.runtime->begin(text);auto wrong=foreign.runtime->begin(other);
+  check(parent->advance()==dialogue::Progress::Suspended && wrong->advance()==dialogue::Progress::Suspended,
+        "Nested runtime fixture did not reach its actual callbacks");
+  const auto event=*parent->dialogue_event();
+  auto child=scene.begin_nested(story::TickKind::WorldFrame,f.runtime->scene_operation(*parent));
+  rejects([&]{foreign.runtime->service_child(*child,*wrong);},"Foreign runtime borrowed another scene's callback child");
+  auto proxy=f.runtime->service_child(*child,*parent);
+  rejects([&]{f.runtime->service_child(*child,*parent);},"Nested runtime borrowed an already owned child twice");
+  rejects([&]{parent->respond_dialogue({});},"Runtime parent replied through its borrowed child");
+  frame(*proxy);proxy->complete_frame({0,0});finish(*proxy);proxy.reset();child.reset();
+  check(*parent->dialogue_event()==event && f.runtime->completed_frames()==1 && f.clock.input_polls==1 &&
+        !f.runtime->failed() && !foreign.runtime->failed(),
+        "Nested borrowing lost its parent, consumed input twice or poisoned a rejected foreign owner");
+  dialogue::Response response;response.special_event_result=1;
+  parent->respond_dialogue(response);finish(*parent);wrong->respond_dialogue(response);finish(*wrong);
+  rejects([&]{f.runtime->require_nested(*parent);},"Completed runtime parent admitted lifecycle work");
 }
 void nested_dialogue_and_explicit_services(eb::GameVersion version) {
   Fixture f(version);
@@ -602,6 +638,129 @@ void rejection(eb::GameVersion version) {
   rejects([&] { f.runtime->begin(story::TickKind::WorldFrame); },
           "Abandoned scene admitted another tick");
 }
+void actor_facing_boundary(eb::GameVersion version) {
+  for (const bool sprite : {false,true}) for (unsigned mode=0;mode<3;++mode) {
+    const auto call=sprite ? (version==eb::GameVersion::US ? 0xc0a959u:0xc0a938u)
+                           : (version==eb::GameVersion::US ? 0xc0a94eu:0xc0a92du);
+    const auto selector=sprite?1u:42u;
+    std::vector<std::uint8_t> bytes{0x42,std::uint8_t(call),std::uint8_t(call>>8),
+        std::uint8_t(call>>16),std::uint8_t(selector),std::uint8_t(selector>>8)};
+    if(mode==1) bytes.insert(bytes.end(),{0x1f,0});
+    else bytes.insert(bytes.end(),{0x14,0,2,1,0});
+    const auto halt=std::uint32_t(bytes.size());bytes.push_back(0x09);
+    auto actions=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0,halt});
+    Fixture f(version,false,actions,AppearanceData{});
+    f.controls.enemies=false;
+    auto target=actor(1);target.sprite=1;target.npc=42;target.action.velocity={};
+    target.action.position={50u<<16,50u<<16,0};target.behavior.physics=ActorPhysics::Stationary;
+    const auto selected=*f.actors.create_authored(target,{3,4});
+    auto source=actor();source.action.velocity={};source.behavior.physics=ActorPhysics::Stationary;
+    source.action.position={100u<<16,150u<<16,0};
+    const auto current=*f.actors.create_authored(source,{24,25});
+    WorldPartyState formation;formation.roles[0]=24;formation.current_leader_role=24;
+    PartyTrail trail;npcs::InteractionState leader;leader.leader=current;
+    WorldControlState movement;
+    WorldControl control(f.actors,formation,trail,leader,movement,f.windows.prompt_state(),
+                         f.input,f.clock,f.collision,f.area);
+    WorldMaintenanceState maintenance;party::ItemTransformationState items;
+    npcs::InteractionQueueState queued;npcs::DadPhoneState phone;
+    WorldInteractionQueue queue(version,queued,f.actors.appearance_scene().intangibility_ticks,phone);
+    const auto content=walking_test::content(version);
+    EnemyMovementData motion(content,version);GeneratedInputData angles(content,version);
+    WorldEnemyBehavior behavior(motion,angles,f.actors,f.enemies,f.party,leader);
+    PeripheralState peripherals;behavior.bind_peripherals(peripherals);
+    f.start();f.runtime->bind_maintenance(control,maintenance,items,queue);
+    npcs::InteractionState foreign_leader;
+    WorldEnemyBehavior foreign(motion,angles,f.actors,f.enemies,f.party,foreign_leader);
+    rejects([&]{f.runtime->bind_enemy_behavior(foreign);},"Facing accepted another real leader/angle owner");
+    if(mode!=2) f.runtime->bind_enemy_behavior(behavior);
+    f.actors.actor(selected).behavior.direction=0xffff;
+    const auto pose=f.actors.actor(selected).action().position;
+    const auto random=f.random;
+    auto operation=f.runtime->begin(story::TickKind::ActorFrame);
+    if(mode) {
+      rejects([&]{(void)next(*operation);},"Facing without its owner or with an observed incidental pose return was acknowledged");
+      check(f.actors.actor(selected).behavior.direction==0xffff &&
+                f.actors.actor(selected).action().position==pose &&
+                !f.actors.actor(current).action().variables[0] && !f.actors.ticks() &&
+                !f.clock.frame_counter && !f.clock.input_polls && f.random==random,
+            "Rejected facing changed a pose, actor continuation, RNG or actual frame before admission");
+    } else {
+      frame(*operation);
+      const auto direction=f.actors.actor(selected).behavior.direction;
+      check(direction<8 && f.actors.actor(selected).appearance.displayed() &&
+                f.actors.actor(selected).action().position==pose &&
+                f.actors.actor(current).action().variables[0]==1 && f.actors.ticks()==1 &&
+                !f.clock.input_polls && f.random==random,
+            "Real facing binding did not consume its actual pose service before continuing the same actor frame");
+      for(unsigned i=0;i<3;++i)
+        check(operation->advance(1)==dialogue::Progress::Suspended &&
+                  f.actors.actor(selected).behavior.direction==direction && f.actors.ticks()==1,
+              "Pending presentation repeated actual facing or actor work");
+      operation->complete_frame({0,0});finish(*operation);
+    }
+    operation.reset();f.runtime.reset();
+  }
+}
+void actor_sound_boundary(eb::GameVersion version) {
+  const auto call=version==eb::GameVersion::JP ? 0xc0a820u:0xc0a841u;
+  for (const auto word : {0u,7u,0x100u,0x1234u}) {
+    const std::vector<std::uint8_t> bytes{0x42,std::uint8_t(call),std::uint8_t(call>>8),
+        std::uint8_t(call>>16),std::uint8_t(word),std::uint8_t(word>>8),0x14,0,2,1,0,0x09};
+    auto actions=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+    Fixture f(version,false,actions);
+    const auto id=f.actors.create(actor());f.start();
+    auto operation=f.runtime->begin(story::TickKind::WorldFrame);
+    check(next(*operation)==dialogue::Progress::Suspended &&
+              operation->service()==story::SceneService::ActorEngine &&
+              operation->actor_request()->binding.operation==NativeAction::PlaySound &&
+              operation->actor_request()->binding.discard_result,
+          "Literal actor PLAY_SOUND did not reach its actual typed boundary");
+    const auto byte=std::uint8_t(word);
+    const dialogue::ScriptSoundRequest expected{
+        byte ? dialogue::ScriptSoundKind::QueueEffect:dialogue::ScriptSoundKind::DirectDriverCommand,
+        byte ? byte:std::uint8_t(0x57),std::uint16_t(word)};
+    const auto position=f.actors.actor(id).action().position;
+    const auto variables=f.actors.actor(id).action().variables;
+    const auto random=f.random;
+    for(unsigned retry=0;retry<3;++retry) {
+      check(operation->actor_sound()==expected && next(*operation)==dialogue::Progress::Suspended &&
+                f.actors.actor(id).action().position==position &&
+                f.actors.actor(id).action().variables==variables && f.random==random &&
+                !f.actors.ticks() && !f.clock.frame_counter && !f.runtime->completed_frames(),
+            "Pending actor sound retry consumed actor/RNG/frame work or changed its literal command");
+      rejects([&]{operation->respond_actor(0,2);},"Generic actor ACK bypassed the actual audio command");
+      rejects([&]{operation->respond_script_sound();},"Actor sound accepted a dialogue sound ACK");
+    }
+    operation->respond_actor_sound();
+    rejects([&]{operation->respond_actor_sound();},"Repeated actor sound ACK replayed its continuation");
+    rejects([&]{(void)operation->actor_sound();},"Acknowledged actor sound still exposed its old command");
+    frame(*operation);
+    check(f.actors.actor(id).action().variables[0]==1 && f.actors.ticks()==1 &&
+              !f.clock.frame_counter && !f.runtime->completed_frames(),
+          "Typed actor sound ACK advanced its caller twice or consumed the frame boundary");
+    rejects([&]{operation->respond_actor_sound();},"Frame boundary accepted a stale actor sound ACK");
+    operation->complete_frame({0,0});finish(*operation);
+  }
+  {
+    // The actual sound helper's incidental return is observed by this caller.
+    // No guessed scalar or early audio side effect may acknowledge it.
+    const std::vector<std::uint8_t> bytes{0x42,std::uint8_t(call),std::uint8_t(call>>8),
+        std::uint8_t(call>>16),7,0,0x1f,0,0x09};
+    auto actions=std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0});
+    Fixture f(version,false,actions);const auto id=f.actors.create(actor());f.start();
+    auto operation=f.runtime->begin(story::TickKind::WorldFrame);
+    check(next(*operation)==dialogue::Progress::Suspended &&
+              !operation->actor_request()->binding.discard_result,
+          "Observable sound transport result was discarded by the compiler");
+    rejects([&]{(void)operation->actor_sound();},"Live incidental sound result received a fabricated command response");
+    rejects([&]{operation->respond_actor_sound();},"Live incidental sound result was acknowledged");
+    rejects([&]{operation->respond_actor(0,2);},"Generic ACK fabricated an observable sound result");
+    check(!f.actors.ticks() && !f.clock.frame_counter &&
+              !f.actors.actor(id).action().variables[0] && operation->actor_request(),
+          "Rejected live sound continuation changed actor scheduling or state");
+  }
+}
 void lifecycle(eb::GameVersion version) {
   Fixture f(version);
   const auto release = f.actors.create(actor(3)),
@@ -642,13 +801,14 @@ void explicit_animation(eb::GameVersion version) {
   }
   check(f.area.graphics() == initial_art && f.palettes.scenery == initial_color,
         "Generic scene ticks invented an EVENT_1 animation callback");
-  check(!f.runtime->advance_area_animation(),
+  f.windows.prompt_state().battle_mode = 1;
+  check(!f.runtime->advance_area_animation(f.world_control),
         "First explicit animation step ignored authored delays");
-  check(f.runtime->advance_area_animation() &&
+  check(f.runtime->advance_area_animation(f.world_control) &&
             f.area.graphics() == initial_art &&
             f.palettes.scenery == f.animations.track(1).frames[1].scenery,
         "Explicit palette step did not publish source frame1 at delay2");
-  check(f.runtime->advance_area_animation() && f.area.graphics()[1][0] == 15,
+  check(f.runtime->advance_area_animation(f.world_control) && f.area.graphics()[1][0] == 15,
         "Explicit map step did not retain its independent delay3");
   const auto ticks = f.actors.ticks();
   const auto random = f.random;
@@ -661,6 +821,7 @@ void explicit_animation(eb::GameVersion version) {
         "artwork");
   check(f.actors.ticks() == ticks && f.random == random && f.input == inputs,
         "Explicit area phases invented time/RNG/input");
+  f.windows.prompt_state().battle_mode = 0;
   auto screen = f.runtime->begin(story::TickKind::WorldFrame);
   frame(*screen);
   screen->complete_frame({0, 0});
@@ -1040,7 +1201,7 @@ void maintenance_callback(eb::GameVersion version, bool erase_issuer,
   f.runtime->bind_maintenance(control, state, items, queue);
   rejects([&] { f.runtime->bind_maintenance(control, state, items, queue); },
           "Runtime accepted a second maintenance owner");
-  rejects([&] { f.runtime->advance_area_animation(); },
+  rejects([&] { f.runtime->advance_area_animation(f.world_control); },
           "Bound animation clock admitted a second advancement entry");
   const auto initial_palette = f.palettes.scenery;
   const auto initial_art = f.area.graphics();
@@ -1296,7 +1457,7 @@ void native_walking(eb::GameVersion version, bool transition,
   WorldPartyFollowingState follower_state;
   WorldPartyFollowing following(f.actors, f.party, formation, trail, movement,
                                 position, f.windows.prompt_state(), maintenance,
-                                position.movement_flags, follower_state,
+                                position.area_character_style, follower_state,
                                 follower_data);
   f.party.display_order[0] = missing_follower ? 0 : 1;
   f.actors.actor(leader).behavior.tick = ActorTickCallback::PartyFollower;
@@ -1309,14 +1470,14 @@ void native_walking(eb::GameVersion version, bool transition,
   party::State wrong_party(version);
   WorldPartyFollowing wrong_follower_party(
       f.actors, wrong_party, formation, trail, movement, position,
-      f.windows.prompt_state(), maintenance, position.movement_flags,
+      f.windows.prompt_state(), maintenance, position.area_character_style,
       follower_state, follower_data);
   rejects([&] { f.runtime->bind_party_following(wrong_follower_party); },
           "Runtime accepted different following party owner");
   PartyTrail wrong_trail;
   WorldPartyFollowing wrong_follower_trail(
       f.actors, f.party, formation, wrong_trail, movement, position,
-      f.windows.prompt_state(), maintenance, position.movement_flags,
+      f.windows.prompt_state(), maintenance, position.area_character_style,
       follower_state, follower_data);
   rejects([&] { f.runtime->bind_party_following(wrong_follower_trail); },
           "Runtime accepted different following trail owner");
@@ -1672,6 +1833,10 @@ void native_walking(eb::GameVersion version, bool transition,
               "Pending battle entry accepted actor ACK");
       rejects([&] { tick->respond_script_sound(); },
               "Pending battle entry accepted sound ACK");
+      rejects([&] { (void)tick->actor_sound(); },
+              "Automatic battle continuation exposed an absent actor sound scene");
+      rejects([&] { tick->respond_actor_sound(); },
+              "Automatic battle continuation acknowledged an absent actor sound scene");
       for (unsigned retry = 0; retry < 5; ++retry)
         check(next(*tick) == dialogue::Progress::Suspended &&
                   trail.next_write == head &&
@@ -2467,6 +2632,107 @@ void raw_frame_forwarding(eb::GameVersion version) {
         f.clock.input_polls==3 && f.actors.ticks()==0 && f.random==random,
         "Physical VBlank fabricated a source NMI or actor tick");
 }
+void coordinator_scene_children(eb::GameVersion version) {
+  Fixture f(version); f.start();
+  auto &scene=f.runtime->coordinator_scene();
+  auto child=scene.begin(story::TickKind::Frame);
+  rejects([&]{(void)f.runtime->coordinator_scene();},"Construction borrow ignored an active scene child");
+  auto adapter=f.runtime->service_child(*child);
+  check(adapter->advance(0)==dialogue::Progress::BudgetExhausted&&!child->complete()&&f.clock.input_polls==0,
+        "Zero adapter budget ran a borrowed child");
+  rejects([&]{(void)f.runtime->service_child(*child);},"One child acquired two runtime adapters");
+  rejects([&]{(void)f.runtime->begin(story::TickKind::Frame);},"Runtime overlapped its borrowed coordinator child");
+  frame(*adapter);
+  check(child->service()==story::SceneService::Frame&&child->uses(scene),"Adapter substituted another Scene child");
+  adapter->complete_publication();
+  const auto first=f.runtime->frame();
+  check(!child->complete()&&f.clock.input_polls==0&&f.clock.new_frame_started==1&&f.runtime->completed_frames()==1,
+        "Child publication consumed input or falsely completed the caller");
+  adapter->complete_frame({0x80,0});finish(*adapter);
+  check(child->complete()&&child->advance()==dialogue::Progress::Finished&&f.runtime->frame()==first&&
+        f.clock.input_polls==1&&f.input.held[0]==0x80&&f.actors.ticks()==0,
+        "Borrowed child lost its actual WAIT completion or frame identity");
+  rejects([&]{(void)f.runtime->service_child(*child);},"Completed coordinator child was readmitted");
+  auto next_child=f.runtime->coordinator_scene().begin_publication();
+  auto next_adapter=f.runtime->service_child(*next_child);
+  check(next(*next_adapter)==dialogue::Progress::Suspended&&next_adapter->service()==story::SceneService::Publication,
+        "Retained completed adapter blocked real next child");
+  next_adapter->complete_publication();finish(*next_adapter);
+  check(next_child->complete()&&f.clock.input_polls==1&&f.runtime->completed_frames()==2,
+        "Publication-only child fabricated an input poll");
+  adapter.reset();child.reset();
+  check(!f.runtime->failed()&&f.runtime->frame()!=first,"Releasing completed borrowed wrappers invalidated their owner");
+
+  Fixture foreign(version);foreign.start();
+  auto foreign_child=foreign.runtime->coordinator_scene().begin(story::TickKind::Frame);
+  const auto retained=f.runtime->frame();
+  rejects([&]{(void)f.runtime->service_child(*foreign_child);},"Runtime accepted a foreign Scene child");
+  check(!f.runtime->failed()&&f.runtime->frame()==retained&&f.clock.input_polls==1,
+        "Rejected foreign child damaged real publication ownership");
+  auto foreign_adapter=foreign.runtime->service_child(*foreign_child);
+  frame(*foreign_adapter);foreign_adapter->complete_frame({0,0});finish(*foreign_adapter);
+
+  Fixture dirty(version);dirty.start();
+  auto &dirty_scene=dirty.runtime->coordinator_scene();dirty.runtime->reprepare_events();
+  auto dirty_child=dirty_scene.begin(story::TickKind::Frame);
+  rejects([&]{(void)dirty.runtime->service_child(*dirty_child);},"Borrowed child bypassed required world capture");
+  check(!dirty.runtime->failed()&&dirty.clock.input_polls==0&&dirty.runtime->completed_frames()==0,
+        "Capture admission rejection ran a child");
+
+  Fixture abandoned(version);abandoned.start();
+  auto live=abandoned.runtime->coordinator_scene().begin(story::TickKind::Frame);
+  {auto wrapper=abandoned.runtime->service_child(*live);frame(*wrapper);}
+  check(abandoned.runtime->failed()&&!live->complete()&&live->service()==story::SceneService::Frame,
+        "Abandoned adapter deleted/acknowledged the externally owned child");
+  rejects([&]{(void)abandoned.runtime->service_child(*live);},"Abandoned service resumed a consumed runtime continuation");
+}
+void sunstroke_actor_callback(eb::GameVersion version) {
+  auto script = std::make_shared<ActionScriptData>(
+      std::vector<std::uint8_t>{0x42, 0, 0, 0xc2, 0x06, 1, 0x09},
+      0, std::vector<std::uint32_t>{0});
+  Fixture f(version, false, script);
+  f.controls.enemies = false;
+  f.controls.npcs = NpcSpawnMode::Disabled;
+  auto spec = actor(0);
+  spec.action.velocity = {};
+  f.actors.create(spec);
+  WorldPartyState formation;
+  PartyTrail trail;
+  npcs::InteractionState leader;
+  WorldControlState movement;
+  movement.trodden_surface_flags = 4;
+  WorldControl control(f.actors, formation, trail, leader, movement,
+                       f.windows.prompt_state(), f.input, f.clock,
+                       f.collision, f.area);
+  WorldMaintenanceState state;
+  party::ItemTransformationState items;
+  npcs::InteractionQueueState queued;
+  npcs::DadPhoneState phone;
+  WorldInteractionQueue queue(version, queued,
+      f.actors.appearance_scene().intangibility_ticks, phone);
+  f.party.display_order[0] = 1;
+  f.party.character(1).guts = 30;
+  f.random = {0,0};
+  f.start();
+  f.runtime->bind_maintenance(control,state,items,queue);
+  auto operation = f.runtime->begin(story::TickKind::ActorFrame);
+  frame(*operation);
+  check(f.party.character(1).afflictions[0] == 6 &&
+            state.current_party_member_tick == 1 &&
+            f.random == story::RandomState{0,109} &&
+            operation->service() == story::SceneService::Frame,
+        "Actual sunstroke actor call was not consumed by the bound world owner");
+  const auto random = f.random;
+  for(unsigned i=0;i<3;++i) {
+    check(operation->advance(1) == dialogue::Progress::Suspended &&
+              f.random == random && f.clock.input_polls == 0,
+          "Pending frame replayed its complete sunstroke callback");
+  }
+  operation->complete_frame({0,0});
+  finish(*operation);
+  operation.reset();
+  f.runtime.reset();
+}
 void maintenance_controller_lifetime(eb::GameVersion version) {
   Fixture f(version);
   WorldPartyState formation;
@@ -2511,7 +2777,10 @@ int main() {
       camera_streaming(version, true);
       initial_and_dirty_capture(version);
       nested_dialogue_and_explicit_services(version);
+      borrowed_nested_dialogue(version);
       rejection(version);
+      actor_sound_boundary(version);
+      actor_facing_boundary(version);
       lifecycle(version);
       budget_and_failure(version);
       explicit_animation(version);
@@ -2520,8 +2789,10 @@ int main() {
       maintenance_interaction_identity(version, true);
       nested_maintenance_services(version);
       maintenance_controller_lifetime(version);
+      sunstroke_actor_callback(version);
       frame_boundary_failure(version);
       raw_frame_forwarding(version);
+      coordinator_scene_children(version);
       battle_publication_admission(version);
       world_control_scene_boundaries(version);
       native_walking(version, false);

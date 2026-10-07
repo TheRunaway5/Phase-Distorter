@@ -16,6 +16,7 @@ struct PaletteAnimationFrame {
   std::uint16_t delay{};
   std::array<std::array<std::uint32_t, 16>, 6> scenery{};
   std::array<std::uint16_t, 6> scenery_zero{};
+  std::array<std::uint16_t, 6> scenery_high_bits{};
 };
 struct PaletteAnimationTrack {
   std::vector<PaletteAnimationFrame> frames;

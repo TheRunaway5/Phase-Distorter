@@ -229,7 +229,7 @@ struct Native {
   std::function<void(Native &)> before_music;
   const std::vector<std::array<std::uint16_t, 2>> *host_input{};
   std::unique_ptr<Startup> startup;
-  explicit Native(Resources &s)
+  explicit Native(Resources &s, BattleSpriteReadSource* reads = nullptr)
       : r(s), audio_adapter(s.assets),
         graphics_bus(
             std::make_unique<eb::SnesBus>(s.assets.image, s.assets.version)),
@@ -264,7 +264,7 @@ struct Native {
                     story::BattlePublication::WindowBinding::Deferred),
         blank(s.assets.version, fade, frames, clock, visual, scene),
         graphics(s.combatants, objects, allocation, *artwork, windows, party,
-                 colors, scratch, display, video, fade, frame, &sprite_reads),
+                 colors, scratch, display, video, fade, frame, reads ? reads : &sprite_reads),
         prepared(s.assets.version),
         names(roster, party, prepared, *s.substitutions, action),
         prompts(windows),

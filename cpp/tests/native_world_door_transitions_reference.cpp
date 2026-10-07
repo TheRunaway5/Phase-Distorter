@@ -418,7 +418,7 @@ struct Oracle {
              {l.using_door, f.navigation.using_door},
              {l.movement_flags, f.leader.movement_flags},
              {l.debug, f.prompt.debug},
-             {l.battle, f.prompt.battle_mode},
+             {l.battle, f.control.encounter.mode},
              {0x81, f.leader.demo_frames},
              {0x65, f.input.state[0]},
              {0x67, f.input.state[1]},
@@ -508,7 +508,7 @@ struct Oracle {
     equal("moved", game(144), f.control.moved_this_tick);
     equal("movement counter", l.counter, a.movement_counter);
     equal("swirl", l.swirl, a.battle_swirl_ticks);
-    equal("battle", l.battle, f.prompt.battle_mode);
+    equal("battle", l.battle, f.control.encounter.mode);
     equal("input", 0x65, f.input.state[0]);
     equal("pressed", 0x6d, f.input.pressed[0]);
     equal("input2", 0x67, f.input.state[1]);

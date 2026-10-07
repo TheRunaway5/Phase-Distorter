@@ -63,6 +63,10 @@ public:
     std::unique_ptr<Operation> begin_experience(unsigned character, std::uint32_t amount,
                                                dialogue::Conversation &parent);
     bool busy() const noexcept { return active_ != nullptr; }
+    bool uses(const party::State& party) const noexcept { return &growth_.party() == &party; }
+    bool uses(const party::State& party, const RandomState& random) const noexcept {
+        return uses(party) && &growth_.random() == &random;
+    }
     // Abandoned/failed work cannot be restarted on this coordinator. Already
     // applied growth and source scratch writes are not rolled back or replayed.
     bool failed() const noexcept { return failed_; }

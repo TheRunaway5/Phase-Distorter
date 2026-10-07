@@ -59,7 +59,7 @@ void WorldBicycle::execute(std::uint16_t previous_movement) {
     };
     if (appearance.battle_swirl_ticks) {
       if (--appearance.battle_swirl_ticks == 0)
-        prompt_.battle_mode = 0xffff;
+        control_.encounter.mode = 0xffff;
       else
         collide({leader_.leader_x, leader_.leader_y});
     } else {

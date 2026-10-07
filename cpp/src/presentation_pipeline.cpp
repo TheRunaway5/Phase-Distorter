@@ -24,7 +24,8 @@ PresentationPipeline::PresentationPipeline(Time now, const DisplaySettings& sett
     last_presented_ = now;
     if (reduce_flashing_ && !initial_frame.pixels.empty()) {
         current_picture_.pixels = photosensitivity_filter_.apply(initial_frame.pixels, int(initial_frame.width),
-                                                                 DisplaySettings::native_height, true, initial_frame.flashing);
+                                                                 DisplaySettings::native_height, true, initial_frame.flashing,
+                                                                 initial_frame.unfiltered_mask);
         filtered_frame_ = initial_frame.frame;
     }
 }
@@ -89,7 +90,7 @@ void PresentationPipeline::restored_frame(PresentationFrame frame, Time now) {
 void PresentationPipeline::completed_frame(PresentationFrame frame) {
     if (reduce_flashing_) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, true, frame.flashing),
+                                                           DisplaySettings::native_height, true, frame.flashing, frame.unfiltered_mask),
                             frame.width, frame.fixed_aspect};
         filtered_frame_ = frame.frame;
     }
@@ -106,7 +107,7 @@ void PresentationPipeline::completed_frame(PresentationFrame frame) {
 void PresentationPipeline::refresh_current_picture(PresentationFrame frame, bool force) {
     if (force) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, reduce_flashing_, frame.flashing),
+                                                           DisplaySettings::native_height, reduce_flashing_, frame.flashing, frame.unfiltered_mask),
                             frame.width, frame.fixed_aspect};
     } else if (!reduce_flashing_) {
         current_picture_ = {
@@ -115,7 +116,7 @@ void PresentationPipeline::refresh_current_picture(PresentationFrame frame, bool
         filtered_frame_.reset();
     } else if (filtered_frame_ != frame.frame) {
         current_picture_ = {photosensitivity_filter_.apply(frame.pixels, int(frame.width),
-                                                           DisplaySettings::native_height, true, frame.flashing),
+                                                           DisplaySettings::native_height, true, frame.flashing, frame.unfiltered_mask),
                             frame.width, frame.fixed_aspect};
         filtered_frame_ = frame.frame;
     }

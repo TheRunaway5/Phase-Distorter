@@ -100,6 +100,20 @@ int main() {
             if (fault == 5) --bad.layout.groups_end;
             rejects([&] { WorldPalettes invalid(bad.bytes, bad.layout); });
         }
+        Fixture raw;
+        for(unsigned p=0;p<8;++p)raw.word(raw.layout.sprites+(p*16+1)*2,0x8000|packed(20,20,20));
+        raw.word(Fixture::area(6)+2,0x8000|packed(12,12,12));
+        raw.word(Fixture::area(8)+66,0x8000|packed(1,2,7));
+        WorldPalettes raw_colors(raw.bytes,raw.layout);
+        const auto bright=raw_colors.resolve({6,0},{});
+        require(bright.scenery_word(0,1)==(0x8000|packed(12,12,12))&&bright.sprite_word(0,1)==(0x8000|packed(20,20,20)),
+                "Raw high bits were lost by unchanged RGB palette projections");
+        require(raw_colors.resolve({4,0},{}).sprite_word(0,1)==packed(15,15,15),
+                "Tint did not replace the complete original raw word");
+        require(raw_colors.resolve({8,0},{}).sprite_word(4,1)==(0x8000|packed(1,2,7)),
+                "Special sprite palette copy lost its raw high bit");
+        rejects([&]{bright.scenery_word(6,1);});rejects([&]{bright.sprite_word(8,1);});
+        rejects([&]{bright.scenery_word(0,32);});rejects([&]{bright.sprite_word(0,32);});
         Fixture cycle;
         cycle.word(Fixture::area(2), 1);
         cycle.word(Fixture::area(2) + 32, Fixture::area(0));

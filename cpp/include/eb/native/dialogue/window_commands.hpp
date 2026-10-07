@@ -33,6 +33,7 @@ class WindowCommands {
     WindowCommands(const WindowCommands &) = delete;
     WindowCommands &operator=(const WindowCommands &) = delete;
     std::unique_ptr<Operation> begin(const Request &, MenuHost *menus = nullptr);
+    std::unique_ptr<Operation> begin_nested(const Request &, MenuHost::Operation &, MenuHost *menus = nullptr);
 
   private:
     friend class WindowHost;

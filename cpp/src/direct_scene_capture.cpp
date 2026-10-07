@@ -120,7 +120,8 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
             continue;
         const bool world = bg < 2;
         const bool screen_overlay = renderer.presentation_screen_overlay_layer_ & (1u << bg);
-        const unsigned w = world ? plane_width : screen_overlay ? frame->width : 256,
+        const bool moved_window = renderer.presentation_left_windows_ && bg == renderer.presentation_ui_layer_;
+        const unsigned w = world ? plane_width : (screen_overlay || moved_window) ? frame->width : 256,
                        h = world ? plane_height : 224;
         std::map<int, std::vector<std::uint32_t>> planes;
         if (world) {
@@ -179,9 +180,14 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         } else {
             for (unsigned y = 0; y < h; ++y)
                 for (unsigned x = 0; x < w; ++x) {
-                    const int native_x = screen_overlay
+                    int native_x = screen_overlay
                         ? int(x * 256 / frame->width) - int(view.background_scroll_x[bg])
-                        : int(x);
+                        : int(x) - (moved_window ? margin : 0);
+                    if (moved_window) {
+                        const auto sample = renderer.presentation_window_sample_x(native_x, y);
+                        if (!sample) continue;
+                        native_x = *sample;
+                    }
                     if (world && !inside(native_x))
                         continue;
                     const int native_y = world ? int(y) - int(padding) : int(y);
@@ -198,7 +204,7 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         }
         for (const auto &[priority, pixels] : planes) {
             DirectSceneFrame::Quad quad{0, 0, w, h,
-                world ? -float(padding) : screen_overlay ? 0.f : float(margin),
+                world ? -float(padding) : (screen_overlay || moved_window) ? 0.f : float(margin),
                 world ? -float(padding) : 0.f, priority, world ? bg + 1 : 0, false};
             // Clip after motion too: a moving story camera must not slide the
             // stage's black borders along with its interpolated background.

@@ -14,5 +14,6 @@ struct ActionState {
     // Consciousness, array occupancy and collected encounter size are distinct.
     std::uint16_t enemy_count{};
     std::uint16_t shield_nullified{}, damage_reflected{};
+    std::uint16_t smash_attack{}, enemy_final_attack{}, skip_death_cleanup{};
 };
 } // namespace eb::native::battle

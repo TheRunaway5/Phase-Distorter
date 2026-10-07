@@ -76,6 +76,11 @@ void verify() {
               state.ticks_until_change() == 3 &&
               state.colors().scenery == catalog.track(1).frames[1].scenery,
           "Source first delayed publication must select frame1");
+  for(unsigned p=0;p<6;++p)for(unsigned i=0;i<16;++i)
+    require(state.colors().scenery_word(p,i)==std::uint16_t(0x8000|2|(((p*16+i)&31)<<5)|(p<<10)),
+            "Animated source word lost raw high/control bits");
+  require(state.colors().scenery_high_bits==catalog.track(1).frames[1].scenery_high_bits,
+          "Animation publication did not retain complementary source bits");
   require(copy.ticks_until_change() == 2 &&
               copy.colors().scenery == frozen.scenery,
           "Copied scene shared a mutable palette clock");

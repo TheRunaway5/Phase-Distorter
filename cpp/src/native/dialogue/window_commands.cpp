@@ -119,6 +119,16 @@ std::unique_ptr<WindowCommands::Operation> WindowCommands::begin(const Request &
     return std::unique_ptr<Operation>(new Operation(
         std::make_unique<Operation::Execution>(windows_, request, menus, owner)));
 }
+std::unique_ptr<WindowCommands::Operation> WindowCommands::begin_nested(const Request &request,
+    MenuHost::Operation &parent, MenuHost *menus) {
+    auto &output=windows_.output();
+    const auto owner=output.enter(parent.callback_owner(output));
+    try {
+        auto operation=begin(request,menus,owner);
+        operation->execution_->owns=true;
+        return operation;
+    } catch(...) { output.leave(owner);throw; }
+}
 TextOutput::Owner WindowCommands::Operation::active_owner() const {
     const auto &e = *execution_;
     return e.selection ? e.selection->active_owner() : e.owner;

@@ -85,7 +85,7 @@ void legacy_continuation(eb::GameVersion region, bool partial, unsigned legacy_f
     std::vector<std::uint8_t> payload;
     envelope(magic, format, stored_region, cartridge_hash, checksum);
     envelope.blob(payload); envelope.finish();
-    require(format == 7, "New snapshots did not declare scene-aperture schema 7");
+    require(format == 8, "New snapshots did not declare window-mask schema 8");
 
     // Re-encode real complete/partial state with each older positional layout,
     // rather than merely relabelling the current payload.
@@ -227,7 +227,7 @@ int main() {
             for (const bool enhanced : {false, true})
                 for (const bool partial : {false, true}) continuation(region, enhanced, partial);
             for (const bool partial : {false, true})
-                for (unsigned legacy_format : {1u, 2u, 3u, 4u, 5u, 6u}) legacy_continuation(region, partial, legacy_format);
+                for (unsigned legacy_format : {1u, 2u, 3u, 4u, 5u, 6u, 7u}) legacy_continuation(region, partial, legacy_format);
             atomic_rejections(region);
         }
         std::cout << "Complete session snapshot persistence, continuation and atomic rejection checks passed\n";

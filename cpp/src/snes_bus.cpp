@@ -264,7 +264,11 @@ FlashFilterContext SnesBus::flashing_context() const {
     const unsigned group = work_ram[at] | unsigned(work_ram[at + 1]) << 8;
     const unsigned battle = source_profile_->wram_battle_mode_flag;
     return {bool(work_ram[battle] || work_ram[battle + 1]) && giygas_group(group),
-            filter_psi_active_, filter_psi_animation_};
+            filter_psi_active_, filter_psi_animation_,
+            // The renderer latches the gas-station card with its first visible
+            // row. Keep feedback through static, clean holds and palette flashes,
+            // including the last card frame if the CPU has begun the next scene.
+            scene_renderer_.presentation_fixed_aspect() == 4.0 / 3};
 }
 
 // HiROM decode order matters: WRAM and low-bank I/O overlays take precedence

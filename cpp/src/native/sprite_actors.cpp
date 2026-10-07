@@ -13,6 +13,10 @@ void validate(const SpriteActor &actor) {
         (actor.palette != authored_palette && actor.palette >= 8) || actor.draw_group > 3 ||
         actor.upper_layer < 0 || actor.upper_layer > 11 || actor.lower_layer < 0 || actor.lower_layer > 11)
         throw std::invalid_argument("Invalid native sprite actor");
+    if (actor.image && (!actor.image->layout || !actor.image->canvas ||
+        actor.image->canvas->size() != std::size_t(actor.image->layout->canvas_width) *
+                                     actor.image->layout->canvas_height))
+        throw std::invalid_argument("Invalid retained sprite artwork");
     for(const auto& fragment:actor.overlays)
         if(!fragment.pixels||fragment.pixels->width!=16||fragment.pixels->height!=16||
            fragment.pixels->indices.size()!=256||fragment.palette>=8||fragment.priority>3)
@@ -36,7 +40,8 @@ SpriteActors::SpriteActors(std::shared_ptr<SpriteResources> resources) : state_(
 SpriteActors::~SpriteActors() = default;
 ActorId SpriteActors::create(const SpriteActor &actor) {
     validate(actor);
-    auto image = state_->resources->acquire(actor.sprite, actor.pose, actor.surface, actor.format);
+    auto image = actor.image ? actor.image :
+        state_->resources->acquire(actor.sprite, actor.pose, actor.surface, actor.format);
     if (state_->next_id == std::numeric_limits<ActorId>::max())
         throw std::overflow_error("Native actor identity exhausted");
     const ActorId id = state_->next_id;
@@ -52,7 +57,8 @@ ActorId SpriteActors::allocate_identity() {
 void SpriteActors::update(ActorId id, const SpriteActor &actor) {
     auto &entry = state_->actors.at(id);
     validate(actor);
-    auto image = state_->resources->acquire(actor.sprite, actor.pose, actor.surface, actor.format);
+    auto image = actor.image ? actor.image :
+        state_->resources->acquire(actor.sprite, actor.pose, actor.surface, actor.format);
     entry = {actor, std::move(image)};
 }
 bool SpriteActors::erase(ActorId id) { return state_->actors.erase(id) != 0; }

@@ -95,9 +95,10 @@ void WorldPartyMovement::project(ActorId id) const {
     absolute();
     return;
   }
-  const auto leader_id = actors_.actor_for_role(leader_role);
-  if (!leader_id)
-    throw std::logic_error("Cached follower leader has no native actor");
+  // The source reads retained role tables even after that role is retired.
+  // Its integer coordinates and screen projection do not require a live actor.
+  const auto leader_position = actors_.authored_position(leader_role);
+  const auto leader_behavior = actors_.authored_behavior(leader_role);
   const auto direction = actor.behavior.direction;
   if (direction >= 8)
     throw std::invalid_argument("Invalid follower projection direction");
@@ -108,15 +109,14 @@ void WorldPartyMovement::project(ActorId id) const {
           "Follower spacing is outside its authored six entries");
     return table[offset / 2];
   };
-  const auto &leader = actors_.actor(*leader_id);
   std::uint16_t result;
   if (direction & 1) {
     const auto dx =
-        magnitude(std::uint16_t(integral(leader, 0) - integral(actor, 0)));
+        magnitude(std::uint16_t(std::uint16_t(leader_position[0] >> 16) - integral(actor, 0)));
     result = dx;
     if (dx >= spacing(data_.diagonal_spacing)) {
       const auto dy =
-          magnitude(std::uint16_t(integral(leader, 1) - integral(actor, 1)));
+          magnitude(std::uint16_t(std::uint16_t(leader_position[1] >> 16) - integral(actor, 1)));
       result = std::uint16_t(dy - dx);
       if (result)
         result = std::uint16_t(magnitude(result) - 1);
@@ -124,11 +124,11 @@ void WorldPartyMovement::project(ActorId id) const {
   } else {
     const unsigned axis = (direction == 2 || direction == 6) ? 0 : 1;
     result = std::uint16_t(
-        axis ? leader.behavior.projected_x ^ actor.behavior.projected_x
-             : leader.behavior.projected_y ^ actor.behavior.projected_y);
+        axis ? leader_behavior.projected_x ^ actor.behavior.projected_x
+             : leader_behavior.projected_y ^ actor.behavior.projected_y);
     if (!result) {
       const auto distance = magnitude(
-          std::uint16_t(integral(leader, axis) - integral(actor, axis)));
+          std::uint16_t(std::uint16_t(leader_position[axis] >> 16) - integral(actor, axis)));
       result =
           magnitude(std::uint16_t(distance - spacing(data_.cardinal_spacing)));
       if (result)

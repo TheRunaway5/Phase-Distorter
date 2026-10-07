@@ -154,7 +154,7 @@ void run(eb::GameVersion version) {
               f.control.moved_this_tick == 7 &&
               f.control.bicycle_turn_frames == 3,
           "Swirl branch changed movement state");
-    check(f.prompt.battle_mode == (swirl == 1 ? 0xffff : 0) &&
+    check(f.control.encounter.mode == (swirl == 1 ? 0xffff : 0) && f.prompt.battle_mode == 0 &&
               (swirl == 1 ? f.leader.collision_actor == f.player
                           : !f.leader.collision_actor),
           "Swirl expiry or collision path differs");

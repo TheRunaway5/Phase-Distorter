@@ -33,6 +33,8 @@ struct Character {
     // char_struct::unknown94, cleared by the round prefix and written by
     // battle selection. Saved character data restores it into this same live owner.
     std::uint8_t battle_selection{};
+    std::uint8_t miss_rate{}, boosted_speed{}, boosted_guts{}, boosted_vitality{},
+                 boosted_iq{}, boosted_luck{};
     // Raw equipment-derived levels, before battle's damage/status conversion.
     // Saved character data restores these into this same live party owner.
     std::uint8_t fire_resistance{}, freeze_resistance{}, flash_resistance{},
@@ -76,8 +78,11 @@ class State {
     std::uint8_t party_count{}, controlled_count{};
     std::uint8_t party_status{};
     // GAME_STATE auto-fight byte; raw nonzero values are retained in saves.
-    std::uint8_t auto_fight{};
+    std::uint8_t auto_fight{}, party_psi{};
     std::uint32_t money_carried{}, bank_balance{};
+    // GAME_STATE.unknownC4: cumulative amount actually credited by battle
+    // deposits, after the ATM limit. This remains a wrapping source dword.
+    std::uint32_t battle_money_deposited{};
 
   private:
     GameVersion version_;

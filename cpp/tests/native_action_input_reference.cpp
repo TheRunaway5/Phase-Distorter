@@ -28,15 +28,17 @@ constexpr std::array contracts{
     Contract{0xc020f1, 0xc020ff, ActionRequestKind::CallEngine,
              NativeAction::ReleaseAppearance},
     Contract{0xc0778a, 0xc079da},
-    Contract{0xc09f82, 0xc09f61},
+    Contract{0xc09f82, 0xc09f61, ActionRequestKind::CallEngine,
+             NativeAction::ChooseRandom, 5},
     Contract{0xc09fbb, 0xc09f9a},
-    Contract{0xc0a841, 0xc0a820},
+    Contract{0xc0a841, 0xc0a820, ActionRequestKind::CallEngine, NativeAction::PlaySound, 2},
     Contract{0xc0a88d, 0xc0a86c},
     Contract{0xc0a8b3, 0xc0a892},
     Contract{0xc0a943, 0xc0a922},
     Contract{0xc0a98b, 0xc0a96a, ActionRequestKind::CallEngine,
              NativeAction::CreateActor, 4},
-    Contract{0xc0aa6e, 0xc0aa4d},
+    Contract{0xc0aa6e, 0xc0aa4d, ActionRequestKind::CallEngine,
+             NativeAction::SetDirectionFrame, 2},
     Contract{0xc0c48f, 0xc0c471, ActionRequestKind::CallEngine,
              NativeAction::EnemyDistanceBand},
     Contract{0xc0c6b6, 0xc0c698, ActionRequestKind::CallEngine,
@@ -47,10 +49,12 @@ constexpr std::array contracts{
              NativeAction::EnemyContactActive},
     Contract{0xc40015, 0xc40015, ActionRequestKind::CallEngine,
              NativeAction::RefreshFirstAndWithinArea},
-    Contract{0xc46adb, 0xc44857},
+    Contract{0xc46adb, 0xc44857, ActionRequestKind::CallEngine,
+             NativeAction::TargetAngle},
     Contract{0xc46b65, 0xc448e1, ActionRequestKind::CallEngine,
              NativeAction::CaptureEnemyLeaderTarget},
-    Contract{0xc46e46, 0xc44bca},
+    Contract{0xc46e46, 0xc44bca, ActionRequestKind::CallEngine,
+             NativeAction::YieldToText},
     Contract{0xc46e74, 0xc44bf8},
     Contract{0xc4ece7, 0xc4bf42},
     Contract{0xc0d7e0, 0xc0d7a8, ActionRequestKind::SetTickCallback},
@@ -175,7 +179,7 @@ int main(int argc, char **argv) {
     for (int arg = 1; arg < argc; ++arg) {
       const auto assets = eb::load_game_assets(argv[arg], eb::asset_profiles());
       const ActionBindings bindings(assets.version);
-      const ActionScriptData bytes(std::vector<std::uint8_t>{2, 0, 3, 0}, 0,
+      const ActionScriptData bytes(std::vector<std::uint8_t>{2, 0, 3, 0, 0}, 0,
                                    std::vector<std::uint32_t>{0});
       unsigned cases = 0, steps = 0, owner_services = 0, opaque_services = 0;
       for (const auto &contract : contracts) {
@@ -185,11 +189,12 @@ int main(int argc, char **argv) {
         request.kind = contract.kind;
         request.identifier = helper;
         const auto operation = bindings.compile(request, bytes);
-        require(operation.operation == contract.operation &&
-                    operation.parameter_bytes == contract.parameter_bytes &&
-                    operation.temporary_input ==
-                        ActionTemporaryInput::Independent,
-                "Audited input/owner contract changed");
+        if (operation.operation != contract.operation ||
+            operation.parameter_bytes != contract.parameter_bytes ||
+            operation.temporary_input != ActionTemporaryInput::Independent)
+          throw std::runtime_error("Audited input/owner contract changed: helper=" +
+              std::to_string(helper) + " operation=" + std::to_string(unsigned(operation.operation)) +
+              " bytes=" + std::to_string(operation.parameter_bytes));
         if (contract.operation == NativeAction::Unsupported)
           ++opaque_services;
         else
@@ -198,11 +203,20 @@ int main(int argc, char **argv) {
           require(std::get<CreateActorOperands>(operation.payload) ==
                       CreateActorOperands{2, 3},
                   "CreateActor input audit lost its typed inline operands");
+        if (contract.operation == NativeAction::ChooseRandom)
+          require(std::get<ChooseRandomOperands>(operation.payload) ==
+                      ChooseRandomOperands{2, {0x0300, 0}},
+                  "ChooseRandom input audit lost its typed inline words");
         ActionActorState actor;
         ActorActionContext context;
         ActionSceneContext scene;
-        require(!apply_action(operation, 0x1234, actor, context, scene).handled,
-                "Owner-dependent input audit bypassed its required service");
+        const auto applied = apply_action(operation, 0x1234, actor, context, scene);
+        if (contract.operation == NativeAction::YieldToText)
+          require(applied.handled && applied.value == 1 && scene.action_script_state == 1,
+                  "Actual yield producer lost its shared word or result");
+        else
+          require(!applied.handled,
+                  "Owner-dependent input audit bypassed its required service");
         for (const unsigned incoming : {1u, 0x1234u, 0x8000u, 0xffffu}) {
           if (!converges(assets, helper, incoming, steps))
             throw std::runtime_error(
@@ -211,7 +225,7 @@ int main(int argc, char **argv) {
           ++cases;
         }
       }
-      require(owner_services == 9 && opaque_services == 16 && cases == 100,
+      require(owner_services == 14 && opaque_services == 11 && cases == 100,
               "Exact input-contract inventory changed");
       const unsigned partial =
           assets.version == eb::GameVersion::JP ? 0xc424ca : 0xc4258c;

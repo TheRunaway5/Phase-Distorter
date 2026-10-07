@@ -49,6 +49,8 @@ class InteractionCalls {
     // owner and its final event-flag allocation must also outlive the Scene.
     InteractionCalls(std::shared_ptr<const dialogue::Program>, npcs::Interactions&,
                      dialogue::PromptHost&, Scene&, EntityFadePending);
+    InteractionCalls(std::shared_ptr<const dialogue::Program>, npcs::Interactions&,
+                     dialogue::MenuHost&, Scene&, EntityFadePending);
     ~InteractionCalls();
     InteractionCalls(const InteractionCalls&) = delete;
     InteractionCalls& operator=(const InteractionCalls&) = delete;

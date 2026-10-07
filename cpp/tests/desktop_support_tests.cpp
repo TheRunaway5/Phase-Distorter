@@ -156,6 +156,34 @@ void preference_contract(const std::filesystem::path &directory) {
                 recovered.reduce_flashing && game == eb::GameVersion::JP,
             "Malformed preferences did not retain defaults and valid independent fields");
 }
+void sixteen_ten_contract(const std::filesystem::path &directory) {
+    const auto path = path_text(directory / "steam-deck.cfg");
+    eb::DisplaySettings saved;
+    saved.widescreen = true;
+    eb::store_display_settings(path, saved, eb::GameVersion::US);
+    const auto launch = options({"--config", path, "--aspect", "16:10", "--fullscreen"});
+    require(launch.start_fullscreen && launch.aspect_override && launch.widescreen_override &&
+                launch.display.widescreen && launch.display.aspect == eb::AspectRatio::SixteenTen,
+            "Steam Deck launch options lost the named 16:10 preset or fullscreen");
+    auto game = eb::GameVersion::US;
+    auto resolved = eb::resolve_display_settings(launch, game);
+    require(resolved.widescreen && resolved.aspect == eb::AspectRatio::SixteenTen &&
+                resolved.target_aspect(1280, 800) == 16.0 / 10 && resolved.render_width(1280, 800) == 358 &&
+                resolved.render_width(1920, 1080) == 358,
+            "16:10 did not override saved 16:9 settings or retain a centered 358-column canvas");
+    eb::store_display_settings(path, resolved, game);
+    resolved = eb::resolve_display_settings(options({"--config", path}), game);
+    require(resolved.widescreen && resolved.aspect == eb::AspectRatio::SixteenTen &&
+                resolved.target_aspect(1280, 800) == 16.0 / 10,
+            "16:10 preset did not survive a preference roundtrip");
+    resolved = eb::resolve_display_settings(options({"--config", path, "--no-widescreen"}), game);
+    require(!resolved.widescreen && resolved.aspect == eb::AspectRatio::SixteenTen &&
+                resolved.render_width(1280, 800) == 256,
+            "Disabling widescreen cropped the native view or discarded the selected 16:10 preset");
+    resolved.widescreen = true;
+    require(resolved.render_width(1280, 800) == 358,
+            "Re-enabling widescreen did not restore the selected 16:10 view");
+}
 void replay_contract(const std::filesystem::path &directory) {
     const auto path = directory / "route.input";
     write_file(path, "# frame masks\n\n2 0x80 # press\n5 0\n10 512\n");
@@ -276,6 +304,7 @@ int main() {
         TemporaryDirectory directory;
         option_contract();
         preference_contract(directory.path);
+        sixteen_ten_contract(directory.path);
         replay_contract(directory.path);
         storage_contract(directory.path);
         audio_contract(directory.path);

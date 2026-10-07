@@ -47,6 +47,7 @@ struct Fixture {
             word(collision_layout.surface_offset_y + id * 2, 10);
         }
         word(collision_layout.width_cells + 2, 0); word(collision_layout.height_cells + 2, 0);
+        word(collision_layout.height_cells + 4, 2);
         for (unsigned i = 0; i < 6; ++i) {
             word(collision_layout.probe_x + i * 2, i % 3 == 0 ? 0xfff8 : i % 3 == 1 ? 0 : 7);
             word(collision_layout.probe_y + i * 2, i < 3 ? 0 : 7);
@@ -79,6 +80,11 @@ int main() {
                 "Zero-sized footprint must still sample the wrapped preceding edge");
         require(collision.edge(area,{65535,0},0,CollisionEdge::Top) == 0x0b,
                 "Ceiling addition did not wrap before selecting cells");
+        require(collision.edge(area,{65528,0},0,CollisionEdge::Top) ==
+                    (collision.tile(area,{8191,0}).surface_flags | collision.tile(area,{0,0}).surface_flags) &&
+                collision.edge(area,{0,65528},2,CollisionEdge::Left) ==
+                    (collision.tile(area,{0,8191}).surface_flags | collision.tile(area,{0,0}).surface_flags),
+                "Edge iteration did not wrap at the unsigned16 pixel seam");
         require(collision.perimeter(area,{9,65535},0,0x4000) == 0x4077,
                 "Perimeter lost initial flags or an edge");
         require(collision.directional_surface(area,{9,65535},0,CollisionDirection::NorthEast) == 0x47 &&

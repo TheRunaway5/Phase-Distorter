@@ -85,13 +85,13 @@ void run(eb::GameVersion version) {
       f.maintenance.enemy_touched = enemy;
       f.actors.appearance_scene().battle_swirl_ticks = swirl;
       f.control.moved_this_tick = 7;
-      f.prompt.battle_mode = 0x1234;
+      f.control.encounter.mode = 0x1234;
       const auto oldx = f.leader.leader_x;
       const auto oldfraction = f.control.x_fraction;
       auto op = escalator->begin();
       check(op->advance(), "Early gate failed to complete");
       check(f.actors.appearance_scene().battle_swirl_ticks == (enemy || !swirl ? swirl : swirl - 1) &&
-            f.prompt.battle_mode == 0x1234, "Enemy/swirl precedence or battle mode changed");
+            f.control.encounter.mode == 0x1234, "Enemy/swirl precedence or battle mode changed");
       if (enemy || swirl)
         check(f.leader.leader_x == oldx && f.control.x_fraction == oldfraction && f.control.moved_this_tick == 7,
               "Early gate changed position or reset outer movement word");

@@ -108,6 +108,14 @@ void BattlePublication::bind_frame_display(battle::FrameDisplay &display) {
         throw std::invalid_argument("Battle frame publication requires its actual display transport");
     frame_display_ = &display;
 }
+void BattlePublication::bind_world_presentation(ScenePublication &world) {
+    if (&world == this || world.window_host() || !visual_ || !fade_ || !frame_display_ ||
+        !world.uses_visual(*visual_) || world.display_fade() != fade_ ||
+        !world.uses_frame_display(*frame_display_) || !world.uses_palette_transport(colors_) ||
+        (world_ && world_ != &world))
+        throw std::invalid_argument("Battle world routing requires its actual shared publication owners");
+    world_ = &world;
+}
 bool BattlePublication::supports_battle_frame(const battle::Frame &frame) const noexcept {
     return frame_display_ && visual_ && fade_ &&
         frame.uses(colors_, display_, *frame_display_, background_, combatants_, *visual_, *fade_);
@@ -128,6 +136,31 @@ std::shared_ptr<const DirectSceneFrame> BattlePublication::capture_with(
     const battle::PsiDisplayState &display, const WorldEncounterVisualState *preview_visual,
     unsigned brightness, const battle::FrameDisplay::Screen *screen,
     std::uint8_t hdma, const EncounterWindowMask *rows) const {
+    if (world_ && !windows_.prompt_state().battle_mode) {
+        if (!stamp.palette_indices.empty() && stamp.palette_indices.size() != stamp.atlas.size())
+            throw std::invalid_argument("World palette identity atlas has invalid extent");
+        auto frame = std::make_shared<DirectSceneFrame>(stamp);
+        for (unsigned i = 0; i < frame->palette_indices.size(); ++i) {
+            const unsigned id = frame->palette_indices[i];
+            if (id > 256) throw std::out_of_range("Invalid world publication palette identity");
+            if (id < 256 && (frame->atlas[i] >> 24))
+                frame->atlas[i] = color(colors.displayed_palette(id / 16)[id % 16]);
+        }
+        const auto &visual = preview_visual ? *preview_visual : *visual_;
+        frame->effects = capture_scene_effects(visual, color(colors.displayed_palette(0)[0]), rows);
+        frame->effects->brightness = brightness;
+        std::array<std::uint16_t, 32> window_colors;
+        for (unsigned i = 0; i < window_colors.size(); ++i)
+            window_colors[i] = colors.displayed_palette(i / 16)[i % 16];
+        // World text remains BG3 even when retained battle artwork was Mode0.
+        // The same OAM-gated scroll receipt governs this canonical UI plane.
+        const auto ui = screen ? scrolled_windows(windows_, display.scroll[2]) : *windows_.frame();
+        auto result = std::make_shared<DirectSceneFrame>(*with_window_layer(*frame, ui, window_colors, true));
+        // Capture freezes colors. Later palette staging cannot recolor this
+        // already completed map, actors or dialogue frame.
+        result->palette_indices.clear();
+        return result;
+    }
     if (screen && (hdma & (1u << 2)) && frame_display_->letterbox.top_end) {
         const auto &box = frame_display_->letterbox;
         // Higher first counters set HDMA's repeat bit and no longer describe
@@ -136,11 +169,19 @@ std::shared_ptr<const DirectSceneFrame> BattlePublication::capture_with(
         if (box.top_end > 128 || box.bottom_start < box.top_end || box.bottom_start > 224)
             throw std::invalid_argument("Battle letterbox is outside its ordinary HDMA counter domain");
     }
+    const auto *layout = background_.display_layout(display_);
     auto background = background_.snapshot();
+    // LOAD can disable the secondary generator while retaining BG4's map,
+    // graphics and HDMA stream. The real display policy still decides whether
+    // that physical plane is visible.
+    if (layout && background.bitdepth == 2 && !background.secondary) {
+        const auto retained = background_.retained_secondary_background();
+        background.secondary = retained ? retained->snapshot() : BattleBackgroundFrame{};
+    }
     const auto visual = preview_visual ? preview_visual : visual_;
     auto policy = visual ? capture_scene_effects(*visual, color(colors.displayed_palette(0)[0]), rows)
                           : *policy_;
-    if (screen) {
+    if (screen || layout) {
         const unsigned first = background.bitdepth == 2 ? 2 : 1;
         background.primary.horizontal_scroll = display.scroll[first].x;
         background.primary.vertical_scroll = display.scroll[first].y;
@@ -157,8 +198,17 @@ std::shared_ptr<const DirectSceneFrame> BattlePublication::capture_with(
     }
     if (fade_) policy.brightness = brightness;
     policy.backdrop = color(colors.displayed_palette(0)[0]);
+    ScenePalette background_colors{};
+    if (layout)
+        for (unsigned i = 0; i < background_colors.size(); ++i) {
+            const auto packed = colors.displayed_palette(i / 16)[i % 16];
+            background_colors[i] = {std::uint8_t(packed & 31), std::uint8_t((packed >> 5) & 31),
+                                    std::uint8_t((packed >> 10) & 31)};
+        }
+    const auto layers = layout ? background.draw_published_layers(background_colors,
+        display.vram(), *layout, stamp.width, stamp.frame, stamp.scene_identity) : nullptr;
     auto frame = std::make_shared<DirectSceneFrame>(*battle::PsiSceneFrame(display, colors, background.bitdepth)
-        .compose(background, policy, stamp.width, stamp.frame, stamp.scene_identity));
+        .compose(background, policy, stamp.width, stamp.frame, stamp.scene_identity, layers.get()));
     if (!screen || screen->objects) {
         const auto objects = (screen ? *screen->objects : combatants_.snapshot())
             .draw(stamp.width, stamp.frame, stamp.scene_identity);
@@ -227,8 +277,9 @@ std::shared_ptr<const DirectSceneFrame> BattlePublication::capture_next(const Di
     colors.upload_mode = colors_.upload_mode;
     colors.publish_pending();
     battle::PsiDisplayState display;
-    display.graphics = display_.preview_graphics(scratch_);
-    display.tilemap = display_.preview_pending(scratch_);
+    const auto vram = display_.preview_vram(scratch_);
+    for (unsigned i = 0; i < vram.size(); ++i)
+        display.set_vram_byte(std::uint16_t(i), vram[i]);
     const auto screen = frame_display_ ? std::optional{frame_display_->preview_screen()} : std::nullopt;
     display.scroll = screen ? screen->scroll : display_.scroll;
     const auto fade = fade_ ? std::optional{fade_->preview_next_frame()} : std::nullopt;
@@ -250,6 +301,10 @@ std::shared_ptr<const DirectSceneFrame> BattlePublication::capture_next(const Di
             visual_->window_rows_enabled = false;
             ++visual_->window_revision;
         }
+    }
+    if (auto* registers = display_.peripherals()) {
+        registers->publish_oam(frame_display_ ? frame_display_->pending_display_id() : 0);
+        registers->publish_palette(colors_.upload_mode);
     }
     display_.publish_pending(scratch_);
     if (frame_display_) {

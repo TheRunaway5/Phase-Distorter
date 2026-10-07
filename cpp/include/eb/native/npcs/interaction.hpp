@@ -29,6 +29,8 @@ struct InteractionState {
     CollisionPoint checked_surface_origin;
     std::uint16_t surface_flags{};
     MapTextState map_text;
+    // GAME_STATE.unknown92 is independent from PLAYER_MOVEMENT_FLAGS.
+    std::uint16_t area_character_style{};
 };
 struct InteractionSelection {
     dialogue::ReferenceKey reference{};
@@ -92,6 +94,10 @@ class Interactions {
     // predicate and does not require an actor. Stale targets fail after the
     // source-ordered flag write, without fabricating a replacement actor.
     std::uint16_t apply_gift(GiftAction);
+    // C0C30C: read this live actor's own NPC flag and select its existing
+    // animation frame. No flag write, interaction selection or tick occurs.
+    // Its graphics-transfer return has no semantic native value.
+    void refresh_gift(ActorId);
     // Explicitly bind an unbound ActorWorld span after final flag allocation,
     // or require an identical existing binding. That
     // allocation must outlive ActorWorld and remain stable; resizing/replacing
@@ -100,6 +106,9 @@ class Interactions {
     dialogue::WindowHost& windows() const;
     ActorWorld& actors() const;
     std::unique_ptr<Operation> begin(InteractionAction = InteractionAction::Talk);
+    std::unique_ptr<Operation> begin_find_checkable();
+    const InteractionRecord *selected_npc() const;
+    bool bicycle_blocked();
   private:
     struct Execution;
     std::unique_ptr<Execution> execution_;

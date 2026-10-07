@@ -95,7 +95,7 @@ void run(eb::GameVersion version) {
     f.leader.collision_actor = f.player;
     const auto xy = std::pair(f.leader.leader_x, f.leader.leader_y);
     check(f.walking.begin()->advance(), "Final swirl step did not complete");
-    check(f.prompt.battle_mode == 0xffff && f.mushroom.timer == 1799 &&
+    check(f.control.encounter.mode == 0xffff && f.prompt.battle_mode == 0 && f.mushroom.timer == 1799 &&
               f.mushroom.modifier == 1 && f.input.state[0] == 0x100 &&
               f.input.pressed[0] == 0x100,
           "Input remapping did not precede final swirl transition");

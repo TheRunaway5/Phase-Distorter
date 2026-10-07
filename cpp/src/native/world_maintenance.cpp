@@ -1,9 +1,43 @@
 #include "eb/native/world_maintenance.hpp"
 #include "eb/native/world_scene_presentation.hpp"
+#include "eb/native/story/random.hpp"
 #include <algorithm>
 #include <stdexcept>
 
 namespace eb::native {
+std::uint16_t inflict_sunstroke_check(party::State &party,
+                                     const WorldControlState &control,
+                                     WorldMaintenanceState &state,
+                                     story::RandomState &random) {
+  if (state.overworld_status_suppression)
+    return state.overworld_status_suppression;
+  const auto surface = std::uint16_t(control.trodden_surface_flags & 12);
+  if (surface != 4) return surface;
+  // Read-only admission covers only the source-reachable formation prefix.
+  for (unsigned i = 0; i < 6 && party.display_order[i] &&
+                       party.display_order[i] < 5; ++i)
+    if (party.controlled_order[i] >= party::State::character_count)
+      throw std::out_of_range("Sunstroke selection leaves the owned party records");
+  std::uint16_t result = surface;
+  for (unsigned i = 0; i < 6; ++i) {
+    const auto displayed = party.display_order[i];
+    if (!displayed) return 0;
+    if (displayed >= 5) return std::uint16_t(displayed - 5);
+    const unsigned character = unsigned(party.controlled_order[i]) + 1;
+    state.current_party_member_tick = character;
+    auto &value = party.character(character);
+    result = value.afflictions[0];
+    if (result && result != 7) continue;
+    const auto amount = value.guts > 30 ? 1u : 30u - value.guts;
+    const auto threshold = (amount << 8) / 100;
+    result = story::next_random(random);
+    if (result <= threshold) {
+      value.afflictions[0] = 6;
+      result = 6;
+    }
+  }
+  return result;
+}
 void WorldMaintenance::bind_presentation(WorldScenePresentation &presentation) {
   if (busy() || failed() || (presentation_ && presentation_ != &presentation))
     throw std::logic_error("Cannot replace a live maintenance palette publisher");
@@ -93,7 +127,7 @@ void WorldMaintenance::phone() {
   if (phone_.timer || control_.state_.automatic_mode == 2)
     return;
   const auto &appearance = control_.actors_.appearance_scene();
-  if (!windows_.draw_order().empty() || state_.battle_mode_flag ||
+  if (!windows_.draw_order().empty() || windows_.prompt_state().battle_mode ||
       appearance.battle_swirl_ticks || state_.enemy_touched || phone_.queued)
     return;
   constexpr unsigned flag = 775 - 1;
@@ -131,7 +165,7 @@ bool WorldMaintenance::Operation::advance(unsigned budget) {
     while (budget--) {
       switch (phase_) {
       case 0:
-        if (o.windows_.prompt_state().battle_mode) {
+        if (o.control_.state_.encounter.mode) {
           phase_ = 8;
           break;
         }
@@ -147,6 +181,7 @@ bool WorldMaintenance::Operation::advance(unsigned budget) {
         if (o.animation_.active() && o.animation_.advance()) {
           o.palettes_.scenery = o.animation_.colors().scenery;
           o.palettes_.scenery_zero = o.animation_.colors().scenery_zero;
+          o.palettes_.scenery_high_bits = o.animation_.colors().scenery_high_bits;
           if (o.presentation_) o.presentation_->publish_scenery(o.palettes_);
         }
         phase_ = 3;

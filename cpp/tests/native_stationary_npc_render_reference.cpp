@@ -1375,8 +1375,9 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
                         f.bus->work_ram[oval_buffer + cy * 2 + 1] >= cx,
                     "Original oval routine did not include its authored focus");
             for (const unsigned width : {398u, 522u, 796u, 1024u})
-                for (const bool color_window : {false, true})
+                for (const unsigned window_form : {0u, 1u, 2u})
                   for (const unsigned camera_mode : {0u, 2u}) {
+                    const bool color_window = window_form == 1, dual_window = window_form == 2;
                     f.put(jp ? 0x9b56 : 0x98a5, camera_mode);
                     f.renderer.set_presentation_width(f.view(), width);
                     auto reference = f.renderer;
@@ -1384,8 +1385,14 @@ void test_prayer_focus_matches_native(const eb::GameAssets &assets) {
                     f.renderer.enable_direct_rendering(true);
                     // Both source window forms must retain exactly the same
                     // people as the native image, throughout opening/closing.
-                    f.bus->write_byte(0x2125, color_window ? 0x30 : 0x03);
-                    f.bus->write_byte(0x2123, color_window ? 0 : 0x33);
+                    // Actual SET_WINDOW_MASK uses inverted windows with AND,
+                    // not merely the synthetic single-window form.
+                    f.bus->write_byte(0x2125, color_window ? 0x30 : dual_window ? 0x0f : 0x03);
+                    f.bus->write_byte(0x2123, color_window ? 0 : dual_window ? 0xff : 0x33);
+                    f.bus->write_byte(0x2128, 255);
+                    f.bus->write_byte(0x2129, 0);
+                    f.bus->write_byte(0x212a, dual_window ? 0x55 : 0);
+                    f.bus->write_byte(0x212b, dual_window ? 0x55 : 0);
                     f.bus->write_byte(0x212e, color_window ? 0 : 0x13);
                     f.bus->write_byte(0x2130, color_window ? 0x80 : 0);
                     const auto logical = f.bus->work_ram;

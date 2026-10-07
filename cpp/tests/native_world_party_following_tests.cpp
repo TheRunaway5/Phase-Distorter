@@ -56,7 +56,7 @@ struct Fixture {
         g[i] = i + 1;
     following = std::make_unique<WorldPartyFollowing>(
         *world, party, formation, trail, control, leader, prompt, maintenance,
-        leader.movement_flags, state, data);
+        leader.area_character_style, state, data);
     party.display_order = {1, 2, 3, 4, 5, 6};
     party.party_count = 6;
     for (unsigned i = 0; i < 6; ++i)
@@ -94,11 +94,11 @@ void selection() {
             f.formation.trail_cursors[0] == 0,
         "Preparation latched or moved the actor");
   f.party.character(1).afflictions = {4, 1};
-  f.leader.movement_flags = 3;
+  f.leader.area_character_style = 3;
   f.following->prepare(id);
   check(a.appearance_context.overlay_flags == 0 && a.appearance.sprite() == 5,
         "Tiny graphics overlay clearing differs");
-  f.leader.movement_flags = 0;
+  f.leader.area_character_style = 0;
   f.following->prepare(id);
   check(a.appearance_context.overlay_flags == 0xc000,
         "Nausea/mushroom overlay differs");
@@ -179,7 +179,6 @@ void boundaries() {
     check(f.world->advance_tick() == WorldTickResult::NeedsEngine &&
               a.action().variables == vars && a.action().position == xyz,
           "Suspended callback replayed or partially committed");
-  const auto before = a.action().velocity;
   a.action().velocity = {};
   const auto predecessor = f.actor(0);
   f.world->actor(predecessor).action().velocity = {};
@@ -191,7 +190,7 @@ void boundaries() {
     f.control.automatic_mode = gate == 0 ? 3 : 0;
     f.world->appearance_scene().battle_swirl_ticks = gate == 1;
     f.maintenance.enemy_touched = gate == 2;
-    f.prompt.battle_mode = gate == 3;
+    f.control.encounter.mode = gate == 3;
     const auto p = a.action().position;
     check(f.following->tick(id) && a.action().position == p,
           "Follower early gate mutated coordinates");

@@ -41,6 +41,13 @@ public:
   std::uint32_t experience_for_level(unsigned character, unsigned level) const;
   void recalculate_stats(party::Character &, unsigned character,
                          const CharacterGrowthContext & = {}) const;
+  // CHANGE_EQUIPPED_* recalculates only the source slot's affected fields.
+  // Positions are one-based inventory indices; zero unequips. No growth/RNG.
+  std::uint16_t change_equipment(party::Character &, unsigned character,
+      party::EquipmentSlot, std::uint16_t position,
+      const CharacterGrowthContext & = {}) const;
+  void recalculate_derived_stat(party::Character &, unsigned character, unsigned stat,
+                               const CharacterGrowthContext &) const;
   CharacterLevelGrowth
   level_up_silent(party::Character &, unsigned character, story::RandomState &,
                   const CharacterGrowthContext & = {}) const;
@@ -62,7 +69,7 @@ public:
 private:
   friend class VisibleCharacterGrowth;
   struct ItemParameters {
-    std::uint8_t strength{}, poo_strength{}, secondary{};
+    std::uint8_t strength{}, poo_strength{}, secondary{}, special{};
   };
   struct InitialCharacter {
     std::uint16_t level{}, experience{};

@@ -85,6 +85,16 @@ std::uint16_t WorldEnemyBehavior::capture_leader_target(ActorId id) {
     throw;
   }
 }
+std::uint16_t WorldEnemyBehavior::direction_from_leader(ActorId id) {
+  check();
+  const auto &actor=actors_.actor(id);
+  const auto classify=[](std::uint16_t delta) {return signed_word(delta)<0?0u:delta?2u:1u;};
+  const auto x=classify(wrap(leader_.leader_x-(actor.action().position[0]>>16)));
+  const auto y=classify(wrap(leader_.leader_y-(actor.action().position[1]>>16)));
+  // Literal shared DIRECTION_MATRIX, source data/map/direction_matrix.asm.
+  constexpr std::array<std::uint16_t,9> matrix{7,0,1,6,0,2,5,4,3};
+  return matrix[y*3+x];
+}
 std::uint16_t WorldEnemyBehavior::level_sum() const {
   if (party_.party_count > party_.display_order.size())
     throw std::logic_error(
@@ -146,12 +156,62 @@ std::uint16_t WorldEnemyBehavior::chase_angle(ActorId id) {
     const auto angle = angles_.angle(
         {std::uint16_t(actor.action().position[0] >> 16),
          std::uint16_t(actor.action().position[1] >> 16)},
-        {actor.action().variables[6], actor.action().variables[7]});
+        {actor.action().variables[6], actor.action().variables[7]}, peripherals_);
     return wrap(unsigned(angle) + (reverse ? 0x8000 : 0));
   } catch (...) {
     failed_ = true;
     throw;
   }
+}
+void WorldEnemyBehavior::bind_peripherals(PeripheralState& owner) {
+  if (peripherals_ && peripherals_ != &owner)
+    throw std::logic_error("Scripted movement has another peripheral owner");
+  peripherals_ = &owner;
+}
+std::uint16_t WorldEnemyBehavior::target_angle(ActorId id) {
+  try {
+    check();
+    const auto& actor = actors_.actor(id).action();
+    return angles_.angle({std::uint16_t(actor.position[0] >> 16),
+                          std::uint16_t(actor.position[1] >> 16)},
+                         {actor.variables[6], actor.variables[7]}, peripherals_);
+  } catch (...) { failed_ = true; throw; }
+}
+bool WorldEnemyBehavior::target_reached(ActorId id) {
+  try {
+    check();
+    const auto& actor = actors_.actor(id).action();
+    const auto distance = [&](unsigned axis) {
+      const auto delta = std::uint16_t(actor.variables[6 + axis] - (actor.position[axis] >> 16));
+      return delta & 0x8000 ? std::uint16_t(0u - delta) : delta;
+    };
+    if (distance(0) < actor.variables[5] && distance(1) < actor.variables[5]) return true;
+    (void)set_velocity(id, target_angle(id));
+    return false;
+  } catch (...) { failed_ = true; throw; }
+}
+void WorldEnemyBehavior::face_npc_toward_actor(ActorId current, std::uint16_t npc) {
+  try {
+    check();
+    const auto selected = actors_.first_authored_role_with_npc(npc);
+    if (selected) face_role_toward_actor(current, *selected);
+  } catch (...) { failed_ = true; throw; }
+}
+void WorldEnemyBehavior::face_sprite_toward_actor(ActorId current, std::uint16_t sprite) {
+  try {
+    check();
+    const auto selected = actors_.first_authored_role_with_sprite(sprite);
+    if (selected) face_role_toward_actor(current, *selected);
+  } catch (...) { failed_ = true; throw; }
+}
+void WorldEnemyBehavior::face_role_toward_actor(ActorId current, unsigned role) {
+  const auto source = actors_.actor(current).action().position;
+  const auto target = actors_.authored_position(role);
+  const auto angle = angles_.angle(
+      {std::uint16_t(target[0] >> 16), std::uint16_t(target[1] >> 16)},
+      {std::uint16_t(source[0] >> 16), std::uint16_t(source[1] >> 16)}, peripherals_);
+  const auto direction = wrap(unsigned(angle) + 0x1000) / 0x2000;
+  actors_.refresh_authored_direction(role, std::uint16_t(direction));
 }
 std::uint16_t WorldEnemyBehavior::set_velocity(ActorId id,
                                                std::uint16_t angle) {
@@ -159,7 +219,7 @@ std::uint16_t WorldEnemyBehavior::set_velocity(ActorId id,
     check();
     auto &actor = actors_.actor(id);
     const auto velocity =
-        movement_.velocity(angle, actor.behavior.movement_speed);
+        movement_.velocity(angle, actor.behavior.movement_speed, peripherals_);
     actor.action().velocity[0] = velocity[0];
     actor.action().velocity[1] = velocity[1];
     return angle;

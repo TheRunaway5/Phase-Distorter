@@ -20,12 +20,12 @@ constexpr std::array<unsigned, 34> psi_strength{
     4, 1, 3, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 5, 1, 1, 1,
     1, 1, 1, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 4, 1, 2};
 } // namespace
-std::span<const std::uint32_t>
-PhotosensitivityFilter::apply(std::span<const std::uint32_t> pixels, int width,
-                              int height, bool enabled,
-                              FlashFilterContext context) {
+std::span<const std::uint32_t> PhotosensitivityFilter::apply(
+    std::span<const std::uint32_t> pixels, int width, int height, bool enabled,
+    FlashFilterContext context, std::span<const std::uint8_t> unfiltered_mask) {
   if (width <= 0 || height <= 0 || width > 4096 || height > 4096 ||
-      pixels.size() != std::size_t(width) * std::size_t(height))
+      pixels.size() != std::size_t(width) * std::size_t(height) ||
+      (!unfiltered_mask.empty() && unfiltered_mask.size() != pixels.size()))
     throw std::invalid_argument(
         "Invalid photosensitivity framebuffer dimensions");
   if (!enabled) {
@@ -37,7 +37,7 @@ PhotosensitivityFilter::apply(std::span<const std::uint32_t> pixels, int width,
     psi_frames_ = 16;
     psi_animation_ = context.psi_animation;
   }
-  strength_ = context.giygas ? 7 : 1;
+  strength_ = context.giygas || context.intro ? 7 : 1;
   if (psi_frames_) {
     --psi_frames_;
     const unsigned base =
@@ -63,6 +63,11 @@ PhotosensitivityFilter::apply(std::span<const std::uint32_t> pixels, int width,
   }
   output_.resize(pixels.size());
   for (std::size_t i = 0; i < pixels.size(); ++i) {
+    if (!unfiltered_mask.empty() && unfiltered_mask[i]) {
+      output_[i] = pixels[i];
+      previous_[i] = 0xff000000;
+      continue;
+    }
     auto result = pixels[i] & 0xff000000u;
     for (unsigned shift : {16u, 8u, 0u}) {
       const int target = int(brightness[(pixels[i] >> shift) & 255]);

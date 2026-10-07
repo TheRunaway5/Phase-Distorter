@@ -1,4 +1,5 @@
 #include "eb/native/world_encounter_effects.hpp"
+#include "eb/native/battle/frame_display.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -103,7 +104,6 @@ void stream_lifetime() {
   Fixture f; f.start(); f.effects.advance();
   const auto installed = f.visual.window_pattern;
   const auto layers = f.visual.window_layers;
-  const auto displayed = f.effects.windows();
   const auto unpublished = f.visual;
   const auto blank_preview = f.effects.windows(true, true);
   check(f.visual == unpublished, "Fade preview consumed row enable or bounds");
@@ -208,6 +208,51 @@ void arithmetic() {
   check(reverse.swirl.repeats_until_speedup == 255 && reverse.swirl.frames_left == 1,
         "Repeating padded sequence lost source byte-wrap restart");
 }
+void prayer_windows() {
+  auto base=content();
+  auto steps=base.oval_steps;
+  for(unsigned sequence=1;sequence<5;++sequence) {
+    WorldOvalStep step{std::uint8_t(sequence+2),0x8000,0x8000,0x8000,0x8000,0,0,0,0,0,0};
+    steps.push_back(step);steps.push_back({});
+  }
+  WorldEncounterEffectData data{base.clips,base.ellipse_profile,std::move(steps)};
+  Fixture f;
+  WorldEncounterEffects effects(f.definitions,data,f.swirl,f.colors,f.visual,f.restoration);
+  battle::PsiAnimationState psi;
+  for(unsigned mode : {0u,1u,2u,3u,255u,256u,257u,258u,0xffffu}) {
+    f.swirl.oval_state={1,80,70,0x1100,0x2200,9,8,7,6,5,4};
+    f.swirl.repeat_speed=4;f.swirl.repeats_until_speedup=55;
+    f.visual.window_pattern=base.clips[4].rows;f.visual.window_rows_enabled=true;
+    const auto oval=f.swirl.oval_state;const auto pattern=f.visual.window_pattern;
+    const auto colors=f.colors;const auto order=f.restoration.order;
+    effects.begin_oval(std::uint16_t(mode));
+    auto expected=oval;expected.next_step=data.oval_sequence(mode==2?4:mode==1?1:0);
+    check(f.swirl.oval_state==expected && f.swirl.oval && f.swirl.update_in==1 &&
+          f.swirl.active_oval_mode==std::uint8_t(mode) &&
+          f.swirl.masked_layers==std::array<bool,6>{true,true,false,false,true,false},
+          "Prayer open changed full-word choice or actual active oval byte/mask");
+    check(f.visual.window_pattern==pattern && f.visual.window_rows_enabled && f.colors==colors &&
+          f.restoration.order==order && f.swirl.repeat_speed==4 && f.swirl.repeats_until_speedup==55,
+          "Prayer configuration advanced animation/restoration or discarded installed rows");
+    effects.close_oval();
+    expected.next_step=data.oval_sequence(std::uint8_t(mode)?3:2);
+    check(f.swirl.oval_state==expected && f.swirl.active_oval_mode==std::uint8_t(mode),
+          "Prayer close used a full-word/constant mode or discarded retained geometry");
+    effects.advance();
+    check(f.swirl.update_in==(std::uint8_t(mode)?5:4) && f.swirl.oval_state.next_step==expected.next_step+1,
+          "Actor effect helper did not execute the actual selected closing sequence");
+  }
+  for(unsigned swirl=0;swirl<256;++swirl) for(unsigned hold=0;hold<256;++hold) {
+    f.swirl.update_in=std::uint8_t(swirl);psi.time_until_next_frame=std::uint8_t(hold);
+    check(effects.animation_active(psi)==bool(swirl||hold),
+          "Window animation predicate did not read both actual byte counters");
+  }
+  Fixture missing;
+  const auto before_swirl=missing.swirl;const auto before_visual=missing.visual;
+  rejects([&]{missing.effects.begin_oval(1);},"Missing imported prayer sequence accepted");
+  check(missing.swirl==before_swirl && missing.visual==before_visual,
+        "Rejected prayer sequence partially configured actual state");
+}
 void validation() {
   Fixture f;
   check(f.effects.uses(f.definitions, f.swirl, f.colors, f.visual) &&
@@ -227,10 +272,44 @@ void validation() {
   rejects([&] { invalid.effects.advance(); }, "Unowned clip was silently read");
   check(invalid.effects.failed(), "Invalid content failure stayed resumable");
 }
+void battle_window_cleanup() {
+  Fixture f;
+  battle::PsiDisplayState display;
+  battle::FrameDisplay frames(display);
+  f.swirl.update_in=17;f.swirl.oval=true;
+  const auto unbound=f.swirl;
+  rejects([&]{f.effects.clear_battle_window();},"Unowned battle display cleanup accepted");
+  check(f.swirl==unbound,"Unowned cleanup changed swirl state");
+  f.effects.bind_display(frames);
+  check(f.effects.uses_display(frames),"Battle cleanup lost exact display identity");
+  battle::FrameDisplay foreign(display);
+  check(!f.effects.uses_display(foreign),"Battle cleanup accepted foreign display identity");
+  for(unsigned bits=0;bits<256;++bits) {
+    f.swirl.update_in=std::uint8_t(bits);f.swirl.oval=bool(bits&1);
+    f.swirl.interval=91;f.swirl.frame=22;f.swirl.masked_layers.fill(true);
+    f.swirl.invert=true;f.swirl.hdma_channel_offset=1;
+    f.swirl.oval_state={1,2,3,4,5,6,7,8,9,10,11};
+    f.visual.window_pattern=f.data.clips[0].rows;f.visual.window_rows_enabled=bool(bits&2);
+    f.visual.writes_second_window=true;f.visual.window_layers.fill(true);f.visual.window_invert=true;
+    f.visual.window_left={12,34};f.visual.window_right={56,78};
+    frames.hdma_enable=std::uint8_t(bits);frames.displayed_hdma_enable=0xa5;
+    auto expected_swirl=f.swirl;expected_swirl.update_in=0;expected_swirl.oval=false;
+    auto expected_visual=f.visual;expected_visual.window_layers.fill(false);expected_visual.window_invert=false;
+    ++expected_visual.window_revision;
+    const auto colors=f.colors;const auto order=f.restoration.order;
+    f.effects.clear_battle_window();
+    check(f.swirl==expected_swirl&&f.visual==expected_visual,"Cleanup erased retained swirl or window content");
+    check(frames.hdma_enable==(bits&~8u)&&frames.displayed_hdma_enable==0xa5,
+          "Cleanup disabled unrelated channels or fabricated publication");
+    f.effects.advance();
+    check(f.swirl==expected_swirl&&f.visual==expected_visual&&f.colors==colors&&f.restoration.order==order,
+          "Stopped cleanup advanced another effect or restored palettes/layers");
+  }
+}
 } // namespace
 int main() {
   try {
-    publication(); stream_lifetime(); restoration(); arithmetic(); validation();
+    publication(); stream_lifetime(); restoration(); arithmetic(); validation();battle_window_cleanup();prayer_windows();
     std::cout << checks << " native encounter effect checks passed\n";
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

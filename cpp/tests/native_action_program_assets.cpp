@@ -70,9 +70,36 @@ int main(int argc, char **argv) {
       }
       const auto &stats = program.stats();
       unsigned appearance_calls = 0, discarded_appearance_results = 0;
+      unsigned npc_faces = 0, sprite_faces = 0;
+      std::set<std::uint32_t> bounds_calls;
+      std::set<std::uint32_t> bounds_queries;
       std::set<std::uint32_t> retained_appearance_calls;
       for (unsigned token = 0; token < stats.operations; ++token) {
         const auto &operation = program.operation(token);
+        if(operation.operation==NativeAction::CheckMovementBounds) {
+          bounds_queries.insert(program.diagnostic(token).instruction);
+          if(operation.parameter_bytes || operation.temporary_input!=ActionTemporaryInput::Independent)
+            throw std::runtime_error("Authored movement bounds query lost its independent scalar contract");
+        }
+        if (operation.operation==NativeAction::SetMovementBounds) {
+          const auto at=program.diagnostic(token).instruction;
+          bounds_calls.insert(at);
+          const auto word=[&](unsigned offset) {
+            return std::uint16_t(raw->byte(at+offset) | unsigned(raw->byte(at+offset+1))<<8);
+          };
+          if (operation.parameter_bytes!=4 ||
+              operation.temporary_input!=ActionTemporaryInput::Independent ||
+              std::get<MovementBoundsOperands>(operation.payload)!=MovementBoundsOperands{word(4),word(6)})
+            throw std::runtime_error("Authored movement bounds lost its two literal word inputs");
+        }
+        if (operation.operation==NativeAction::FaceNpcTowardActor ||
+            operation.operation==NativeAction::FaceSpriteTowardActor) {
+          if (operation.operation==NativeAction::FaceNpcTowardActor) ++npc_faces;
+          else ++sprite_faces;
+          if (!operation.discard_result || operation.parameter_bytes!=2 ||
+              operation.temporary_input!=ActionTemporaryInput::Independent)
+            throw std::runtime_error("Authored NPC/sprite face lacks its literal-input and dead-result proof");
+        }
         switch (operation.operation) {
         case NativeAction::SelectFourInitial:
         case NativeAction::SelectFourAnimation:
@@ -110,8 +137,40 @@ int main(int argc, char **argv) {
       // regions. US has an explicit pre-loop preparation call; both install
       // the native follower tick callback before the actual animation loop.
       const bool jp = assets.version == eb::GameVersion::JP;
+      const std::set<std::uint32_t> expected_bounds_calls=jp ?
+          std::set<std::uint32_t>{0x3a32e,0x3a33c,0x3a34a,0x3a358,0x3a366,0x3a386,0x3bd11,0x3bd83,0x3c57d} :
+          std::set<std::uint32_t>{0x3a33e,0x3a34c,0x3a35a,0x3a368,0x3a376,0x3a396,0x3bd23,0x3bd95,0x3c58f};
+      if(bounds_calls!=expected_bounds_calls)
+        throw std::runtime_error("Authored movement bounds inventory changed");
+      const std::set<std::uint32_t> expected_bounds_queries=jp ?
+          std::set<std::uint32_t>{0x3a3ab,0x3ab8e}:std::set<std::uint32_t>{0x3a3bb,0x3ab9e};
+      if(bounds_queries!=expected_bounds_queries)
+        throw std::runtime_error("Authored movement bounds query inventory changed");
+      // C3AB44's shared initial pose returns through every authored caller.
+      // NPC/sprite target literals and fixed-mode C0A8C6 overwrite its
+      // transport return before reading it, while remaining unported calls.
+      bool shared_pose_dead = false;
+      for (unsigned token = 0; token < stats.operations; ++token)
+        if (program.diagnostic(token).instruction == (jp ? 0x3ab44u : 0x3ab54u))
+          shared_pose_dead = program.operation(token).operation == NativeAction::SelectFourInitial &&
+                             program.operation(token).discard_result;
+      if (!shared_pose_dead)
+        throw std::runtime_error("Shared C3AB44 pose return lacks its complete regional caller proof");
+
       // The implemented enemy owner services open six more pose sites.
-      const unsigned expected_appearance_calls = 306;
+      if (npc_faces!=3 || sprite_faces!=6)
+        throw std::runtime_error("Authored NPC/sprite face inventory changed: "+
+                                 std::to_string(npc_faces)+"/"+std::to_string(sprite_faces));
+      // Capturing sprite target coordinates now opens EVENT730's final
+      // four-direction pose (US C38DCF / JP C38DC9). Its pause/loop
+      // continuation reaches the next independent target capture before
+      // reading that return. The seven observed frontiers stay.
+      const unsigned expected_appearance_calls = 555;
+      // Newly opened authored callers still reach unported services that can
+      // observe an incidental return. They must keep the actual boundary.
+      const std::set<std::uint32_t> expected_retained_calls = jp ?
+          std::set<std::uint32_t>{0x31908,0x3203b,0x321a0,0x32ecc,0x330b6,0x3aa16,0x3ab6b} :
+          std::set<std::uint32_t>{0x31910,0x32043,0x321a8,0x32ed4,0x330be,0x3aa26,0x3ab7b};
       bool startup_found = false, pose_found = false, us_prepare_found = false,
            follower_found = false, tick_found = false;
       for (unsigned token = 0; token < stats.operations; ++token) {
@@ -142,8 +201,8 @@ int main(int argc, char **argv) {
         throw std::runtime_error(
             "Authored EVENT2 startup/physics/following operations changed");
       if (appearance_calls != expected_appearance_calls ||
-          discarded_appearance_results != expected_appearance_calls ||
-          !retained_appearance_calls.empty()) {
+          discarded_appearance_results != expected_appearance_calls - expected_retained_calls.size() ||
+          retained_appearance_calls != expected_retained_calls) {
         std::cerr << "Appearance proof: " << discarded_appearance_results << '/'
                   << appearance_calls << " discarded; retained:";
         for (const auto at : retained_appearance_calls)
@@ -166,7 +225,11 @@ int main(int argc, char **argv) {
                 << elapsed << " ms import\n";
       std::cout << discarded_appearance_results << '/' << appearance_calls
                 << " compiled appearance calls discard their result on every "
-                   "reachable path\n";
+                   "reachable path; 7 retain their explicit service frontier\n";
+      std::cout << npc_faces << " NPC and " << sprite_faces
+                << " sprite-facing calls have literal inputs and unused pose returns\n";
+      std::cout << bounds_calls.size() << " movement bounds calls preserve both literal extent words\n";
+      std::cout << bounds_queries.size() << " movement bounds queries preserve their scalar direction results\n";
       std::cout << "All entry prefixes: " << ticks
                 << " completed native ticks, " << handled
                 << " pure native operations, " << unsupported

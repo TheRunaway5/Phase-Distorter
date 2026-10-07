@@ -66,6 +66,31 @@ void copy_vram(PsiDisplayState::VramImage &vram, const PsiScratch &scratch,
   }
 }
 } // namespace
+void PsiDisplayState::bind_peripherals(PeripheralState& state, GameVersion version) {
+  if (peripherals_ && peripherals_ != &state)
+    throw std::logic_error("Display transport has another peripheral owner");
+  if (version != GameVersion::US && version != GameVersion::JP)
+    throw std::invalid_argument("Unknown peripheral transfer region");
+  const auto constant = version == GameVersion::US ? 0xc2e6b3u : 0xc2e5c8u;
+  if (peripherals_ && dma_constant_ != constant)
+    throw std::logic_error("Display transport has another regional constant source");
+  peripherals_ = &state; dma_constant_ = constant;
+}
+void PsiDisplayState::complete_dma(unsigned channel, const PsiTransfer& t) noexcept {
+  if (!peripherals_) return;
+  unsigned mode = t.mode, count = t.byte_count;
+  std::uint32_t source = 0x7f0000u + t.source_offset;
+  switch (t.kind) {
+  case PsiTransferKind::FrameLowBytes: mode = 6; count = 1024; break;
+  case PsiTransferKind::FrameHighBytes: mode = 15; count = 1024; source = dma_constant_; break;
+  case PsiTransferKind::Clear: mode = 3; count = 2048; source = dma_constant_ + 1; break;
+  case PsiTransferKind::Graphics: mode = 0; break;
+  case PsiTransferKind::Vram: break;
+  }
+  constexpr std::array<std::uint8_t, 6> modes{1, 9, 0, 8, 0, 8};
+  peripherals_->complete_dma(channel, modes[mode / 3], mode >= 12 ? 0x19 : 0x18,
+                            source, std::uint16_t(count));
+}
 void PsiDisplayState::check() const {
   if (failed_)
     throw std::logic_error(
@@ -121,6 +146,7 @@ void PsiDisplayState::apply_immediate(const PsiScratch &scratch,
   auto output = vram();
   copy_vram(output, scratch, t);
   store_vram(output);
+  complete_dma(1, t);
 }
 void PsiDisplayState::transfer_graphics_immediate(const PsiScratch &scratch,
                                                   std::uint16_t source,
@@ -190,6 +216,7 @@ PsiDisplayState::preview_pending(const PsiScratch &scratch) const {
 }
 void PsiDisplayState::publish_pending(const PsiScratch &scratch) {
   store_vram(preview_vram(scratch));
+  for (const auto& t : pending()) complete_dma(0, t);
   read_ = write_;
   bytes_ = 0;
   ++publication_serial_;

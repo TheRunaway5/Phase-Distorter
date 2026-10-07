@@ -5,6 +5,7 @@
 #include "eb/native/world_pathfinding.hpp"
 #include <functional>
 
+namespace eb::native::battle { struct PsiScratch; }
 namespace eb::native {
 class WorldEnemyMovement;
 class WorldBattleEntry;
@@ -31,6 +32,9 @@ public:
   bool contact(ActorId);
   bool collided(ActorId) const;
   bool active() const;
+  // C0D4DE retains all256 raw staging words in BUFFER+2000 before
+  // grayscaling the lower128. Binding never copies or publishes colors.
+  void bind_palette_transport(battle::PaletteBankState &, battle::PsiScratch &);
   void prepare_palette();
   std::uint16_t prepare_directional_obstacles(ActorId);
   std::uint16_t prepare_vertical_obstacles(ActorId);
@@ -72,6 +76,8 @@ private:
   const WorldCollision &collision_;
   const WorldMapArea &area_;
   WorldEnemyContactSound sound_;
+  battle::PaletteBankState *palette_transport_{};
+  battle::PsiScratch *scratch_{};
   bool executing_{}, failed_{};
 };
 } // namespace eb::native

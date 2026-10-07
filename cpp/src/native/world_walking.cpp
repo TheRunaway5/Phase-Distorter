@@ -224,7 +224,7 @@ bool WorldWalking::Operation::advance() {
           leader.walking_style, o.input_.state[0], o.queue_.pending() != 0);
       if (appearance.battle_swirl_ticks) {
         if (--appearance.battle_swirl_ticks == 0)
-          o.prompt_.battle_mode = 0xffff;
+          o.control_.encounter.mode = 0xffff;
         else
           o.collide({leader.leader_x, leader.leader_y});
         phase_ = 3;

@@ -21,6 +21,12 @@ def render(root: Path) -> str:
         expected = 61 if region == "us" else 58
         if len(text) != expected:
             raise ValueError(f"Changed {region} text inventory: {len(text)}, expected {expected}; audit imports")
+        # Native STATUS invokes this assembly-authored stream directly. The
+        # extraction manifests omit it because it is assembled from macros.
+        # Its complete src/data/status_window_text.asm extent ends at KEYBOARD.
+        text.append({"name": "STATUS_WINDOW_TEXT", "offset": 0x2fa3b6 if region == "us" else 0x09dd4e,
+                     "size": 0xaa if region == "us" else 0x8a, "compressed": "false"})
+        text.sort(key=lambda entry: entry["offset"])
         end = 0
         for entry in text:
             if entry['offset'] < end or entry['compressed'] != 'false' or entry['size'] <= 0:

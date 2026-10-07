@@ -33,9 +33,10 @@ unsigned layout_slot(WindowHost& host) {
         require(slot.has_value(), "Menu layout focus has no physical slot");
         return *slot;
     }
-    require(host.state().unfocused_register_slot.has_value(),
+    const auto ambient = host.state().ambient_slot();
+    require(ambient.has_value(),
             "Unfocused menu layout requires its source ambient physical slot");
-    const auto slot = *host.state().unfocused_register_slot;
+    const auto slot = *ambient;
     (void)host.slot(slot); // Validate the payload, without requiring live membership.
     return slot;
 }

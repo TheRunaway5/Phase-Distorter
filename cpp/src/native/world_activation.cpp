@@ -60,6 +60,13 @@ WorldActivation::WorldActivation(std::shared_ptr<const NpcCatalog> npcs,
         throw std::invalid_argument("Native activation requires imported NPC, sprite and action content");
 }
 
+std::uint16_t WorldActivation::initial_direction(const ActorWorld &world, ActorId id) const {
+    const auto &actor = world.actor(id);
+    const auto npc = actor.authored_role() ? world.authored_npc_selector(*actor.authored_role())
+                                         : actor.npc().value_or(0xffff);
+    return npc == 0xffff ? 4 : std::uint16_t(npcs_->definition(npc).direction);
+}
+
 std::vector<NpcActivation> WorldActivation::activate_cell(ActorWorld &world, unsigned cell_x,
     unsigned cell_y, const NpcActivationState &state) const {
     validate(state);
@@ -161,3 +168,13 @@ void WorldActivation::complete_enemy_request() {
     complete_request();
 }
 } // namespace eb::native
+
+namespace eb::native {
+void WorldActivation::reset_after_reload(CameraPosition center) {
+    if (request_) throw std::logic_error("Map reload cannot replace activation work");
+    camera_ = {std::uint16_t(center.x - 128), std::uint16_t(center.y - 112)};
+    origin_ = camera_stream_origin(camera_);
+    plan_ = {};
+    next_ = 0;
+}
+}

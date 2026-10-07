@@ -3,7 +3,7 @@
 #include "eb/native/world_encounter.hpp"
 
 namespace eb::native {
-namespace battle { struct PaletteBankState; class FrameDisplay; }
+namespace battle { struct PaletteBankState; class FrameDisplay; struct PsiAnimationState; }
 struct WorldEncounterClip {
   EncounterWindowMask rows;
   bool second_window{};
@@ -18,8 +18,10 @@ struct WorldEncounterEffectData {
   const std::array<WorldEncounterClip, 126> clips;
   // The source profile has 256 samples followed by its named zero endpoint.
   const std::array<std::uint8_t, 257> ellipse_profile;
-  // Includes the terminating duration-zero step.
+  // Five authored oval sequences, each including its duration-zero endpoint.
+  // General swirl setup uses sequence0; prayer opening/closing choose1..4.
   const std::vector<WorldOvalStep> oval_steps;
+  unsigned oval_sequence(unsigned sequence) const;
 };
 WorldEncounterEffectData
 import_world_encounter_effect_data(std::span<const std::uint8_t>, GameVersion);
@@ -60,6 +62,16 @@ public:
   void advance();
   // Optional actual battle display transport, shared by all frame phases.
   void bind_display(battle::FrameDisplay &);
+  bool uses_display(const battle::FrameDisplay &display) const noexcept { return display_ == &display; }
+  // C2EAAA stops future swirl/oval work and disables channel3/mask selection.
+  // Retains installed rows, terminal intervals and all other HDMA channels.
+  void clear_battle_window();
+  // C2EA15/C2EA74 configure the actual retained oval owner; neither advances
+  // animation, publishes a frame, or changes the live PSI animation counter.
+  void begin_oval(std::uint16_t mode);
+  void close_oval();
+  bool animation_active(const battle::PsiAnimationState &) const;
+  bool uses_swirl(const WorldSwirlState &state) const noexcept { return &swirl_ == &state; }
   // Read-only materialization for native frame capture. No display samples
   // may change animation or the retained second-window interval.
   // A logical NMI publication resets the second interval before transporting
@@ -74,6 +86,7 @@ public:
   // selection; waits/configuration/termination cannot implicitly reenable it.
   void disable_row_streams();
   bool failed() const noexcept { return failed_; }
+  bool uses_visual(const WorldEncounterVisualState &visual) const noexcept { return &visual_ == &visual; }
   bool uses(const WorldSwirlData &, const WorldSwirlState &, const ScenePalette &,
             const WorldEncounterVisualState &) const noexcept;
   bool uses(const WorldSwirlData &, const WorldSwirlState &, const battle::PaletteBankState &,

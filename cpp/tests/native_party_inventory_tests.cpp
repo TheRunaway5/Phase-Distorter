@@ -304,6 +304,15 @@ void wallet(GameVersion version) {
           "Wallet wrapped signed cap mismatch");
     check(f.party.bank_balance == 0x12345678, "Wallet changed bank account");
   }
+  constexpr std::array<std::array<std::uint32_t,4>,8> decreases{{
+      {10,10,0,0},{10,11,1,10},{0,0,0,0},{0,0xffffffff,0,1},
+      {0x80000000,1,0,0x7fffffff},{0x7fffffff,0xffffffff,1,0x7fffffff},
+      {0xffffffff,0xfffffffe,0,1},{0,0x80000000,1,0}}};
+  for(auto c:decreases) {
+    f.party.money_carried=c[0];f.party.bank_balance=0x12345678;
+    check(f.inventory->subtract_wallet32(c[1])==c[2] && f.party.money_carried==c[3] &&
+        f.party.bank_balance==0x12345678,"Wallet decrease changed wrapped signed comparison or rejected-state preservation");
+  }
 }
 void rescans(GameVersion version) {
   Fixture f(version);

@@ -65,7 +65,7 @@ struct Fixture {
     control.bicycle_turn_frames = 654;
     maintenance.possessed_players = 7;
     maintenance.enemy_touched = 8;
-    maintenance.battle_mode_flag = 9;
+    control.encounter.mode = 9;
     maintenance.last_sector_x = 10;
     maintenance.last_sector_y = 11;
     maintenance.auto_sector_music = 12;

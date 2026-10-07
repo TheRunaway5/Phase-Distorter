@@ -20,6 +20,9 @@ struct PresentationFrame {
     std::span<const std::uint32_t> effect_reference;
     std::shared_ptr<const DirectSceneFrame> scene;
     FlashFilterContext flashing;
+    // Visible battle OBJ and source windows, including fill/border/indicators.
+    // These pixels retain their authored colors when reducing flashes.
+    std::span<const std::uint8_t> unfiltered_mask;
 };
 
 // Host-facing pixels with the aspect hint captured alongside that picture.

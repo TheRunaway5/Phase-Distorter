@@ -8,6 +8,8 @@
 namespace eb {
 struct LaunchOptions {
     bool headless = false;
+    // Explicit native Continue entry; zero retains the ordinary title path.
+    unsigned native_continue_slot = 0;
     bool replay_only = false;
     bool vsync = true;
     bool audio = true;

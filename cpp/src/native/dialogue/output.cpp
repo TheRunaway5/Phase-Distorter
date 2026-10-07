@@ -134,9 +134,10 @@ struct TextOutput::Execution {
         if (state.focus)
             focused_slot = slot_for(*state.focus);
         else {
-            require(state.unfocused_register_slot.has_value(),
+            const auto ambient = state.ambient_lookup();
+            require(ambient.has_value(),
                     "Unfocused dialogue footer requires its ambient source slot");
-            focused_slot = *state.unfocused_register_slot;
+            focused_slot = *ambient;
             require(focused_slot <= 0xffff, "Ambient dialogue slot is not a source word");
         }
         return focused_slot == (front ? slot_for(*front) : 0xffff);
@@ -182,9 +183,10 @@ struct TextOutput::Execution {
     // reading metadata must not reject a source-word cursor such as ffff.
     Surface &layout() {
         if (state.focus) return focused();
-        require(japanese() && state.unfocused_register_slot.has_value(),
+        const auto ambient = state.ambient_slot();
+        require(japanese() && ambient.has_value(),
                 "Unfocused Japanese text requires its ambient physical slot");
-        return slot(*state.unfocused_register_slot);
+        return slot(*ambient);
     }
     void idle() const {
         require(active().stage == Stage::Complete && !active().pending,
@@ -926,6 +928,21 @@ void TextOutput::align_composition(Owner owner) {
     execution_->idle();
     if (!execution_->japanese())
         execution_->align_column();
+}
+void TextOutput::newline_without_scroll(std::uint16_t font, std::uint16_t height,
+                                         TextCursor &cursor, Owner owner) {
+    auto &e = *execution_;
+    e.require_owner(owner);
+    e.idle();
+    require(e.japanese(), "Aliased newline is a Japanese register path");
+    require(cursor.line != std::uint16_t(height / 2u - 1u),
+            "Aliased newline scrolling requires its actual canvas owner");
+    // JP tests the raw word for zero, not membership in the font catalog.
+    // C45E96 owns this shared brush/ring reset independently of any window.
+    if (font)
+        e.reset_composition();
+    cursor.line = std::uint16_t(cursor.line + 1u);
+    cursor.column = 0;
 }
 void TextOutput::highlight_label(std::span<const std::uint8_t> label, std::uint16_t limit, bool selected,
                                  Owner owner) {

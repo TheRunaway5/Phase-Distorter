@@ -1,5 +1,6 @@
 #include "eb/native/world_encounter.hpp"
 #include <stdexcept>
+#include "eb/native/battle/palette_effects.hpp"
 #include <utility>
 
 namespace eb::native {
@@ -45,9 +46,19 @@ bool WorldEncounter::uses_effect_state(const WorldSwirlData &data, const WorldSw
                                       const ScenePalette &colors, const WorldEncounterVisualState &visual) const noexcept {
   return &data_ == &data && &swirl_ == &swirl && &colors_ == &colors && &visual_ == &visual;
 }
+void WorldEncounter::bind_palette_transport(battle::PaletteBankState& transport) {
+  idle();if(palette_transport_ && palette_transport_!=&transport)throw std::logic_error("Encounter palette transport is already bound");
+  palette_transport_=&transport;
+}
+void WorldEncounter::stage_palette(unsigned first,unsigned count,std::uint8_t mode) {
+  if(!palette_transport_)return;
+  for(unsigned i=first;i<first+count;++i){const auto c=colors_[i];palette_transport_->staged_color(i)=std::uint16_t(c.red|unsigned(c.green)<<5|unsigned(c.blue)<<10);}
+  palette_transport_->upload_mode=mode;
+}
 void WorldEncounter::palette_changed() {
   idle();
   visual_.palette_dirty = true;
+  stage_palette(0,128,24);
 }
 void WorldEncounter::begin_swirl() {
   idle();
@@ -78,6 +89,7 @@ void WorldEncounter::begin_swirl() {
       throw std::logic_error("Battle swirl requires the existing music adapter");
     music_({std::uint16_t(track)});
     colors_[0] = backup_;
+    stage_palette(0,1,8);
     visual_.palette_dirty = true;
     visual_.visible_layers = {true, true, true, false, true};
     visual_.fixed_color = fixed;

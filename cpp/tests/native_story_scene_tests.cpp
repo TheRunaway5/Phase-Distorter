@@ -389,6 +389,28 @@ void authored_meters_and_party_query(eb::GameVersion version) {
           "Meter integration produced no visible pixels or mutated a prior scene capture");
 }
 
+void nested_dialogue_callbacks(eb::GameVersion version) {
+    Fixture f(version); f.actors.create(actor()); f.start();
+    dialogue::Conversation text(program(version,{0x1f,0x41,17,2}),f.windows);
+    text.start(dialogue::EntryId{0});
+    auto parent=f.scene->begin(text); service(*parent,story::SceneService::Dialogue);
+    const auto pending=*parent->dialogue_event();
+    const auto before=f.random;
+    auto child=f.scene->begin_nested(story::TickKind::WorldFrame,*parent);
+    check(child->is_child_of(*parent),"Nested dialogue tick lost its actual parent");
+    rejects([&]{parent->respond_dialogue({});},"Parent dialogue replied through an active child");
+    service(*child,story::SceneService::Frame);
+    rejects([&]{f.scene->require_nested(*child);},"Frame boundary admitted a callback child");
+    check(f.actors.ticks()==1 && f.scene->completed_frames()==0,
+          "Dialogue child did not retain its real actor and publication phases");
+    child->complete_frame({0,0});finish(*child);child.reset();
+    check(*parent->dialogue_event()==pending && f.random==before && f.scene->completed_frames()==1,
+          "Nested frame altered the suspended authored request or added RNG");
+    dialogue::Response response;response.special_event_result=1;
+    parent->respond_dialogue(response);finish(*parent);
+    check(text.finished() && f.text.window().active.working==1,"Nested dialogue callback lost its actual result");
+    rejects([&]{f.scene->require_nested(*parent);},"Completed parent admitted more nested work");
+}
 void nested_actor_callbacks(eb::GameVersion version) {
     Fixture f(version);const auto blocked=f.actors.create(actor(1));const auto later=f.actors.create(actor());f.start();
     auto parent=f.scene->begin(story::TickKind::WorldFrame);service(*parent,story::SceneService::ActorEngine);
@@ -919,6 +941,54 @@ void raw_frame_phases(eb::GameVersion version) {
         check(boundary.reads==1,"Poisoned scene repeated its input service");
     }
 }
+void peripheral_interrupt(eb::GameVersion version) {
+    Fixture f(version);f.start();
+    const auto random=f.random;const auto actors=f.actors.ticks();
+    auto op=f.scene->begin(story::TickKind::Frame);service(*op,story::SceneService::Frame);
+    f.clock.new_frame_started=255;f.clock.frame_counter=255;
+    f.scene->interrupt_publication();
+    check(!f.clock.new_frame_started && !f.clock.frame_counter && f.clock.publications==1 &&
+          f.clock.input_polls==0 && op->service()==story::SceneService::Frame && !op->complete(),
+          "Peripheral NMI lost wrapping bytes or acknowledged a logical child");
+    check(op->advance()==dialogue::Progress::Suspended &&
+          op->frame_requirement()==story::FrameRequirement::NmiPublication,
+          "Wrapped peripheral byte released WAIT without a real next NMI");
+    f.scene->interrupt_publication();
+    check(op->frame_requirement()==story::FrameRequirement::InputOnly && f.clock.publications==2,
+          "Actual peripheral NMI did not release the retained WAIT");
+    op->complete_frame({0x80,0});finish(*op);
+    check(f.clock.input_polls==1 && !f.clock.new_frame_started && f.clock.publications==2 &&
+          f.random==random && f.actors.ticks()==actors,
+          "Peripheral publication advanced actors/RNG or polled input twice");
+    f.clock.interrupt_mask=0;const auto image=f.scene->frame();
+    rejects([&]{f.scene->interrupt_publication();},"Masked peripheral fabricated an NMI");
+    check(!f.scene->failed() && f.scene->frame()==image && f.clock.publications==2,
+          "Rejected masked publication changed or poisoned live state");
+    // C2DE96 can clear the software mirror while $4200 retains its NMI bit.
+    // WAIT then uses VBlank admission, but must consume the physical receipt.
+    f.clock.interrupt_mask=0x81;f.clock.retain_interrupt_hardware();
+    f.clock.interrupt_mask=0;f.clock.new_frame_started=0;
+    const auto frames=f.scene->completed_frames();
+    auto retained=f.scene->begin(story::TickKind::Frame);
+    service(*retained,story::SceneService::Frame);
+    check(retained->frame_requirement()==story::FrameRequirement::VBlank,
+          "Cleared mirror did not preserve the real WAIT VBlank branch");
+    rejects([&]{retained->complete_frame({0x40,0});},
+            "Retained hardware NMI was acknowledged without its physical receipt");
+    check(!f.scene->failed() && f.clock.input_polls==1 && f.clock.publications==2 &&
+          f.scene->completed_frames()==frames && f.scene->frame()==image,
+          "Missing retained NMI changed the live wait or capture");
+    f.scene->interrupt_publication();
+    const auto published=f.scene->frame();
+    check(f.clock.publications==3 && f.scene->completed_frames()==frames+1 &&
+          f.clock.input_polls==1 && retained->frame_requirement()==story::FrameRequirement::VBlank,
+          "Physical retained NMI lost its one publication or changed WAIT admission");
+    retained->complete_frame({0x40,0});finish(*retained);
+    check(f.clock.publications==3 && f.scene->completed_frames()==frames+1 &&
+          f.clock.input_polls==2 && f.scene->frame()==published &&
+          !f.clock.new_frame_started && f.random==random && f.actors.ticks()==actors,
+          "Retained-hardware VBlank repeated publication, actors, RNG or input");
+}
 void rejection_and_poison(eb::GameVersion version) {
     Fixture failed(version);
     const dialogue::PartyQueryRequest count_query{dialogue::PartyQueryKind::ControlledCount};
@@ -959,6 +1029,8 @@ int main() {
             camera_and_battle(region);signed_camera(region);rejection_and_poison(region);
             battle_publication(region,2);battle_publication(region,4);
             raw_frame_phases(region);
+            peripheral_interrupt(region);
+            nested_dialogue_callbacks(region);
             animation_continuations(region,2);animation_continuations(region,4);
         }
         std::cout<<"Native story scene: "<<checks<<" checks passed (real actor scripts, software rendering only)\n";

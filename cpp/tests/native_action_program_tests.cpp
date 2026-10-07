@@ -159,16 +159,22 @@ void discarded_results() {
     check(!discarded({0x10, 0, 0x09}), "Dispatch remains conservatively live");
     check(!discarded({0x1e, 0x12, 0x34, 0x09}), "Unbound global could alias task storage");
     check(!discarded({0x42, 0x12, 0x34, 0xc4}), "Opaque engine call can consume result");
-    check(discarded({0x42, 0x41, 0xa8, 0xc0}),
-          "Audited unported inline sound overwrites the incoming result");
+    check(discarded({0x42, 0x41, 0xa8, 0xc0,0x34,0x12,0x09}),
+          "Typed inline sound overwrites the incoming result before its real audio boundary");
+    check(discarded({0x42,0x38,0xa9,0xc0,1,0,0x09}),
+          "Typed sprite target literal kills the preceding pose result without consuming it");
+    for (const auto helper : {std::array<std::uint8_t,3>{0x2d,0xa9,0xc0},
+                              {0xc6,0xa8,0xc0}})
+        check(discarded({0x42,helper[0],helper[1],helper[2]}),
+              "Literal/fixed target service reads no previous shared pose transport result");
     check(discarded({0x42, 0x8d, 0xa8, 0xc0}),
           "Queue-text obtains all inputs from authored operands, not the previous pose result");
-    check(discarded({0x42, 0x46, 0x6e, 0xc4}),
-          "Audited unported scene-state setter overwrites the incoming result");
+    check(discarded({0x42, 0x46, 0x6e, 0xc4, 0x09}),
+          "Typed scene-state setter overwrites the incoming result");
     check(!discarded({0x42, 0x8c, 0x25, 0xc4, 0x1f, 0, 0x09}),
           "8-bit window setup preserves the result high byte for a later store");
-    check(discarded({0x42, 0x8c, 0x25, 0xc4, 0x06, 3, 0x42, 0x6e, 0xaa, 0xc0}),
-          "Forwarded high byte dies at a later input-independent opaque call");
+    check(discarded({0x42, 0x8c, 0x25, 0xc4, 0x06, 3, 0x42, 0x6e, 0xaa, 0xc0, 2, 1, 0x09}),
+          "Forwarded high byte dies at a later typed pose call with its actual inline operands");
     check(!discarded({0x42, 0x8c, 0x25, 0xc4, 0x06, 3, 0x0b, 4, 0, 0x09}),
           "Forwarded high byte remains live across a wait and zero test");
     check(discarded({0x08, 0xe0, 0xd7, 0xc0, 0x1d, 7, 0, 0x09}),
@@ -176,7 +182,7 @@ void discarded_results() {
     check(!discarded({0x08, 0xe0, 0xd7, 0xc0, 0x1f, 0, 0x09}),
           "Callback installation does not itself kill the task temporary");
     {
-        auto opaque = data({0x42, 0xbf, 0xa4, 0xc0, 0x42, 0x41, 0xa8, 0xc0});
+        auto opaque = data({0x42, 0xbf, 0xa4, 0xc0, 0x42, 0x2d, 0xa9, 0xc0});
         CompiledActionProgram contract(opaque, eb::GameVersion::US);
         check(contract.stats().opaque_call_boundaries == 1 &&
                   contract.operation(1).operation == NativeAction::Unsupported &&
@@ -187,7 +193,7 @@ void discarded_results() {
         task.respond(0);
         task.tick();
         check(task.request() && task.request()->identifier == 1,
-              "Unported sound remains an explicit suspended service request");
+              "Unported literal target remains an explicit suspended service request");
         rejects([&] { (void)contract.scripts()->byte(8); },
                 "Input contract must not guess missing inline operands");
     }
@@ -209,6 +215,7 @@ void discarded_results() {
     // caller literal overwrite may discard it.
     for (const bool observed : {false, true}) {
         std::vector<std::uint8_t> bytes{0x1a, 12, 0, 0x06, 2};
+        bytes.reserve(21);
         if (observed)
             bytes.insert(bytes.end(), {0x1f, 0, 0x09});
         else
@@ -251,6 +258,86 @@ void discarded_results() {
         check(a.actor().variables == b.actor().variables && a.actor().position == b.actor().position &&
                   a.actor().animation == b.actor().animation && a.actor().alive == b.actor().alive,
               "Discarded transport result changed observable actor state");
+    }
+}
+void face_return_contracts() {
+    for (const auto version : {eb::GameVersion::US, eb::GameVersion::JP}) {
+        const auto npc = version == eb::GameVersion::US ? 0xc0a94eu : 0xc0a92du;
+        const auto sprite = version == eb::GameVersion::US ? 0xc0a959u : 0xc0a938u;
+        const std::vector<std::uint8_t> bytes{
+            0x42,std::uint8_t(npc),std::uint8_t(npc>>8),std::uint8_t(npc>>16),0x56,4,
+            0x42,std::uint8_t(sprite),std::uint8_t(sprite>>8),std::uint8_t(sprite>>16),0x59,0,
+            0x06,3,0x19,0,0};
+        CompiledActionProgram program(
+            std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0}),version);
+        check(program.stats().operations==2 && !program.stats().opaque_call_boundaries &&
+                  program.operation(0).operation==NativeAction::FaceNpcTowardActor &&
+                  program.operation(1).operation==NativeAction::FaceSpriteTowardActor &&
+                  program.operation(0).operand==0x456 && program.operation(1).operand==0x59 &&
+                  program.operation(0).parameter_bytes==2 && program.operation(1).parameter_bytes==2 &&
+                  program.operation(0).temporary_input==ActionTemporaryInput::Independent &&
+                  program.operation(1).temporary_input==ActionTemporaryInput::Independent &&
+                  program.operation(0).discard_result && program.operation(1).discard_result,
+              "EVENT743 literal sprite face did not kill the previous incidental pose return");
+        for (const auto call : {npc,sprite}) {
+            const std::vector<std::uint8_t> observed{
+                0x42,std::uint8_t(call),std::uint8_t(call>>8),std::uint8_t(call>>16),0xff,0xff,0x1f,0,0x09};
+            CompiledActionProgram retained(
+                std::make_shared<ActionScriptData>(observed,0,std::vector<std::uint32_t>{0}),version);
+            check(!retained.operation(0).discard_result && retained.operation(0).operand==0xffff &&
+                      retained.operation(0).temporary_input==ActionTemporaryInput::Independent,
+                  "Observed NPC/sprite pose result was silently discarded or literal FFFF was substituted");
+        }
+    }
+}
+void movement_bounds_direction_return() {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        const auto call=version==eb::GameVersion::JP ? 0xc44fedu:0xc47269u;
+        const std::vector<std::uint8_t> bytes{0x42,std::uint8_t(call),std::uint8_t(call>>8),
+            std::uint8_t(call>>16),0x1f,4,0x09};
+        CompiledActionProgram program(
+            std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0}),version);
+        const auto &bound=program.operation(0);
+        check(bound.operation==NativeAction::CheckMovementBounds && !bound.parameter_bytes &&
+                  !bound.discard_result && bound.temporary_input==ActionTemporaryInput::Independent,
+              "Bounds direction compiler discarded an observed scalar or consumed inline data");
+        ActionScripts scripts(program.scripts(),0);scripts.actor().position={0x80001234u,0x0002abcdu,0};
+        scripts.actor().variables={0,0x7fff,1,3,55,66,77,88};
+        check(scripts.tick()==ActionTickResult::NeedsEngine,"Bounds direction lost its compiled call");
+        ActorActionContext context;ActionSceneContext scene;
+        const auto result=apply_action(bound,0,scripts.actor(),context,scene);
+        scripts.respond(result.value,result.parameter_bytes);
+        check(scripts.tick()==ActionTickResult::Complete && scripts.actor().variables[4]==7 &&
+                  scripts.actor().variables[0]==0 && scripts.actor().variables[1]==0x7fff &&
+                  scripts.actor().position[0]==0x80001234u,
+              "Compiled bounds direction failed to publish its actual observed scalar");
+    }
+}
+void movement_bounds_return() {
+    for (const auto version : {eb::GameVersion::US,eb::GameVersion::JP}) {
+        const auto call=version==eb::GameVersion::JP ? 0xc0a943u:0xc0a964u;
+        const std::vector<std::uint8_t> bytes{
+            0x42,std::uint8_t(call),std::uint8_t(call>>8),std::uint8_t(call>>16),
+            0xff,0xff,0,0x80,0x1f,4,0x09};
+        CompiledActionProgram program(
+            std::make_shared<ActionScriptData>(bytes,0,std::vector<std::uint32_t>{0}),version);
+        const auto &bound=program.operation(0);
+        check(program.stats().operations==1 && !program.stats().opaque_call_boundaries &&
+                  bound.operation==NativeAction::SetMovementBounds && bound.parameter_bytes==4 &&
+                  bound.temporary_input==ActionTemporaryInput::Independent && !bound.discard_result &&
+                  std::get<MovementBoundsOperands>(bound.payload)==MovementBoundsOperands{0xffff,0x8000},
+              "Movement bounds did not compile four literal bytes and retain an observed scalar return");
+        ActionActorState actor;actor.position={0xffff1234u,0x8001abcdu,0x11112222u};
+        ActionScripts scripts(program.scripts(),0);scripts.actor()=actor;
+        check(scripts.tick()==ActionTickResult::NeedsEngine,"Compiled bounds did not request its native operation");
+        rejects([&]{scripts.respond(0,2);},"Bounds continuation accepted half of its compound operands");
+        ActorActionContext context;ActionSceneContext scene;
+        const auto response=apply_action(bound,0xabcd,scripts.actor(),context,scene);
+        scripts.respond(response.value,response.parameter_bytes);
+        check(scripts.tick()==ActionTickResult::Complete && scripts.actor().variables==
+                  std::array<std::uint16_t,8>{0,0xfffe,1,1,1,0,0,0} &&
+                  scripts.actor().position==actor.position,
+              "Compiled bounds failed to consume both words or publish its exact observed Y+extent return");
     }
 }
 void nonzero_appearance_predicates() {
@@ -329,6 +416,9 @@ int main() {
         token_width();
         recursive_import();
         discarded_results();
+        face_return_contracts();
+        movement_bounds_return();
+        movement_bounds_direction_return();
         nonzero_appearance_predicates();
         std::cout
             << "Compiled actions: normalization, opaque boundaries, control flow and token widths passed\n";

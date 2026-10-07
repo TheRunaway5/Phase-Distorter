@@ -93,7 +93,7 @@ void initialized(Fixture &f, ActorId id, bool pajamas,
         "Initializer reset unrelated movement/camera state");
   check(f.maintenance.possessed_players == 7 &&
             f.maintenance.enemy_touched == 8 &&
-            f.maintenance.battle_mode_flag == 9 &&
+            f.control.encounter.mode == 9 &&
             f.maintenance.last_sector_x == 10 &&
             f.maintenance.last_sector_y == 11 &&
             f.maintenance.auto_sector_music == 12 &&

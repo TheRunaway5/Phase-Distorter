@@ -30,24 +30,43 @@ unsigned shifted_cell(std::uint16_t value,unsigned negative_prefix) {
 unsigned EnemySpawnData::encounter(unsigned x,unsigned y) const {
     return x<128&&y<160?cells[y*128+x]:0;
 }
+EnemySpawnSector EnemySpawnData::sector(unsigned x,unsigned y) const {
+    if(x<128&&y<160)return sectors[(y/2)*32+x/4];
+    if(x>65535||y>65535||!sector_lookups)
+        throw std::out_of_range("Enemy spawn sector has no imported wrapped lookup content");
+    // Multiply8 wraps before the source's logical shifts. Attribute reads
+    // use a separate wrapping byte product from tileset reads.
+    const unsigned column=std::uint16_t(x*8u)>>5;
+    const unsigned row=std::uint16_t(y*8u)>>4;
+    const unsigned tileset=std::uint16_t(row*32u+column);
+    const unsigned attribute=std::uint16_t(row*64u+column*2u)/2;
+    constexpr unsigned chances[]{2,0,1,0,5,1};
+    const auto mode=sector_lookups->butterfly_modes[attribute];
+    if(mode>=6)
+        throw std::out_of_range("Enemy spawn selected an uninitialized source butterfly chance");
+    return {sector_lookups->tilesets[tileset],chances[mode]};
+}
 EnemySpawnData import_enemy_spawn_data(std::span<const std::uint8_t> assets,GameVersion version) {
     const Content c{assets};const auto l=enemy_sprite_catalog_layout(version);EnemySpawnData result;
     result.negative_cell_prefix=version==GameVersion::JP?0xe000:0xf000;result.butterfly_battle=l.butterfly_battle;
     std::vector<unsigned> starts;
     for(unsigned i=0;i<l.battle_count;++i){const auto row=l.battle_pointers+i*8;const auto at=c.pointer(row);
-        if(at<l.battles||at>=l.battles_end)throw std::runtime_error("Enemy battle escaped its content table");starts.push_back(at);
+        if(at<l.battles||at>=l.battles_end)throw std::runtime_error("Enemy battle escaped its content table");
+        starts.push_back(at);
         result.battle_behaviors.push_back({std::uint16_t(c.word(row+4)),std::uint8_t(c.byte(row+6))});}
     auto ends=starts;ends.push_back(l.battles_end);std::sort(ends.begin(),ends.end());
     auto members=[&](unsigned at){std::vector<EnemySpawnMember> rows;const auto end=*std::upper_bound(ends.begin(),ends.end(),at);
         for(;;at+=3){if(at>=end)throw std::runtime_error("Unterminated enemy battle");const auto count=c.byte(at);
-            if(count==255)break;if(end-at<3)throw std::runtime_error("Truncated enemy battle member");
+            if(count==255)break;
+            if(end-at<3)throw std::runtime_error("Truncated enemy battle member");
             const auto enemy=c.word(at+1);if(enemy>=l.enemy_count)throw std::runtime_error("Unknown battle enemy");
             rows.push_back({count,enemy});}return rows;};
     for(const auto at:starts)result.battles.push_back(members(at));
     result.debug_battle=members(l.battles);
     starts.clear();
     for(unsigned i=0;i<l.encounter_count;++i){const auto at=c.pointer(l.encounter_pointers+i*4);
-        if(at<l.encounters||at>=l.encounters_end)throw std::runtime_error("Enemy encounter escaped content table");starts.push_back(at);}
+        if(at<l.encounters||at>=l.encounters_end)throw std::runtime_error("Enemy encounter escaped content table");
+        starts.push_back(at);}
     ends=starts;ends.push_back(l.encounters_end);std::sort(ends.begin(),ends.end());
     for(const auto at:starts){const auto end=*std::upper_bound(ends.begin(),ends.end(),at);
         if(end-at<4)throw std::runtime_error("Truncated enemy encounter");
@@ -61,11 +80,18 @@ EnemySpawnData import_enemy_spawn_data(std::span<const std::uint8_t> assets,Game
             entry.choices.insert(entry.choices.end(),count,battle);}
         result.encounters.push_back(std::move(entry));}
     for(unsigned i=0;i<result.cells.size();++i){const auto id=c.word(l.cells+i*2);
-        if(id>=result.encounters.size())throw std::runtime_error("Unknown map encounter");result.cells[i]=id;}
+        if(id>=result.encounters.size())throw std::runtime_error("Unknown map encounter");
+        result.cells[i]=id;}
     constexpr unsigned butterfly_chances[]{2,0,1,0,5,1};
     for(unsigned i=0;i<result.sectors.size();++i){const auto mode=c.word(l.sector_attributes+i*2)&7;
         if(mode>=6)throw std::runtime_error("Undefined butterfly sector mode");
         result.sectors[i]={c.byte(l.tilesets+i)>>3,butterfly_chances[mode]};}
+    auto lookups=std::make_shared<EnemySpawnSectorLookups>();
+    for(unsigned i=0;i<lookups->tilesets.size();++i)
+        lookups->tilesets[i]=std::uint8_t(c.byte(l.tilesets+i)>>3);
+    for(unsigned i=0;i<lookups->butterfly_modes.size();++i)
+        lookups->butterfly_modes[i]=std::uint8_t(c.word(l.sector_attributes+i*2)&7);
+    result.sector_lookups=std::move(lookups);
     for(unsigned i=0;i<l.enemy_count;++i){const auto at=l.enemies+i*l.enemy_stride;
         const auto script=c.word(at+l.enemy_sprite_offset+13);
         result.enemies.push_back({c.word(at+l.enemy_sprite_offset),script?script:19,
@@ -93,7 +119,8 @@ void WorldEnemies::reset_population_for_map() {
     population_.count=0;
 }
 std::optional<EnemySpawnCreation> WorldEnemies::pending_creation() const {
-    if(!creating_)return std::nullopt;const auto &definition=data_->enemies.at(enemy_);
+    if(!creating_)return std::nullopt;
+    const auto &definition=data_->enemies.at(enemy_);
     return EnemySpawnCreation{creating_,enemy_,definition.sprite,definition.script};
 }
 void WorldEnemies::begin(ActorWorld &world,std::vector<EnemySpawnCell> cells,EnemySpawnState state) {
@@ -136,12 +163,9 @@ std::vector<EnemySpawnCell> plan_enemy_spawn_strip(const EnemySpawnData &data,Ca
 void WorldEnemies::begin_strip(ActorWorld &world,CameraRefreshIntent intent,EnemySpawnState state) {
     auto cells=plan_enemy_spawn_strip(*data_,intent,state);begin(world,std::move(cells),std::move(state));
 }
-const EnemySpawnSector &WorldEnemies::sector() const {
+EnemySpawnSector WorldEnemies::sector() const {
     const auto &cell=cells_.at(cell_index_);
-    // Authored valid map domain only. Negative/outside encounter cells may be
-    // traversed, but cannot dereference sector data on a butterfly attempt.
-    if(cell.x>=128||cell.y>=160)throw std::out_of_range("Enemy spawn requested an undefined map sector");
-    return data_->sectors[(cell.y/2)*32+cell.x/4];
+    return data_->sector(cell.x,cell.y);
 }
 void WorldEnemies::finish_cell(){
     ++cell_index_;stage_=cell_index_==cells_.size()?Stage::Idle:Stage::Start;members_=nullptr;creating_=0;
@@ -186,7 +210,8 @@ void WorldEnemies::advance(ActorWorld &world){
             {auto prepared=input_.prepared;prepared.x=0;prepared.direction=0;prepared.y=0;
              const auto &definition=data_->enemies[enemy_];
              const auto actor=world.create_authored(make_actor_spec(definition.sprite,definition.script,prepared,*sprites_,*scripts_));
-             if(!actor)throw std::runtime_error("No free authored role for enemy creation");creating_=*actor;}
+             if(!actor)throw std::runtime_error("No free authored role for enemy creation");
+             creating_=*actor;}
             attempts_=0;stage_=Stage::Position;break;
         case Stage::Position:
             if(attempts_==20){world.erase(creating_);creating_=0;stage_=Stage::Member;break;}
@@ -207,11 +232,12 @@ void WorldEnemies::respond_random(ActorWorld &world,std::uint8_t value){
         if(value<16)select_battle(0,false,world,true);else stage_=Stage::Normal;break;
     case EnemyRandomPurpose::ButterflyChance:
         if(value%100<sector().butterfly_chance){population_.battle=data_->butterfly_battle;select_battle(data_->butterfly_battle,false,world);}
-        else finish_cell();break;
+        else finish_cell();
+        break;
     case EnemyRandomPurpose::EncounterChance:
         if((unsigned(value)*100>>8)<population_.chance)random(EnemyRandomPurpose::WeightedGroup);else finish_cell();break;
     case EnemyRandomPurpose::WeightedGroup:{const auto &entry=data_->encounters.at(cell.encounter);
-        const auto pick=(value&7)+(alternate_&&entry.chance[0]?8:0);
+        const unsigned pick=(value&7)+(alternate_&&entry.chance[0]?8:0);
         if(pick>=entry.choices.size())throw std::runtime_error("Authored chance override selected an undefined weighted branch");
         population_.battle=entry.choices[pick];select_battle(population_.battle,true,world);break;}
     case EnemyRandomPurpose::PositionX:candidate_x_=std::uint16_t((cell.x*8+value%cell.width)*8);stage_=Stage::NeedY;break;

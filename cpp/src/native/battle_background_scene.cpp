@@ -1,5 +1,6 @@
 #include "eb/native/battle_background_scene.hpp"
 #include "eb/native/battle/palette_effects.hpp"
+#include "eb/native/battle/background_loader.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -108,6 +109,13 @@ BattleBackgroundScene
 BattleBackgroundScenes::prepare(BattleBackgroundPair pair,
                                 BattleBackgroundStart start,
                                 BattleArtworkPublication publication) const {
+  return prepare_impl(pair, start, publication, false);
+}
+BattleBackgroundScene
+BattleBackgroundScenes::prepare_impl(BattleBackgroundPair pair,
+                                     BattleBackgroundStart start,
+                                     BattleArtworkPublication publication,
+                                     bool published) const {
   if (pair.primary >= content_->layers.size() ||
       pair.secondary >= content_->layers.size() || pair.style > 7 ||
       start.frame_parity > 1 ||
@@ -126,9 +134,12 @@ BattleBackgroundScenes::prepare(BattleBackgroundPair pair,
           content_->layers.definition(pair.secondary).bitdepth)
     throw std::invalid_argument(
         "Battle artwork pair has incompatible pixel depth");
-  if (auto dependency = artwork_dependency(pair, publication))
+  const auto dependency = artwork_dependency(pair, publication);
+  if (dependency && !published)
     throw BattleBackgroundArtworkRequired(*dependency);
-  return {content_, pair, start};
+  BattleBackgroundScene result(content_, pair, start);
+  result.retained_artwork_ = dependency;
+  return result;
 }
 BattleBackgroundScene::BattleBackgroundScene(
     std::shared_ptr<const Content> content, BattleBackgroundPair pair,
@@ -237,13 +248,20 @@ bool BattleBackgroundScene::can_brighten_inactive_secondary() const noexcept {
 }
 std::optional<BattlePaletteDependency>
 BattleBackgroundScene::palette_restoration_dependency() const {
-  return shared_artwork_
+  return !loaded_record_ || shared_artwork_
              ? std::optional{BattlePaletteDependency::ResetSceneAndFrameState}
              : std::nullopt;
 }
-void BattleBackgroundScene::restore_palette(ScenePalette &colors) {
-  if (const auto dependency = palette_restoration_dependency())
-    throw BattlePaletteRestorationRequired(*dependency);
+void BattleBackgroundScene::initialize_unloaded_record() {
+  primary_.clear_palette();
+  secondary_.reset();
+  inactive_secondary_palette_ = {};
+  inactive_secondary_background_.reset();
+  layer_metadata_ = {};
+  shared_artwork_ = false;
+  loaded_record_ = false;
+}
+void BattleBackgroundScene::restore_palette_bases() {
   primary_.restore_palette();
   if (secondary_)
     secondary_->restore_palette();
@@ -254,6 +272,11 @@ void BattleBackgroundScene::restore_palette(ScenePalette &colors) {
     inactive_secondary_palette_.base_high_bits =
         inactive_secondary_palette_.backup_high_bits;
   }
+}
+void BattleBackgroundScene::restore_palette(ScenePalette &colors) {
+  if (const auto dependency = palette_restoration_dependency())
+    throw BattlePaletteRestorationRequired(*dependency);
+  restore_palette_bases();
   const unsigned first = primary_.definition().bitdepth == 4 ? 32 : 64;
   const auto primary = primary_.snapshot();
   std::copy(primary.palette.begin(), primary.palette.end(),
@@ -297,6 +320,20 @@ void BattleBackgroundScene::restore_palette(battle::PaletteBankState &state) {
   state.staged_palette(first) = primary_.packed_palette_base();
   if (secondary_)
     state.staged_palette(first + 2) = secondary_->packed_palette_base();
+}
+void BattleBackgroundScene::restore_palette(battle::PaletteBankState &state,
+                                           BattleSceneFrameReset &reset) {
+  const bool low_destination = !layer_metadata_[0].palette_base ||
+      (secondary_ && !layer_metadata_[1].palette_base);
+  if (low_destination) reset.validate_scene_and_frame_reset();
+  restore_palette_bases();
+  if (const auto base = layer_metadata_[0].palette_base)
+    state.staged_palette(*base / 16) = primary_.packed_palette_base();
+  if (secondary_) if (const auto base = layer_metadata_[1].palette_base)
+    state.staged_palette(*base / 16) = secondary_->packed_palette_base();
+  // Cold and shared-artwork records have a zeroed backup. The real caller
+  // clears the corresponding low mirrors, retaining every palette bank.
+  if (low_destination) reset.reset_scene_and_frame_state();
 }
 void BattleBackgroundScene::halve_palette(battle::PaletteBankState &state) {
   ScenePalette colors{};
@@ -419,6 +456,20 @@ void BattleBackgroundScene::advance_letterbox() {
     e.bottom_start = std::max(e.bottom_start, unsigned(e.opening_bottom >> 8));
   }
 }
+void BattleBackgroundScene::bind_display(const battle::PsiDisplayState &display,
+                                         const battle::BackgroundDisplayState &layout) {
+  if ((display_ && display_ != &display) ||
+      (display_layout_ && display_layout_ != &layout))
+    throw std::logic_error("Battle background already belongs to another display");
+  display_ = &display;
+  display_layout_ = &layout;
+}
+const battle::BackgroundDisplayState *BattleBackgroundScene::display_layout(
+    const battle::PsiDisplayState &display) const {
+  if (display_ && display_ != &display)
+    throw std::invalid_argument("Battle background publication uses a foreign display");
+  return display_layout_;
+}
 BattleBackgroundSceneFrame BattleBackgroundScene::snapshot() const {
   return {pair_,
           primary_.snapshot(),
@@ -428,9 +479,11 @@ BattleBackgroundSceneFrame BattleBackgroundScene::snapshot() const {
               secondary_.has_value(),
           blend_,
           effects_,
-          primary_.definition().bitdepth};
+          primary_.definition().bitdepth,
+          retained_artwork_};
 }
 PaletteColor BattleBackgroundSceneFrame::sample(int x, unsigned y) const {
+  if (retained_artwork) throw BattleBackgroundArtworkRequired(*retained_artwork);
   if (y >= 224)
     throw std::out_of_range("Battle scene sample exceeds display height");
   if (!primary.artwork || (secondary && !secondary->artwork))
@@ -504,6 +557,7 @@ std::shared_ptr<const DirectSceneFrame>
 BattleBackgroundSceneFrame::draw_layers(const ScenePalette &displayed,
                                         unsigned width, std::uint64_t frame,
                                         std::uint64_t identity) const {
+  if (retained_artwork) throw BattleBackgroundArtworkRequired(*retained_artwork);
   if (width < 256 || width > 4096 || width % 2 ||
       (bitdepth != 2 && bitdepth != 4) || !primary.artwork ||
       (secondary && !secondary->artwork))
@@ -563,6 +617,81 @@ BattleBackgroundSceneFrame::draw_layers(const ScenePalette &displayed,
     if (effects.top_end) {
       quad.clip.top = float(effects.top_end);
       quad.clip.bottom = float(effects.bottom_start);
+    }
+  }
+  return out;
+}
+std::shared_ptr<const DirectSceneFrame>
+BattleBackgroundSceneFrame::draw_published_layers(
+    const ScenePalette &colors, std::span<const std::uint8_t, 65536> vram,
+    const battle::BackgroundDisplayState &layout, unsigned width,
+    std::uint64_t frame, std::uint64_t identity) const {
+  if (width < 256 || width > 4096 || width % 2 ||
+      (bitdepth != 2 && bitdepth != 4) ||
+      (layout.mode & 7) != (bitdepth == 2 ? 0u : 1u))
+    throw std::invalid_argument("Invalid published battle background capture");
+  auto out = std::make_shared<DirectSceneFrame>();
+  out->width = out->atlas_width = width;
+  out->frame = frame;
+  out->scene_identity = identity;
+  const unsigned count = secondary && !shared_artwork ? 2 : 1;
+  out->atlas_height = count * 448;
+  out->atlas.resize(std::size_t(width) * out->atlas_height);
+  out->palette_indices.resize(out->atlas.size(), 256);
+  out->motions.push_back({0, 0, 0});
+  const int margin = (int(width) - 256) / 2;
+  const auto word = [&](unsigned at) {
+    return unsigned(vram[std::uint16_t(at)]) |
+           (unsigned(vram[std::uint16_t(at + 1)]) << 8);
+  };
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    const auto &source = ordinal ? *secondary : primary;
+    const auto *other = !ordinal && shared_artwork && secondary ? &*secondary : nullptr;
+    const unsigned layer = bitdepth == 4 ? (ordinal ? 0 : 1) : (ordinal ? 3 : 2);
+    const unsigned map = layout.maps[layer];
+    const unsigned map_width = map & 1 ? 64 : 32, map_height = map & 2 ? 64 : 32;
+    const unsigned tile_size = layout.mode & (0x10u << layer) ? 16 : 8;
+    const unsigned graphics = ((layout.graphics[layer / 2] >> ((layer & 1) * 4)) & 15) * 8192;
+    for (unsigned y = 0; y < 224; ++y)
+      for (unsigned x = 0; x < width; ++x) {
+        const unsigned horizontal = other && other->axis == BattleDistortionAxis::Horizontal
+            ? other->offsets[y] : source.axis == BattleDistortionAxis::Horizontal
+            ? source.offsets[y] : source.horizontal_scroll;
+        const unsigned vertical = other && other->axis == BattleDistortionAxis::Vertical
+            ? other->offsets[y] : source.axis == BattleDistortionAxis::Vertical
+            ? source.offsets[y] : source.vertical_scroll;
+        const unsigned sx = (std::uint32_t(int(x) - margin) + horizontal) & 1023;
+        const unsigned sy = (y + 1 + vertical) & 1023;
+        const unsigned mx = (sx / tile_size) % map_width, my = (sy / tile_size) % map_height;
+        const unsigned screen = mx / 32 + (my / 32) * (map_width / 32);
+        const unsigned entry = word(((map & 0xfc) << 9) + screen * 2048 +
+                                    ((my % 32) * 32 + mx % 32) * 2);
+        const unsigned tx = entry & 0x4000 ? tile_size - 1 - sx % tile_size : sx % tile_size;
+        const unsigned ty = entry & 0x8000 ? tile_size - 1 - sy % tile_size : sy % tile_size;
+        const unsigned tile = ((entry & 1023) + tx / 8 + (ty / 8) * 16) & 1023;
+        const unsigned start = graphics + tile * bitdepth * 8;
+        unsigned index = 0;
+        for (unsigned plane = 0; plane < bitdepth; ++plane)
+          index |= ((vram[std::uint16_t(start + (plane / 2) * 16 + (ty % 8) * 2 + (plane & 1))]
+                     >> (7 - tx % 8)) & 1u) << plane;
+        if (!index) continue;
+        const unsigned palette = ((entry >> 10) & 7) * (1u << bitdepth) +
+                                 (bitdepth == 2 ? layer * 32 : 0);
+        const unsigned high = (entry >> 13) & 1;
+        const auto at = std::size_t(ordinal * 448 + high * 224 + y) * width + x;
+        out->atlas[at] = palette_argb(colors.at(palette + index));
+        out->palette_indices[at] = std::uint16_t(palette + index);
+      }
+    for (unsigned high = 0; high < 2; ++high) {
+      const int low = bitdepth == 4 ? (ordinal ? 6 : 5) : (ordinal ? 0 : 1);
+      out->quads.push_back({0, ordinal * 448 + high * 224, width, 224, 0, 0,
+                            low + int(high * 3), 0, false});
+      auto &quad = out->quads.back();
+      quad.layer = DirectSceneFrame::Layer(layer);
+      if (effects.top_end) {
+        quad.clip.top = float(effects.top_end);
+        quad.clip.bottom = float(effects.bottom_start);
+      }
     }
   }
   return out;

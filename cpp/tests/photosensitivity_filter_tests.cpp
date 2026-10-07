@@ -72,12 +72,42 @@ void resize_and_validation() {
           "Disable retained filtered storage");
 }
 
+void unfiltered_windows() {
+  eb::PhotosensitivityFilter filter;
+  std::array<std::uint32_t, 3> pixels{0x80ffffff, 0x80ffffff, 0x804080c0};
+  std::array<std::uint8_t, 3> mask{0, 1, 1};
+  auto out = filter.apply(pixels, 3, 1, true, {true, false, 0}, mask);
+  require(
+      out[0] == 0x80181818 && out[1] == pixels[1] && out[2] == pixels[2],
+      "Window exemption changed alpha/color or disabled background feedback");
+  pixels[1] = 0x800000ff;
+  out = filter.apply(pixels, 3, 1, true, {false, true, 13}, mask);
+  require(out[1] == pixels[1], "PSI feedback blurred changed text");
+  filter.reset();
+  filter.apply(pixels, 3, 1, true, {true, false, 0}, mask);
+  mask[1] = 0;
+  pixels[1] = 0x80ffffff;
+  out = filter.apply(pixels, 3, 1, true, {true, false, 0}, mask);
+  require(out[1] == 0x80181818,
+          "Closed text box left ink in battle feedback history");
+  bool rejected = false;
+  try {
+    filter.apply(pixels, 3, 1, true, {}, std::span(mask).first(2));
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "Invalid window mask dimensions accepted");
+  require(filter.apply(pixels, 3, 1, false, {}, mask).data() == pixels.data(),
+          "Disabling with a window mask lost exact identity");
+}
+
 } // namespace
 int main() {
   try {
     brightness_and_identity();
     temporal_reference();
     resize_and_validation();
+    unfiltered_windows();
     std::cout << "Console photosensitivity checks passed\n";
   } catch (const std::exception &e) {
     std::cerr << e.what() << '\n';

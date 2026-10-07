@@ -29,10 +29,18 @@ private:
 // are live semantic values, not another persisted-state or memory-image copy.
 struct WorldSessionState {
   std::uint32_t elapsed_timer{};
+  std::uint16_t content_integrity{}, effect_in_progress{};
+  std::uint16_t party_members_alive_overworld{};
   saves::Position respawn{};
-  std::uint16_t input_disable_frames{}, teleport_style{};
+  std::uint16_t input_disable_frames{}, teleport_style{}, teleport_speed{};
+  // GAME_STATE.unknownC3: selected Teleport Box destination, not the active
+  // PSI_TELEPORT_DESTINATION owned by ActorWorld's appearance scene.
+  std::uint8_t teleport_box_destination{};
+  std::uint16_t current_sector_attributes{};
   std::optional<CameraTarget> fading_actor;
 };
+void set_teleport_state(WorldSessionState &, AppearanceSceneContext &,
+                        std::uint16_t destination, std::uint16_t style) noexcept;
 struct WorldStartupOwners {
   dialogue::WindowHost &windows;
   party::State &party;
@@ -91,6 +99,7 @@ public:
     // Only answer this real operation's typed requests here. Advancing the
     // outer operation resumes it; no generic startup acknowledgment exists.
     WorldRuntime::Operation *runtime_operation() noexcept;
+    void respond_bicycle_dismount();
     std::span<const WorldPartyCreatedActor> created_party() const noexcept;
   private:
     friend class WorldStartup;

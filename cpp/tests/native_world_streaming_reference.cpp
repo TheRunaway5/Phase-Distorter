@@ -1,8 +1,10 @@
 // The original refresh/load, NPC and enemy selectors, RAND and shape collision
 // bodies execute together here. Only artwork/cache publication and CREATE /
 // failed DELETE cross explicit test boundaries, already independently checked
-// by actor creation/role/map references. The collision ring is coherent input
-// to this oracle only; production samples its owned native map directly.
+// by actor creation/role/map references. This low-level fixture deliberately
+// leaves the native retained-window binding absent and supplies a coherent
+// full-map collision ring at each source query. Retained session semantics are
+// checked by the complete map/camera/Travel callers and retained C05F33 oracle.
 #include "eb/native/world_streaming.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_bus.hpp"
@@ -58,7 +60,8 @@ struct Oracle {
                    const WorldSpawnControls &controls,unsigned tileset,const EnemyPopulation &p) {
         bus->work_ram.fill(0);events.clear();active.clear();free.clear();npc_strips=enemy_strips=0;
         for(unsigned i=0;i<30;++i){put(l.scripts+i*2,0xffff);put(l.npc+i*2,0xffff);put(l.enemy+i*2,0xffff);}
-        for(unsigned i=0;i<22;++i)free.push_back(i);link();
+        for(unsigned i=0;i<22;++i)free.push_back(i);
+        link();
         put(l.origin_x,std::uint16_t(origin.x));put(l.origin_y,std::uint16_t(origin.y));put(l.tileset,tileset);
         put(l.npc_enabled,controls.npcs==NpcSpawnMode::Disabled?0:controls.npcs==NpcSpawnMode::Initial?1:0xffff);
         put(l.enemy_enabled,controls.enemies);put(l.objects,controls.objects_only);put(l.photo,controls.photograph);
@@ -178,7 +181,8 @@ void run(const eb::GameAssets &assets) {
     for(const auto &[key,center]:centers)for(unsigned variant=0;variant<12;++variant){
         const auto combination=key[0];
         std::array<std::uint8_t,128> flags{};if(variant&1)flags.fill(255);flags[1]&=~4;flags[9]&=~1;
-        if(variant==7)flags[1]|=4;if(variant==8)flags[9]|=1;
+        if(variant==7)flags[1]|=4;
+        if(variant==8)flags[9]|=1;
         const auto area=map.prepare(combination,flags);ActorWorld world(sprites,program);world.scene().event_flags=flags;
         const CameraPosition camera{std::uint16_t(center.x-128),std::uint16_t(center.y-112)};
         const auto origin=camera_stream_origin(camera);WorldActivation activation(catalog,sprites,program->scripts(),assets.version,origin);

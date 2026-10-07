@@ -33,12 +33,17 @@ WorldPartyFollowing::WorldPartyFollowing(
       control_(control), leader_(leader), prompt_(prompt),
       maintenance_(maintenance), area_style_(area_style), state_(state),
       data_(data) {
-  if (&area_style != &leader.movement_flags)
+  if (&area_style != &leader.area_character_style)
     throw std::invalid_argument(
-        "Party following area style must borrow the world movement flags");
+        "Party following area style must borrow the actual area character style");
 }
 bool WorldPartyFollowing::uses(const ActorWorld &actors) const noexcept {
   return &actors_ == &actors;
+}
+bool WorldPartyFollowing::uses(const ActorWorld &actors, const party::State &party,
+    const npcs::InteractionState &leader, const dialogue::PromptState &prompt) const noexcept {
+  return &actors_ == &actors && &party_ == &party && &leader_ == &leader &&
+         &prompt_ == &prompt && &area_style_ == &leader.area_character_style;
 }
 bool WorldPartyFollowing::uses(
     const WorldControl &control, const party::State &party,
@@ -48,7 +53,7 @@ bool WorldPartyFollowing::uses(
          &trail_ == &control.trail() && &control_ == &control.state() &&
          &leader_ == &control.leader_state() && &party_ == &party &&
          &maintenance_ == &maintenance && &prompt_ == &prompt &&
-         &area_style_ == &control.leader_state().movement_flags;
+         &area_style_ == &control.leader_state().area_character_style;
 }
 bool WorldPartyFollowing::uses(
     const ActorWorld &actors, const party::State &party,
@@ -70,16 +75,24 @@ std::optional<std::uint16_t> WorldPartyFollowing::prepare(ActorId id) {
     return {};
   return result;
 }
+std::optional<std::uint16_t> WorldPartyFollowing::prepare_with_style(ActorId id,std::uint16_t style) {
+  const auto &actor=actors_.actor(id);
+  const PartyTrailPoint point{std::uint16_t(actor.action().position[0]>>16),
+      std::uint16_t(actor.action().position[1]>>16),actor.behavior.surface_flags,style,actor.behavior.direction,0};
+  std::uint16_t result{};
+  if(!update(id,false,result,&point))return {};
+  return result;
+}
 bool WorldPartyFollowing::tick(ActorId id) {
   if (control_.automatic_mode == 3 ||
       actors_.appearance_scene().battle_swirl_ticks ||
-      maintenance_.enemy_touched || prompt_.battle_mode)
+      maintenance_.enemy_touched || control_.encounter.mode)
     return true;
   std::uint16_t ignored{};
   return update(id, true, ignored);
 }
 bool WorldPartyFollowing::update(ActorId id, bool movement,
-                                 std::uint16_t &result) {
+                                 std::uint16_t &result, const PartyTrailPoint *positioning) {
   const auto ids = actors_.actors();
   if (std::find(ids.begin(), ids.end(), id) == ids.end())
     return false;
@@ -93,7 +106,7 @@ bool WorldPartyFollowing::update(ActorId id, bool movement,
   const unsigned cursor = formation_.trail_cursors[record];
   if (cursor >= trail_.points.size())
     throw std::out_of_range("Party follower cursor exceeds trail");
-  const auto &point = trail_.points[cursor];
+  const auto &point = positioning ? *positioning : trail_.points[cursor];
   const auto &character = party_.character(record + 1);
   auto action = actor.action();
   auto context = actor.behavior;
@@ -256,5 +269,43 @@ bool WorldPartyFollowing::update(ActorId id, bool movement,
   formation_.trail_cursors[record] = next;
   maintenance_.possessed_players = possessed;
   return true;
+}
+void WorldPartyFollowing::position_after_pause() {
+  if (actors_.in_tick() && !actors_.request())
+    throw std::logic_error("Party placement requires an idle or explicitly suspended actor traversal");
+  const auto first_cursor = formation_.trail_cursors[0];
+  for (unsigned role = 24; role < 30; ++role) {
+    const auto id = actors_.actor_for_role(role);
+    if (!id) continue;
+    actors_.set_authored_pause(role, false, false);
+    auto &actor = actors_.actor(*id);
+    const auto record = actor.action().variables[1];
+    if (record >= formation_.trail_cursors.size() || !actor.has_appearance())
+      throw std::logic_error("Party placement lacks its authored character appearance");
+    const auto cursor = formation_.trail_cursors[record];
+    if (cursor >= trail_.points.size()) throw std::out_of_range("Party placement trail cursor exceeds ring");
+    PartyTrailPoint point = trail_.points[cursor];
+    if (role == formation_.current_leader_role || cursor == first_cursor) {
+      point.x = leader_.leader_x; point.y = leader_.leader_y;
+      point.walking_style = leader_.walking_style;
+      point.direction = party_.party_count == 1 ? actor.behavior.direction : leader_.leader_direction;
+    }
+    // C07A56 reads this role's existing surface flags before the caller writes
+    // XY/direction; it does not import the trail's surface into that role.
+    const auto direction = point.direction;
+    point.direction = actor.behavior.direction;
+    point.surface_flags = actor.behavior.surface_flags;
+    std::uint16_t ignored{};
+    if (!update(*id, false, ignored, &point))
+      throw std::logic_error("Party placement cannot refresh its actual member");
+    actors_.set_authored_coordinate(role, 0, point.x);
+    actors_.set_authored_coordinate(role, 1, point.y);
+    actor.behavior.direction = direction;
+    const auto x = std::uint16_t(point.x - actors_.scene().camera_x);
+    const auto y = std::uint16_t(point.y - actors_.scene().camera_y);
+    actor.behavior.projected_x = x < 0x8000 ? int(x) : int(x) - 0x10000;
+    actor.behavior.projected_y = y < 0x8000 ? int(y) : int(y) - 0x10000;
+    actor.appearance.select_eight(direction, actor.action().animation, actor.behavior.surface_flags);
+  }
 }
 } // namespace eb::native

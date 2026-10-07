@@ -35,6 +35,7 @@ struct DebugDiagnostics {
     int source_width = 256, source_height = 224;
     int drawable_width{}, drawable_height{};
     bool fullscreen = false;
+    bool machine_debug_available = true;
     GameDebugSnapshot game_debug;
     std::array<AssetCacheInfo, 2> cache;
     std::string custom_asset_status;

@@ -11,10 +11,17 @@ class WorldScenePresentation;
 struct WorldMaintenanceState {
   std::uint16_t possessed_players{};
   std::optional<ActorId> possession_actor;
-  std::uint16_t enemy_touched{}, battle_mode_flag{};
+  std::uint16_t enemy_touched{};
   std::uint16_t last_sector_x{}, last_sector_y{}, auto_sector_music{};
   std::uint16_t overworld_status_suppression{};
+  // CURRENT_PARTY_MEMBER_TICK: selected CHOSEN_FOUR_PTRS record, retained
+  // even when its current affliction suppresses the random status check.
+  std::optional<unsigned> current_party_member_tick;
 };
+// Complete INFLICT_SUNSTROKE_CHECK, including its retained accumulator result.
+std::uint16_t inflict_sunstroke_check(party::State &, const WorldControlState &,
+                                     WorldMaintenanceState &, story::RandomState &);
+
 struct PossessionActorContent {
   unsigned sprite = 264, script = 786;
 };

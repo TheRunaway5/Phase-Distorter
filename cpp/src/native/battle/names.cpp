@@ -25,6 +25,7 @@ bool Names::uses(const Roster& roster, const party::State& party, const dialogue
                  const ActionState& action) const noexcept {
     return &roster == &roster_ && &party == &party_ && &prepared == &prepared_ && &action == &action_;
 }
+bool Names::uses(const Roster& r,const party::State& p,const dialogue::PreparedMessage& m) const noexcept { return &roster_==&r && &party_==&p && &prepared_==&m; }
 unsigned Names::scratch_size() const { return version() == GameVersion::US ? 27 : 12; }
 std::span<const std::uint8_t> Names::scratch(dialogue::PreparedName side) const {
     return std::span(scratch_).subspan(side_index(side) * scratch_size(), scratch_size());
@@ -103,6 +104,36 @@ Names::Publication Names::prepare(dialogue::PreparedName side, unsigned slot, st
 void Names::publish(const Publication& update) {
     if (update.copied) prepared_.copy_name(update.side, std::span(update.bytes).first(update.count));
     prepared_.metadata(update.side) = update.metadata;
+}
+void Names::fix_menu_name(unsigned slot) {
+    const bool us=version()==GameVersion::US;
+    const auto& b=roster_.at(slot);
+    auto scratch=scratch_;
+    const auto offset=scratch_size();
+    std::fill_n(scratch.begin()+offset,us?26:12,0);
+    unsigned end=0;
+    auto write=[&](unsigned i,std::uint8_t value) {
+        if(offset+i>=2*scratch_size())throw std::out_of_range("Menu enemy name leaves shared target scratch");
+        scratch[offset+i]=value;
+    };
+    for(auto value:resources_.enemy_name(b.id)) {
+        if(!value)break;
+        if(value==(us?0xac:0x3e)) {
+            for(auto letter:party_.name_field(1)){if(!letter)break;write(end++,letter);}
+        }else write(end++,value);
+    }
+    write(end,0);
+    auto metadata=prepared_.metadata(dialogue::PreparedName::Attacker);
+    if(us)metadata.article=0;
+    if(b.label!=1||roster_.next_available_label(b.original_enemy)!=2) {
+        if(us){write(end++,0x50);metadata.article=1;}
+        write(end,std::uint8_t(b.label+(us?0x70:0x40)));
+    }
+    Publication result{dialogue::PreparedName::Attacker,metadata};
+    result.count=us?26:11;result.copied=true;
+    std::copy_n(scratch.begin()+offset,result.count,result.bytes.begin());
+    if(us)result.metadata.enemy_id=b.id;
+    scratch_=scratch;publish(result);
 }
 void Names::fix_attacker(std::uint16_t mode) {
     auto scratch = scratch_;

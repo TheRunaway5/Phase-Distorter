@@ -24,6 +24,7 @@ void GameSceneRenderer::bind_snapshot_resources(std::shared_ptr<native::SpriteRe
 }
 
 void GameSceneRenderer::snapshot_io(SnapshotArchive &ar) {
+    if (ar.format_version() >= 8) ar(presentation_unfiltered_mask_);
     if (ar.format_version() >= 7)
         ar(aperture_valid_, aperture_x_, aperture_y_, aperture_radius_x_, aperture_radius_y_, presentation_aperture_);
     else if (ar.loading()) {
@@ -127,5 +128,10 @@ void GameSceneRenderer::snapshot_io(SnapshotArchive &ar) {
         requested_presentation_width_ < 256 || requested_presentation_width_ > 4096 ||
         (!presentation_framebuffer_.empty() && presentation_framebuffer_.size() != presentation_width_ * 224)))
         throw std::runtime_error("Invalid snapshot renderer dimensions");
+    if (ar.loading() && ar.format_version() < 8)
+        presentation_unfiltered_mask_.assign(presentation_effects_enabled_ ? presentation_width_ * 224 : 0, 0);
+    if (ar.loading() && !presentation_unfiltered_mask_.empty() &&
+        presentation_unfiltered_mask_.size() != presentation_width_ * 224)
+        throw std::runtime_error("Invalid snapshot window mask dimensions");
 }
 } // namespace eb

@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+namespace eb::native::battle { struct PaletteBankState; }
 namespace eb::native {
 enum class WorldBattleInitiative { Normal, PartyFirst, EnemiesFirst };
 struct WorldEncounterGroup {
@@ -63,6 +64,8 @@ struct WorldSwirlState {
   std::uint8_t next{}, repeat_speed{}, repeats_until_speedup{};
   // Actual alternating clip HDMA channel offset (channels3/4). Oval leaves it.
   std::uint8_t hdma_channel_offset{};
+  // Independent ACTIVE_OVAL_WINDOW byte, retained by general swirl setup.
+  std::uint8_t active_oval_mode{};
   WorldOvalState oval_state;
   bool operator==(const WorldSwirlState &) const = default;
 };
@@ -130,7 +133,8 @@ public:
             const ScenePalette &colors) const noexcept {
     return uses(state) && &colors == &colors_;
   }
-  void palette_changed();
+  void bind_palette_transport(battle::PaletteBankState&);
+  void palette_changed(); // C0D4DE publishes only its changed lower128 colors.
   bool uses_effect_state(const WorldSwirlData &, const WorldSwirlState &,
                         const ScenePalette &, const WorldEncounterVisualState &) const noexcept;
   bool uses(const WorldSwirlData &, const WorldEncounterState &,
@@ -138,6 +142,7 @@ public:
             const WorldEncounterVisualState &) const noexcept;
 
 private:
+  void stage_palette(unsigned first,unsigned count,std::uint8_t mode);
   void idle() const;
   void configure(unsigned, std::uint16_t, std::uint8_t);
   const WorldSwirlData &data_;
@@ -147,6 +152,7 @@ private:
   const PaletteColor &backup_;
   WorldEncounterVisualState &visual_;
   WorldEncounterMusic music_;
+  battle::PaletteBankState* palette_transport_{};
   bool executing_{}, failed_{};
 };
 } // namespace eb::native

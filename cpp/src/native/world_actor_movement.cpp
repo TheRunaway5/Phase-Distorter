@@ -12,6 +12,10 @@ ActorHitbox::Extent extent(const WorldActor &actor) {
     const auto &box=hitbox(actor);
     return actor.behavior.direction==2||actor.behavior.direction==6?box.lateral:box.vertical;
 }
+CollisionPoint next_position(const WorldActor &actor) {
+    return {std::uint16_t((actor.action().position[0]+actor.action().velocity[0])>>16),
+            std::uint16_t((actor.action().position[1]+actor.action().velocity[1])>>16)};
+}
 bool overlap(std::uint16_t left,std::uint16_t top,ActorHitbox::Extent moving,
              const WorldActor &candidate,bool ordinary) {
     const auto other=extent(candidate);
@@ -59,8 +63,8 @@ std::uint16_t WorldActorMovement::prospective_collision(ActorWorld &world,ActorI
     auto &moving=world.actor(id);
     if(moving.behavior.collision_object==-32768)return 0x8000;
     const auto dimensions=extent(moving);
-    const auto x=std::uint16_t((moving.action().position[0]+moving.action().velocity[0])>>16);
-    const auto y=std::uint16_t((moving.action().position[1]+moving.action().velocity[1])>>16);
+    const auto at=next_position(moving);
+    const auto x=at.x,y=at.y;
     const auto left=wrap(x-dimensions.half_width),top=wrap(y-dimensions.height);
     std::optional<unsigned> selected;
     if(hitbox(moving).enabled) {
@@ -77,8 +81,52 @@ std::uint16_t WorldActorMovement::prospective_collision(ActorWorld &world,ActorI
         if(!world.appearance_scene().intangibility_ticks)search(24,30,false);
         if(!selected)search(0,23,true);
     }
+    prospective_=at;
     moving.behavior.collision_object=selected?int(*selected):-1;
     return selected?std::uint16_t(*selected):0xffff;
+}
+std::uint16_t WorldActorMovement::prospective_npc_collision(ActorWorld &world,ActorId id) const {
+    auto &moving=world.actor(id);
+    if(moving.behavior.collision_object==-32768)return 0x8000;
+    const auto at=next_position(moving);
+    std::optional<unsigned> selected;
+    if(hitbox(moving).enabled) {
+        const auto dimensions=extent(moving);
+        const auto left=wrap(at.x-dimensions.half_width),top=wrap(at.y-dimensions.height);
+        // C0613C scans every occupied role except the caller and controller.
+        // Its strict far edges do not have C06323's extra decrement, and it
+        // applies no NPC-id or party-intangibility filter.
+        for(unsigned role=0;role<30;++role) {
+            const auto candidate_id=world.actor_for_role(role);
+            if(!candidate_id||*candidate_id==id||role==23)continue;
+            const auto &candidate=world.actor(*candidate_id);
+            if(candidate.behavior.collision_object==-32768||!hitbox(candidate).enabled)continue;
+            if(overlap(left,top,dimensions,candidate,false)){selected=role;break;}
+        }
+    }
+    prospective_=at;
+    moving.behavior.collision_object=selected?int(*selected):-1;
+    return selected?std::uint16_t(*selected):0xffff;
+}
+std::uint16_t WorldActorMovement::prospective_terrain(WorldActor &actor) const {
+    const auto at=next_position(actor);
+    // C09EFF publishes the prospective pair even if fractions changed without
+    // crossing an integer coordinate. C05E3B's FF00 then becomes zero through
+    // C05E76's low-byte mask and leaves this actor's previous obstacle word.
+    if(at.x==std::uint16_t(actor.action().position[0]>>16)&&
+       at.y==std::uint16_t(actor.action().position[1]>>16)) {
+        prospective_=at;
+        return 0;
+    }
+    // C05CD7's unmatched direction branch returns zero. Only the eight real
+    // directions sample geometry; malformed shapes remain explicit frontiers.
+    const auto direction=actor.behavior.direction<8?
+        CollisionDirection(actor.behavior.direction):CollisionDirection::None;
+    const auto flags=collision_.directional_surface(area_,at,
+        actor.appearance_context.shape,direction)&0xd0u;
+    prospective_=at;
+    actor.behavior.obstacle_flags=std::uint16_t(flags);
+    return std::uint16_t(flags);
 }
 std::optional<std::uint16_t> WorldActorMovement::execute(const BoundAction &binding,ActorWorld &world,ActorId id) const {
     auto &actor=world.actor(id);
@@ -89,6 +137,12 @@ std::optional<std::uint16_t> WorldActorMovement::execute(const BoundAction &bind
     case NativeAction::CheckProspectiveActorCollision:
         if(!actor.authored_role())return std::nullopt;
         return prospective_collision(world,id);
+    case NativeAction::CheckProspectiveNpcCollision:
+        if(!actor.authored_role())return std::nullopt;
+        return prospective_npc_collision(world,id);
+    case NativeAction::CheckProspectiveTerrain:
+        if(!actor.authored_role())return std::nullopt;
+        return prospective_terrain(actor);
     default:return std::nullopt;
     }
 }

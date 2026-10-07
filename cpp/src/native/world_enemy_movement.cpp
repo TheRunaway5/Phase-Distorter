@@ -1,5 +1,6 @@
 #include "eb/native/world_enemy_movement.hpp"
 #include "eb/native/world_battle_entry.hpp"
+#include "eb/native/peripheral_state.hpp"
 #include <bit>
 #include <stdexcept>
 
@@ -37,8 +38,14 @@ EnemyMovementData::EnemyMovementData(std::span<const std::uint8_t> image,
 }
 std::array<std::uint16_t, 2>
 EnemyMovementData::components(std::uint16_t angle,
-                              std::uint16_t speed) const noexcept {
+                              std::uint16_t speed, PeripheralState* peripherals) const noexcept {
   const unsigned index = angle >> 10;
+  // C41FFF bypasses the hardware multiplier for an exact unit component.
+  // C4213F leaves the second byte product (factor * low speed) in RDMPY.
+  if (peripherals) {
+    if (x_[index] != 256) peripherals->multiply_byte(std::uint8_t(x_[index]), std::uint8_t(speed));
+    if (y_[index] != 256) peripherals->multiply_byte(std::uint8_t(y_[index]), std::uint8_t(speed));
+  }
   auto x = wrap(unsigned(speed) * x_[index] >> 8);
   auto y = wrap(unsigned(speed) * y_[index] >> 8);
   if (index < 16 || index >= 49)
@@ -49,8 +56,8 @@ EnemyMovementData::components(std::uint16_t angle,
 }
 std::array<std::uint32_t, 2>
 EnemyMovementData::velocity(std::uint16_t angle,
-                            std::uint16_t speed) const noexcept {
-  const auto raw = components(angle, speed);
+                            std::uint16_t speed, PeripheralState* peripherals) const noexcept {
+  const auto raw = components(angle, speed, peripherals);
   const auto fixed = [](std::uint16_t value) {
     const auto extended =
         value & 0x8000 ? 0xffff0000u | value : unsigned(value);

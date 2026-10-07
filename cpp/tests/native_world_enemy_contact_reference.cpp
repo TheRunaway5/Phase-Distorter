@@ -2,6 +2,7 @@
 // CPU execution is a test oracle only. Source fixtures start from identical
 // owned enemy/actor states; no helper or audio-driver command is substituted.
 #include "eb/main_cpu_65816.hpp"
+#include "eb/native/battle/psi_animation.hpp"
 #include "eb/native/world_activation.hpp"
 #include "eb/native/world_actor_movement.hpp"
 #include "eb/native/world_enemy_movement.hpp"
@@ -83,7 +84,7 @@ struct Oracle {
     put(current + 2, role(f, id) * 2);
     put(game + 176 - shift, f.control.automatic_mode);
     put(game + 142 - shift, f.leader.walking_style);
-    put(battle, f.prompt.battle_mode);
+    put(battle, f.control.encounter.mode);
     put(door, f.navigation.using_door);
     put(movement_flags, f.leader.movement_flags);
     put(intangible, f.actors.appearance_scene().intangibility_ticks);
@@ -264,7 +265,7 @@ void contact_cases(Assets &assets) {
     if (mode >= 4 && mode <= 9) {
       switch (mode) {
       case 4:
-        f.prompt.battle_mode = 1;
+        f.control.encounter.mode = 1;
         break;
       case 5:
         f.navigation.using_door = 1;
@@ -307,7 +308,7 @@ void contact_cases(Assets &assets) {
           f.actors.appearance_scene().intangibility_ticks = 1;
           break;
         case 15:
-          f.prompt.battle_mode = 1;
+          f.control.encounter.mode = 1;
           break;
         case 16:
           f.navigation.using_door = 1;
@@ -392,6 +393,44 @@ void predicates_palette(Assets &assets) {
           "Palette source incidental return is not24");
     f.contact->prepare_palette();
     o.compare(f);
+  }
+}
+void raw_palette_transport(Assets &assets) {
+  battle::PaletteBankState palette;
+  battle::PsiScratch scratch;
+  auto fixture = assets.fixture();
+  auto &f = *fixture;
+  Oracle source(assets.a);
+  f.contact->bind_palette_transport(palette, scratch);
+  for (unsigned pattern = 0; pattern < 4; ++pattern) {
+    context = assets.a.title + " raw contact palette=" + std::to_string(pattern);
+    for (unsigned i = 0; i < scratch.bytes.size(); ++i) {
+      scratch.bytes[i] = std::uint8_t(i * 29 + pattern * 71);
+      source.bus->work_ram[0x10000 + i] = scratch.bytes[i];
+    }
+    for (unsigned i = 0; i < 256; ++i) {
+      const auto word = std::uint16_t(i * 271 + pattern * 0x8421);
+      palette.staged_color(i) = word;
+      source.put(0x200 + i * 2, word);
+      palette.displayed[i / 16][i % 16] = std::uint16_t(i ^ 0x1234);
+    }
+    const auto shown = palette.displayed;
+    palette.upload_mode = 16;
+    source.bus->work_ram[0x30] = 16;
+    // The semantic decoded projection is deliberately stale: raw transport is
+    // the source palette owner when bound, including upper-bank bit15.
+    f.colors.fill({31, 0, 31});
+    check(source.run(source.jp ? 0xc0d4a6 : 0xc0d4de) == 24,
+          "Raw contact palette helper did not return");
+    f.contact->prepare_palette();
+    for (unsigned i = 0; i < 256; ++i)
+      check(source.get(0x200 + i * 2) == palette.staged_color(i),
+            "Raw contact staged word differs");
+    for (unsigned i = 0; i < scratch.bytes.size(); ++i)
+      check(source.bus->work_ram[0x10000 + i] == scratch.bytes[i],
+            "Raw contact backup or retained scratch differs");
+    check(palette.displayed == shown && palette.upload_mode == 24 && source.bus->work_ram[0x30] == 24,
+          "Contact published colors before the actual boundary");
   }
 }
 void imported_special_cases(Assets &assets) {
@@ -602,7 +641,8 @@ unsigned imported_contact_tasks(Assets &source) {
       o.put(fingerprint, actor.appearance.fingerprint());
       o.put(o.game + 130 - o.shift, 384);
       o.put(o.game + 134 - o.shift, 384);
-      unsigned contacts = 0, obstacles = 0, predicates = 0;
+      unsigned contacts = 0, obstacles = 0;
+      [[maybe_unused]] unsigned predicates = 0;
       for (unsigned frame = 0; frame < 32; ++frame) {
         context = assets.title + " imported contact " +
                   std::to_string(vertical) + "," + std::to_string(overlap) +
@@ -802,6 +842,7 @@ int main(int argc, char **argv) {
       const auto before = checks, start = calls;
       contact_cases(assets);
       predicates_palette(assets);
+      raw_palette_transport(assets);
       imported_special_cases(assets);
       const auto task_passes = imported_contact_tasks(assets);
       obstacles(assets);

@@ -50,6 +50,10 @@ public:
     std::unique_ptr<Operation> begin();
     bool busy() const noexcept { return active_ != nullptr; }
     bool failed() const noexcept { return failed_; }
+    bool uses(const Admission& admission, const story::Scene& scene,
+              const dialogue::WindowHost& windows) const noexcept {
+        return &admission == &admission_ && &scene == &scene_ && &windows == &windows_;
+    }
 private:
     void validate() const;
     Admission& admission_;

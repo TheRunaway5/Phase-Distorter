@@ -33,6 +33,10 @@ public:
     bool supports_animation(const battle::AnimationCommands &) const noexcept override;
     bool supports_battle_frame(const battle::Frame &) const noexcept override;
     void bind_frame_display(battle::FrameDisplay &);
+    // Prayer scenes retain the same NMI transport while BATTLE_MODE_FLAG
+    // temporarily selects the actual world artwork. Battle-only publishers
+    // remain unbound; the desktop owner binds its stable world presentation.
+    void bind_world_presentation(ScenePublication &);
     void complete_publication() override {}
     dialogue::WindowPalettePublication *window_palette_publication() noexcept override { return this; }
     const WorldDisplayFade *display_fade() const noexcept override { return fade_; }
@@ -40,6 +44,9 @@ public:
     bool uses_visual(const WorldEncounterVisualState &visual) const noexcept override { return visual_ == &visual; }
     const battle::FrameDisplay *frame_display() const noexcept override { return frame_display_; }
     bool uses(const WorldEncounterVisualState &, const WorldDisplayFade &) const noexcept;
+    bool uses_palette_transport(const battle::PaletteBankState &colors) const noexcept override {
+        return &colors_ == &colors;
+    }
     void publish_window_range(unsigned first, std::span<const std::uint16_t>,
                              dialogue::WindowPaletteUpload = dialogue::WindowPaletteUpload::Full) override;
 
@@ -59,6 +66,7 @@ private:
     WorldEncounterVisualState *visual_{};
     WorldDisplayFade *fade_{};
     battle::FrameDisplay *frame_display_{};
+    ScenePublication *world_{};
     void bind(WindowBinding);
 };
 } // namespace eb::native::story

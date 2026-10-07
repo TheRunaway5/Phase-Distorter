@@ -1,6 +1,8 @@
 // The translated source program is an independent test oracle only. Native
-// collision production owns imported data and queries WorldMapArea directly.
+// collision production samples owned imported map data or the actual retained
+// collision window supplied by its caller.
 #include "eb/native/world_collision.hpp"
+#include "eb/native/world/collision_window.hpp"
 #include "eb/main_cpu_65816.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
@@ -52,7 +54,8 @@ struct Oracle {
     }
     void cache(const WorldMapArea &area, CollisionPoint anchor) {
         // Populate one coherent 512x512 world window. This cache belongs solely
-        // to the reference program; the native implementation has no ring.
+        // to this unbound full-map fixture. Retained-window cases below keep
+        // their original loaded ring unchanged across all queries.
         for (int dy = -32; dy < 32; ++dy)
             for (int dx = -32; dx < 32; ++dx) {
                 const unsigned x = (unsigned(anchor.x / 8) + dx) & 8191,
@@ -71,6 +74,46 @@ struct Oracle {
     }
 };
 struct Counts { std::uint64_t edges{}, directions{}, perimeters{}, tiles{}, probes{}, wraps{}; };
+
+void retained_vertical_surfaces(const WorldMap &map,const WorldCollision &collision,Oracle &oracle) {
+    unsigned calls{},distinct{};
+    for(const CollisionPoint center : {CollisionPoint{1088,672},CollisionPoint{6997,7480},CollisionPoint{1110,1656}}) {
+        const auto area=map.prepare(map.sector(center.x/256,center.y/128).combination,
+                                    std::vector<std::uint8_t>(128));
+        WorldCollisionWindow retained;retained.load({center.x,center.y},area);
+        // Source C05F33 reads the retained64x64 collision bytes, independent
+        // of the query's absolute position. The cache producer is separately
+        // compared against the complete source map/camera caller; this leaf
+        // oracle never recaches or substitutes full-map terrain at a query.
+        std::copy(retained.cells().begin(),retained.cells().end(),oracle.bus->work_ram.begin()+0xe000);
+        const auto before=retained.cells();
+        for(const auto offset : {0u,1u,7u,512u,513u,1024u,65528u,65535u})
+          for(bool diagonal : {false,true})for(unsigned shape=0;shape<17;++shape) {
+            const CollisionPoint anchor{std::uint16_t(center.x+offset),
+                std::uint16_t(center.y+(diagonal?offset:0))};
+            context="retained vertical center="+std::to_string(center.x)+","+std::to_string(center.y)+
+                " anchor="+std::to_string(anchor.x)+","+std::to_string(anchor.y)+" shape="+std::to_string(shape);
+            oracle.put(oracle.entity_shapes,shape);
+            oracle.initialize({},0xa500);
+            oracle.call(0xc05f33,anchor.x,anchor.y,0,true);
+            const auto native=collision.vertical_surfaces(
+                [&](CollisionCell cell){return retained.sample(cell);},anchor,shape);
+            require(oracle.cpu.accumulator==native&&oracle.word(oracle.flags)==native,
+                    "Retained enemy shape surface flags differ");
+            const auto origin=collision.origin(anchor,shape);
+            require(oracle.word(oracle.left)==origin.x&&oracle.word(oracle.top)==origin.y,
+                    "Retained enemy shape origin differs");
+            const auto global=collision.vertical_surfaces(
+                [&](CollisionCell cell){return area.collision(cell.x,cell.y);},anchor,shape);
+            distinct+=global!=native;++calls;
+          }
+        require(retained.cells()==before&&std::equal(before.begin(),before.end(),oracle.bus->work_ram.begin()+0xe000),
+                "Enemy shape queries rewrote their retained terrain window");
+    }
+    require(distinct>0,"Retained terrain comparison did not differ from full-map sampling");
+    std::cout<<"PASS retained enemy terrain C05F33: "<<calls<<" original/native shape queries, "
+        <<distinct<<" distinct full-map flags; fixed actual window,512px aliases and unsigned16 wrap\n";
+}
 
 void compare_at(const WorldCollision &collision, const WorldMapArea &area, Oracle &oracle,
                 CollisionPoint anchor, Counts &counts) {
@@ -146,6 +189,7 @@ int main(int argc, char **argv) {
             const WorldCollision collision(assets.image,world_collision_layout(assets.version));
             Oracle oracle(assets);
             Counts counts;
+            retained_vertical_surfaces(map,collision,oracle);
             for (unsigned combination = 0; combination < 32; ++combination) {
                 std::vector<std::uint8_t> flags(128,combination & 1 ? 0xff : 0);
                 const auto area = map.prepare(combination,flags);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "eb/game_version.hpp"
+#include "eb/session_diagnostics.hpp"
 #include "eb/logical_clock_policy.hpp"
 #include "eb/presentation_frame.hpp"
 #include <cstdint>
@@ -12,14 +13,6 @@
 
 namespace eb {
 class GameDebug;
-
-struct SessionDiagnostics {
-    std::uint64_t frames{}, steps{}, master_clocks{};
-    std::uint64_t cpu_instructions{}, audio_cpu_instructions{}, audio_frames{};
-    std::uint64_t native_gameplay_batches{};
-    unsigned source_width{};
-    std::string cpu_state, audio_cpu_state;
-};
 
 // Owns one game's hardware, translated processors, audio synthesis and debug
 // commands. Simulation receives explicit controller input and has no host clock,

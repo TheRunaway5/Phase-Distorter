@@ -128,7 +128,7 @@ struct Oracle {
              {l.using_door, f.navigation.using_door},
              {l.movement_flags, f.leader.movement_flags},
              {l.debug, f.prompt.debug},
-             {l.battle, f.prompt.battle_mode},
+             {l.battle, f.control.encounter.mode},
              {0x81, f.leader.demo_frames},
              {0x65, f.input.state[0]},
              {0x67, f.input.state[1]},
@@ -219,7 +219,7 @@ struct Oracle {
     equal("movement flags", l.movement_flags, f.leader.movement_flags);
     equal("movement counter", l.counter, a.movement_counter);
     equal("swirl", l.swirl, a.battle_swirl_ticks);
-    equal("battle", l.battle, f.prompt.battle_mode);
+    equal("battle", l.battle, f.control.encounter.mode);
     equal("input", 0x65, f.input.state[0]);
     equal("pressed", 0x6d, f.input.pressed[0]);
     equal("input2", 0x67, f.input.state[1]);
@@ -444,7 +444,7 @@ void run(const eb::GameAssets &assets) {
       WorldDoorTransitionState state;
       f.maintenance.enemy_touched = enemy;
       f.actors.appearance_scene().battle_swirl_ticks = swirl;
-      f.prompt.battle_mode = 0x1234;
+      f.control.encounter.mode = 0x1234;
       f.control.moved_this_tick = 9;
       f.leader.map_text.door_found_type = 0x1234;
       invoke(oracle, f, state, data, collision, movement, flat_area, counts);

@@ -48,6 +48,7 @@ public:
   void publish_initial();
   void publish_window_palette(unsigned flavor, bool transitions_disabled);
   bool failed() const noexcept { return failed_; }
+  const BattleSpriteAllocation& allocation() const noexcept { return allocation_; }
   bool uses(const BattleCombatantScene &, const PaletteBankState &,
             const PsiScratch &, const PsiDisplayState &, const Frame &) const noexcept;
   bool uses(const BattleCombatants &, const BattleCombatantScene &,

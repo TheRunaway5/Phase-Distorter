@@ -15,6 +15,10 @@ public:
     // The SnesBus must outlive this instance: construction installs its APU clock
     // callback, and destruction removes that callback before it can dangle.
     explicit Spc700AudioCpu(SnesBus& system_bus);
+    // Native gameplay supplies only the two directional audio latches. The
+    // existing SPC program, timers and DSP remain the audio implementation.
+    Spc700AudioCpu(std::span<uint8_t, 4> to_audio,
+                   std::span<uint8_t, 4> from_audio);
     explicit Spc700AudioCpu(std::span<uint8_t> flat_memory); // independent instruction vectors
     ~Spc700AudioCpu();
     Spc700AudioCpu(const Spc700AudioCpu&) = delete;
@@ -60,7 +64,8 @@ public:
 
 private:
     friend struct RuntimeStateAudit;
-    SnesBus* system_bus_ = nullptr;
+    std::span<uint8_t> to_audio_ports_, from_audio_ports_;
+    std::function<void(unsigned)> *host_clock_callback_{};
     std::span<uint8_t> instruction_test_memory_;
     uint8_t control_register_ = 0x80, test_register_ = 0x0a, dsp_register_address_ = 0;
     // Each timer has a free-running divider, an 8-bit target counter, and a

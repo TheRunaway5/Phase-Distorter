@@ -12,9 +12,9 @@ public:
   EnemyMovementData(std::span<const std::uint8_t>, GameVersion);
   GameVersion version() const noexcept { return version_; }
   std::array<std::uint16_t, 2> components(std::uint16_t angle,
-                                          std::uint16_t speed) const noexcept;
+                                          std::uint16_t speed, PeripheralState* peripherals = nullptr) const noexcept;
   std::array<std::uint32_t, 2> velocity(std::uint16_t angle,
-                                        std::uint16_t speed) const noexcept;
+                                        std::uint16_t speed, PeripheralState* peripherals = nullptr) const noexcept;
 
 private:
   GameVersion version_;

@@ -29,10 +29,13 @@ bool PartyFormation::bound_to(const party::State &party, const ActorWorld &actor
                               const npcs::Interactions &interactions, const TickState &clock) const noexcept {
     return &party_ == &party && &actors_ == &actors && &interactions_ == &interactions && &clock_ == &clock;
 }
-std::unique_ptr<PartyFormation::Operation> PartyFormation::begin() {
+void PartyFormation::validate_begin() const {
     check();
-    if (active_tail_)
+    if (active_tail_ || updater_.busy())
         throw std::logic_error("Party formation already has an active tail service");
+ }
+std::unique_ptr<PartyFormation::Operation> PartyFormation::begin() {
+    validate_begin();
     return std::unique_ptr<Operation>(new Operation(*this));
 }
 std::unique_ptr<PartyFormation::TailOperation> PartyFormation::begin_tail(WorldPartyService kind) {

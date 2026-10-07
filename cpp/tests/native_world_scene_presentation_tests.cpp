@@ -1,6 +1,7 @@
 #include "eb/native/world_scene_presentation.hpp"
 #include "eb/native/story/window_layer.hpp"
 #include "eb/native/dialogue/fonts.hpp"
+#include "eb/native/battle/palette_effects.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include <algorithm>
 #include <iostream>
@@ -26,10 +27,12 @@ void run(eb::GameVersion region) {
   AreaPalettes area;
   for (unsigned p=0;p<6;++p) {
     area.scenery_zero[p]=0x8101+p;
+    area.scenery_high_bits[p]=0xaaaa;
     for(unsigned i=1;i<16;++i) area.scenery[p][i]=palette_argb({std::uint8_t(p),std::uint8_t(i),31});
   }
   for (unsigned p=0;p<8;++p) {
     area.sprite_zero[p]=0x8201+p;
+    area.sprite_high_bits[p]=0x5554;
     for(unsigned i=1;i<16;++i) area.sprites[p][i]=palette_argb({31,std::uint8_t(p),std::uint8_t(i)});
   }
   presentation.publish_area(area);
@@ -78,6 +81,49 @@ void run(eb::GameVersion region) {
   host.clear_palette_publication(presentation);
   auto detached=colors;host.publish_palette(2);
   check(colors==detached,"Detached window host retained publication owner");
+
+  battle::PaletteBankState transport;
+  presentation.bind_palette_transport(transport);
+  presentation.stage_world_palette();
+  auto unpublished=presentation.capture(*merged);
+  check(unpublished->atlas[0]==palette_argb({0,0,0}) && transport.upload_mode==24,
+        "Sampling consumed a staged world palette");
+  auto published=presentation.capture_next(*merged);
+  check(published->atlas[0]==palette_argb(colors[129]) && !transport.upload_mode,
+        "World NMI did not publish the actual palette transport");
+  const auto old_picture=published->atlas;
+  transport.staged_color(129)=0x801f;
+  transport.upload_mode=8; // Only lower colors, preserving actor colors.
+  auto lower=presentation.capture_next(*merged);
+  check(lower->atlas[0]==published->atlas[0] && transport.staged_color(129)==0x801f,
+        "Background-only upload consumed actor staging/high bits");
+  transport.upload_mode=16;
+  auto upper=presentation.capture_next(*merged);
+  check(upper->atlas[0]==palette_argb({31,0,0}) && transport.displayed_palette(8)[1]==31,
+        "Upper palette upload missed its NMI or retained CGRAM bit15");
+  check(published->atlas==old_picture,"Later native palette publication changed an immutable frame");
+  // Real C0A1F2/C0A1A7 producers touch their own palette ranges only.
+  for(unsigned i=0;i<256;++i) transport.staged_color(i)=std::uint16_t(0x8000+i);
+  const auto before_scenery=transport.staged;
+  const auto before_display=transport.displayed;
+  presentation.publish_scenery(area);
+  for(unsigned i=0;i<256;++i) {
+    const auto expected=i>=32&&i<128?(i%16?std::uint16_t(colors[i].red|(colors[i].green<<5)|(colors[i].blue<<10)|((i<128?0xaaaa:0x5554)>>(i%16)&1)<<15):area.scenery_zero[(i-32)/16]):before_scenery[i/16][i%16];
+    check(transport.staged_color(i)==expected,"Scenery animation overwrote unrelated raw palette staging");
+  }
+  check(transport.upload_mode==8&&transport.displayed==before_display,"Scenery animation published outside its actual NMI");
+  presentation.publish_area(area);
+  for(unsigned i=0;i<256;++i) {
+    const auto expected=i>=32?(i%16?std::uint16_t(colors[i].red|(colors[i].green<<5)|(colors[i].blue<<10)|((i<128?0xaaaa:0x5554)>>(i%16)&1)<<15):(i<128?area.scenery_zero[(i-32)/16]:area.sprite_zero[(i-128)/16])):before_scenery[i/16][i%16];
+    check(transport.staged_color(i)==expected,"Area palette producer overwrote retained window colors");
+  }
+  check(transport.upload_mode==24&&transport.displayed==before_display,"Area palette producer skipped shared publication staging");
+  const auto displayed=transport.displayed;
+  transport.upload_mode=7;
+  bool rejected=false;
+  try { (void)presentation.capture_next(*merged); } catch(const std::exception &) { rejected=true; }
+  check(rejected && transport.displayed==displayed && transport.upload_mode==7,
+        "Rejected native palette mode consumed pending publication");
 }
 }
 int main(){try{run(eb::GameVersion::US);run(eb::GameVersion::JP);std::cout<<"Native scene palette publication: "<<checks<<" checks\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

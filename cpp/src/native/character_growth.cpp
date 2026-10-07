@@ -75,7 +75,7 @@ CharacterGrowth::CharacterGrowth(std::span<const std::uint8_t> assets,
   }
   for (unsigned i = 0; i < 256; ++i) {
     const auto *p = items.data() + i * l.item_stride + l.item_parameters;
-    items_[i] = {p[0], p[1], p[2]};
+    items_[i] = {p[0], p[1], p[2], p[3]};
   }
   initial_money_ = word(initial.data() + 4);
 }
@@ -142,6 +142,49 @@ void CharacterGrowth::recalculate_stats(
   validate(c, character);
   for (const auto stat : {0u, 1u, 2u, 3u, 6u, 4u, 5u})
     recalculate_stat(c, character, stat, context);
+}
+std::uint16_t CharacterGrowth::change_equipment(
+    party::Character &c, unsigned character, party::EquipmentSlot slot,
+    std::uint16_t position, const CharacterGrowthContext &context) const {
+  const auto index = static_cast<unsigned>(slot);
+  if (character < 1 || character > party::State::character_count ||
+      index >= c.equipment.size() || position > c.items.size())
+    throw std::out_of_range("Equipment change leaves owned party storage");
+  for (const auto existing : c.equipment)
+    if (existing > c.items.size())
+      throw std::out_of_range("Equipment change has invalid existing position");
+  const auto previous = c.equipment[index];
+  c.equipment[index] = std::uint8_t(position);
+  const auto special = [&](unsigned equipment) -> unsigned {
+    const auto pos = c.equipment[equipment];
+    return pos ? items_[c.items[pos - 1]].special : 0;
+  };
+  if (slot == party::EquipmentSlot::Weapon) {
+    recalculate_stat(c, character, 0, context);
+    recalculate_stat(c, character, 3, context);
+    c.miss_rate = std::uint8_t(special(0));
+  } else {
+    recalculate_stat(c, character, 1, context);
+    recalculate_stat(c, character, slot == party::EquipmentSlot::Body ? 2 : 6, context);
+    const auto resistance = [&](unsigned shift) {
+      return std::uint8_t(std::min(3u, ((special(1) >> shift) & 3) +
+                                          ((special(3) >> shift) & 3)));
+    };
+    c.fire_resistance = resistance(0);
+    c.freeze_resistance = resistance(2);
+    c.flash_resistance = resistance(4);
+    c.paralysis_resistance = resistance(6);
+    c.hypnosis_brainshock_resistance = std::uint8_t(special(2));
+  }
+  return previous;
+}
+void CharacterGrowth::recalculate_derived_stat(party::Character &c, unsigned character,
+    unsigned stat, const CharacterGrowthContext &context) const {
+  if(character<1 || character>party::State::character_count || stat>=7)
+    throw std::out_of_range("Stat recalculation leaves owned character fields");
+  for(const auto slot:c.equipment)
+    if(slot>c.items.size()) throw std::out_of_range("Stat recalculation has invalid equipment");
+  recalculate_stat(c,character,stat,context);
 }
 std::uint16_t CharacterGrowth::grow_stat(
     party::Character &c, unsigned character, unsigned old_level, unsigned stat,

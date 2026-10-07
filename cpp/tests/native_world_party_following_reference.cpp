@@ -211,7 +211,7 @@ struct FollowingFixture {
         movement_data(import_party_movement_data(a.image, a.version)),
         movement(actors, party, formation, random, movement_data),
         following(actors, party, formation, trail, control, leader, prompt,
-                  maintenance, leader.movement_flags, state, data) {
+                  maintenance, leader.area_character_style, state, data) {
     party.display_order = {1, 2, 3, 4, 5, 6};
     party.party_count = 6;
     formation.current_leader_role = 24;
@@ -285,14 +285,14 @@ struct FollowingOracle : Oracle {
     put(l.game + 144 - l.displacement, f.control.moved_this_tick);
     put(l.game + 176 - l.displacement, f.control.automatic_mode);
     put(l.game + 142 - l.displacement, f.leader.walking_style);
-    put(l.game + 146 - l.displacement, f.leader.movement_flags);
+    put(l.game + 146 - l.displacement, f.leader.area_character_style);
     bus->work_ram[l.game + 75 - l.displacement] = f.party.party_status;
     put(possessed, f.maintenance.possessed_players);
     put(pajamas, f.state.pajamas);
     put(transitions, f.actors.appearance_scene().transitions_disabled);
     put(swirl, f.actors.appearance_scene().battle_swirl_ticks);
     put(touched, f.maintenance.enemy_touched);
-    put(battle, f.prompt.battle_mode);
+    put(battle, f.control.encounter.mode);
   }
   void actor(unsigned role, const WorldActor &a) {
     seed(role, a);
@@ -374,7 +374,7 @@ void direct_reference(const eb::GameAssets &assets, unsigned &calls) {
                                    : trial % 17 == 0 ? 3
                                                      : 0;
         f.leader.walking_style = trial % 2 ? 12 : 0;
-        f.leader.movement_flags = trial % 7;
+        f.leader.area_character_style = trial % 7;
         f.party.party_status = trial % 13 == 0 ? 1 : trial % 11 == 0 ? 3 : 0;
         f.party.character(record + 1).afflictions[0] = trial % 6;
         f.party.character(record + 1).afflictions[1] = (trial / 6) % 4;
@@ -383,7 +383,7 @@ void direct_reference(const eb::GameAssets &assets, unsigned &calls) {
         f.maintenance.possessed_players = trial % 2 ? 0xffff : 7;
         f.actors.appearance_scene().battle_swirl_ticks = trial == 61;
         f.maintenance.enemy_touched = trial == 62;
-        f.prompt.battle_mode = trial == 63;
+        f.control.encounter.mode = trial == 63;
         a.action().variables = {std::uint16_t(member),
                                 std::uint16_t(record),
                                 0x4321,
@@ -494,7 +494,7 @@ void event_reference(const eb::GameAssets &assets, unsigned &passes) {
     f.actors.scene().camera_y = tick % 5;
     f.actors.appearance_scene().battle_swirl_ticks = tick % 23 == 8 ? 3 : 0;
     f.maintenance.enemy_touched = tick % 29 == 9;
-    f.prompt.battle_mode = tick % 31 == 10;
+    f.control.encounter.mode = tick % 31 == 10;
     o.put(l.game + 144 - l.displacement, f.control.moved_this_tick);
     o.put(l.game + 176 - l.displacement, f.control.automatic_mode);
     o.put(l.mismatch, f.formation.projection.movement_mismatch);
@@ -502,7 +502,7 @@ void event_reference(const eb::GameAssets &assets, unsigned &passes) {
     o.put(0x33, f.actors.scene().camera_y);
     o.put(o.swirl, f.actors.appearance_scene().battle_swirl_ticks);
     o.put(o.touched, f.maintenance.enemy_touched);
-    o.put(o.battle, f.prompt.battle_mode);
+    o.put(o.battle, f.control.encounter.mode);
     // Both real actor passes see the same newly recorded trail content. Cursors
     // and character state are never copied from one implementation to the
     // other.

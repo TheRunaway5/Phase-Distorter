@@ -62,6 +62,11 @@ unsigned TargetSelection::count(unsigned side) const {
       ++result;
   return result;
 }
+bool TargetSelection::has_stealable_item(std::uint16_t item) {
+  const auto count = find_stealable_items();
+  return std::find(steals_.candidates.begin(), steals_.candidates.begin() + count, item) !=
+      steals_.candidates.begin() + count;
+}
 void TargetSelection::validate_rows() const {
   require(rows_.front_count <= rows_.front.size() &&
               rows_.back_count <= rows_.back.size(),

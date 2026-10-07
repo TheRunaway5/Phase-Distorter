@@ -68,13 +68,18 @@ PsiSceneFrame::draw(unsigned width, std::uint64_t frame,
 std::shared_ptr<const DirectSceneFrame>
 PsiSceneFrame::compose(const BattleBackgroundSceneFrame &background,
                        const DirectSceneFrame::Effects &policy, unsigned width,
-                       std::uint64_t frame, std::uint64_t identity) const {
+                       std::uint64_t frame, std::uint64_t identity,
+                       const DirectSceneFrame *published_background_layers) const {
   if (background.bitdepth != bitdepth_)
     throw std::invalid_argument(
         "PSI and background captures use different pixel modes");
-  auto backgrounds = background.draw_layers(colors_, width, frame, identity);
+  const auto catalog = published_background_layers ? nullptr
+      : background.draw_layers(colors_, width, frame, identity);
+  const auto &backgrounds = published_background_layers ? *published_background_layers : *catalog;
+  if (backgrounds.width != width || backgrounds.atlas_width != width)
+    throw std::invalid_argument("Published battle layer dimensions differ");
   const auto psi = draw(width, frame, identity);
-  auto out = std::make_shared<DirectSceneFrame>(*backgrounds);
+  auto out = std::make_shared<DirectSceneFrame>(backgrounds);
   std::erase_if(out->quads,
                 [&](const auto &quad) { return quad.layer == layer(); });
   const auto top = out->atlas_height;

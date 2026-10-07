@@ -1,5 +1,6 @@
 #include "eb/native/world_scheduler.hpp"
 #include "eb/native/world_maintenance.hpp"
+#include "eb/native/world_control.hpp"
 #include "native_interaction_test_assets.hpp"
 #include <functional>
 #include <iostream>
@@ -38,6 +39,7 @@ struct Fixture {
   npcs::DadPhoneState phone;
   AppearanceSceneContext appearance;
   WorldMaintenanceState maintenance;
+  WorldControlState control;
   Callbacks callbacks;
   WorldScheduler scheduler;
   explicit Fixture(eb::GameVersion version)
@@ -96,11 +98,11 @@ void gates(eb::GameVersion region) {
         f.clock.frame_counter = frame;
         f.phone = {std::uint16_t(timer), 7};
         if (gate & 1) f.open();
-        f.maintenance.battle_mode_flag = gate & 2;
+        f.windows.prompt_state().battle_mode = gate & 2;
         f.appearance.battle_swirl_ticks = gate & 4;
         f.maintenance.enemy_touched = gate & 8;
-        // The distinct prompt battle mode is not this source gate.
-        f.windows.prompt_state().battle_mode = 0xffff;
+        // The outer encounter request is independent of this source FLAG gate.
+        f.control.encounter.mode = 0xffff;
         f.scheduler.schedule(1, Callback::EscalatorEnter);
         f.scheduler.process_frame();
         check(f.phone.timer == (frame == 0 && timer ? timer - 1 : timer) && f.phone.queued == 7,
@@ -117,7 +119,7 @@ void live_scan(eb::GameVersion region) {
     if (c != Callback::EscalatorEnter) return;
     check(s.schedule(1, Callback::StairsEnter) == 0, "Callback did not reuse current freed slot");
     check(s.schedule(1, Callback::StairsExit) == 1, "Callback did not use later free slot");
-    f.maintenance.battle_mode_flag = 1;
+    f.windows.prompt_state().battle_mode = 1;
     check(!s.process_frame(), "Recursive scheduler entry ran another frame");
   };
   f.clock.frame_counter = 0;
@@ -128,7 +130,7 @@ void live_scan(eb::GameVersion region) {
   check(f.scheduler.tasks()[0].frames_left == 1 && f.scheduler.tasks()[1].frames_left == 0,
         "Current slot was decremented again or later slot was skipped");
   check(f.phone.timer == 4, "Recursive callback consumed phone cadence twice");
-  f.maintenance.battle_mode_flag = 0;
+  f.windows.prompt_state().battle_mode = 0;
   ++f.clock.frame_counter;
   f.scheduler.process_frame();
   check(f.callbacks.calls.back() == Callback::StairsEnter, "Rescheduled current slot did not wait for next frame");

@@ -100,7 +100,7 @@ void gates(eb::GameVersion version) {
     const auto id = f.spawn()[0];
     f.leader.collision_actor = id;
     if (gate == 0)
-      f.prompt.battle_mode = 1;
+      f.control.encounter.mode = 1;
     if (gate == 1)
       f.navigation.using_door = 1;
     if (gate == 2)

@@ -82,23 +82,38 @@ WorldEncounterEffectData import_world_encounter_effect_data(
   const unsigned profile_at = version == GameVersion::JP ? 0xb2de : 0xb2ff;
   for (unsigned i = 0; i < profile.size(); ++i) profile[i] = byte(profile_at + i);
   std::vector<WorldOvalStep> steps;
-  std::size_t at = version == GameVersion::JP ? 0x47a37 : 0x4a5ce;
-  for (;;) {
-    WorldOvalStep step;
-    step.duration = byte(at);
-    if (step.duration) {
-      step.center_x = read_word(at + 2); step.center_y = read_word(at + 4);
-      step.width = read_word(at + 6); step.height = read_word(at + 8);
-      step.center_dx = read_word(at + 10); step.center_dy = read_word(at + 12);
-      step.velocity_x = read_word(at + 14); step.velocity_y = read_word(at + 16);
-      step.acceleration_x = read_word(at + 18);
-      step.acceleration_y = read_word(at + 20);
+  const std::array<unsigned, 5> starts = version == GameVersion::JP
+      ? std::array<unsigned, 5>{0x47a37, 0x47a63, 0x47a8f, 0x47abb, 0x3f35e}
+      : std::array<unsigned, 5>{0x4a5ce, 0x4a5fa, 0x4a626, 0x4a652, 0x3f819};
+  for (auto at : starts) {
+    for (;;) {
+      WorldOvalStep step;
+      step.duration = byte(at);
+      if (step.duration) {
+        step.center_x = read_word(at + 2); step.center_y = read_word(at + 4);
+        step.width = read_word(at + 6); step.height = read_word(at + 8);
+        step.center_dx = read_word(at + 10); step.center_dy = read_word(at + 12);
+        step.velocity_x = read_word(at + 14); step.velocity_y = read_word(at + 16);
+        step.acceleration_x = read_word(at + 18);
+        step.acceleration_y = read_word(at + 20);
+      }
+      steps.push_back(step);
+      if (!step.duration) break;
+      at += 22;
     }
-    steps.push_back(step);
-    if (!step.duration) break;
-    at += 22;
   }
   return {std::move(clips), std::move(profile), std::move(steps)};
+}
+
+unsigned WorldEncounterEffectData::oval_sequence(unsigned sequence) const {
+  if (sequence >= 5) throw std::out_of_range("Unknown authored oval sequence");
+  unsigned at = 0;
+  for (unsigned i = 0; i < sequence; ++i) {
+    while (oval_steps.at(at++).duration) {}
+  }
+  if (at >= oval_steps.size() || !oval_steps.at(at).duration)
+    throw std::invalid_argument("Missing authored oval sequence");
+  return at;
 }
 
 std::array<EncounterWindowInterval, 224> encounter_ellipse(
@@ -201,6 +216,39 @@ void WorldEncounterEffects::bind_display(battle::FrameDisplay &display) {
   if (display_ && display_ != &display)
     throw std::logic_error("Encounter effects already bound to another display");
   display_ = &display;
+}
+void WorldEncounterEffects::clear_battle_window() {
+  check();
+  if (!display_)
+    throw std::logic_error("Battle-window cleanup requires its actual display transport");
+  swirl_.update_in = 0;
+  swirl_.oval = false;
+  display_->disable_swirl(0);
+  visual_.window_layers.fill(false);
+  visual_.window_invert = false;
+  ++visual_.window_revision;
+}
+void WorldEncounterEffects::begin_oval(std::uint16_t mode) {
+  check();
+  const auto start = data_.oval_sequence(mode == 2 ? 4 : mode == 1 ? 1 : 0);
+  // Validate immutable sequence and definition before the in-place setup.
+  (void)definitions_.definitions.at(0);
+  configure_world_swirl(definitions_, swirl_, visual_, 0, 0);
+  swirl_.active_oval_mode = std::uint8_t(mode);
+  swirl_.masked_layers = {true, true, false, false, true, false}; // mask19.
+  swirl_.oval_state.next_step = start;
+}
+void WorldEncounterEffects::close_oval() {
+  check();
+  const auto start = data_.oval_sequence(swirl_.active_oval_mode ? 3 : 2);
+  (void)definitions_.definitions.at(0);
+  configure_world_swirl(definitions_, swirl_, visual_, 0, 0);
+  swirl_.masked_layers = {true, true, false, false, true, false};
+  swirl_.oval_state.next_step = start;
+}
+bool WorldEncounterEffects::animation_active(const battle::PsiAnimationState &psi) const {
+  check();
+  return psi.time_until_next_frame != 0 || swirl_.update_in != 0;
 }
 void WorldEncounterEffects::install(const EncounterWindowMask &mask, bool second) {
   visual_.window_pattern = mask;

@@ -1,6 +1,5 @@
 #include "eb/spc700_audio_cpu.hpp"
 #include "eb/snapshot_archive.hpp"
-#include "eb/snes_bus.hpp"
 
 #include <iomanip>
 #include <sstream>
@@ -41,17 +40,18 @@ constexpr uint8_t opcode_cycle_counts[256] = {
     6, 3, 2, 8, 4, 5, 3, 4, 3, 6, 2,  4, 5, 3, 4, 3, 4, 3, 2, 8, 4, 5, 4, 5, 5, 6, 3, 4, 5, 4, 2, 2, 4, 3};
 } // namespace
 
-Spc700AudioCpu::Spc700AudioCpu(SnesBus& system_bus) : system_bus_(&system_bus) {
+Spc700AudioCpu::Spc700AudioCpu(std::span<uint8_t, 4> to_audio,
+                             std::span<uint8_t, 4> from_audio)
+    : to_audio_ports_(to_audio), from_audio_ports_(from_audio) {
     dsp_registers[0x6c] = 0xe0;
-    system_bus_->advance_audio_master_clocks = [this](unsigned master_clocks) { advance_master_clocks(master_clocks); };
 }
 Spc700AudioCpu::Spc700AudioCpu(std::span<uint8_t> flat_memory) : instruction_test_memory_(flat_memory) {
     if (instruction_test_memory_.size() != 65536)
         throw std::invalid_argument("SPC flat memory must contain 65536 bytes");
 }
 Spc700AudioCpu::~Spc700AudioCpu() {
-    if (system_bus_)
-        system_bus_->advance_audio_master_clocks = {};
+    if (host_clock_callback_)
+        *host_clock_callback_ = {};
 }
 // The IPL overlay affects reads only while CONTROL.7 is set; underlying RAM
 // remains available for writes. The F0..FF range selects hardware registers,
@@ -64,7 +64,7 @@ uint8_t Spc700AudioCpu::read_byte(uint16_t address) {
     if (address < 0xf0 || address > 0xff)
         return audio_ram[address];
     if (address >= 0xf4 && address <= 0xf7)
-        return system_bus_->main_to_audio_ports[address - 0xf4];
+        return to_audio_ports_[address - 0xf4];
     if (address >= 0xfd) {
         const auto timer_index = address - 0xfd;
         const auto value = timer_output_latches_[timer_index];
@@ -101,7 +101,7 @@ void Spc700AudioCpu::write_byte(uint16_t address, uint8_t value) {
     if (address < 0xf0 || address > 0xff)
         return;
     if (address >= 0xf4 && address <= 0xf7) {
-        system_bus_->audio_to_main_ports[address - 0xf4] = value;
+        from_audio_ports_[address - 0xf4] = value;
         return;
     }
     if (address >= 0xfa && address <= 0xfc) {
@@ -122,9 +122,9 @@ void Spc700AudioCpu::write_byte(uint16_t address, uint8_t value) {
                 timer_output_latches_[timer_index] = 0;
             }
         if (value & 0x10)
-            system_bus_->main_to_audio_ports[0] = system_bus_->main_to_audio_ports[1] = 0;
+            to_audio_ports_[0] = to_audio_ports_[1] = 0;
         if (value & 0x20)
-            system_bus_->main_to_audio_ports[2] = system_bus_->main_to_audio_ports[3] = 0;
+            to_audio_ports_[2] = to_audio_ports_[3] = 0;
         control_register_ = value;
         break;
     case 0xf2:

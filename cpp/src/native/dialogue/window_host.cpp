@@ -72,6 +72,8 @@ struct WindowHost::Execution {
     PreparedMessage *prepared{};
     const battle::Roster *roster{};
     const battle::ActionState *action{};
+    std::optional<std::span<const std::uint8_t, 8192>> ambient_animation;
+    std::optional<std::span<std::uint8_t, 8192>> ambient_layout;
     std::vector<WindowId> order;
     std::vector<std::optional<unsigned>> title_owners;
     // Five sixteen-column title reservations plus the real US final-owner
@@ -189,13 +191,36 @@ struct WindowHost::Execution {
             title_owners.at(*slot.title_owner).reset();
         slot.title_owner.reset();
     }
+    WindowState inherited_registers() const {
+        if (!japanese() || state.focus || state.windows.empty() || !state.unfocused_register_alias)
+            return state.window();
+        const auto delta = std::uint16_t(*state.ambient_lookup() * 76u);
+        if (delta == std::uint16_t(0u - 76u) || (delta % 76 == 0 && delta / 76 < 8))
+            return state.window();
+        // GET_ACTIVE uses 16-bit arithmetic. CREATE reads the six registers
+        // at offsets23..42 from that address before it allocates a window.
+        // Only this actual retained owner supplies off-window-bank bytes.
+        const auto address = std::uint16_t(0x89c2u + delta);
+        const unsigned first = unsigned(address) + 23;
+        require(ambient_animation && first >= 0xc000 && first + 20 <= 0xe000,
+                "Inherited window registers leave owned animation staging");
+        const auto bytes = *ambient_animation;
+        auto word = [&](unsigned offset) {
+            const unsigned at = first - 0xc000 + offset;
+            return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
+        };
+        auto dword = [&](unsigned offset) {
+            return std::uint32_t(word(offset)) | std::uint32_t(word(offset + 2)) << 16;
+        };
+        return {{dword(0), dword(4), word(8)}, {dword(10), dword(14), word(18)}};
+    }
     bool open(WindowId id, TextOutput::Owner owner) {
         const auto &configuration = resources->configuration(id.value);
         // JP snapshots the previous active bank before allocation, including
         // reopening the focused window. US retains the destination slot bank.
         std::optional<WindowState> inherited;
         if (japanese())
-            inherited = state.window();
+            inherited = inherited_registers();
         auto index = find(id);
         if (!index) {
             for (unsigned i = 0; i < slots.size(); ++i)
@@ -710,9 +735,10 @@ std::shared_ptr<const TextFrame> WindowHost::slot_frame(unsigned index) const {
 const OutputWindow &WindowHost::positioning_window() const {
     const auto &e = *execution_;
     if (e.state.focus) return e.output.window(*e.state.focus);
-    require(e.state.unfocused_register_slot.has_value(),
+    const auto ambient = e.state.ambient_slot();
+    require(ambient.has_value(),
             "Unfocused text layout requires the source ambient physical slot");
-    return slot_output(*e.state.unfocused_register_slot);
+    return slot_output(*ambient);
 }
 void WindowHost::position_source(TextCursor cursor, unsigned fraction, TextOutput::Owner owner) {
     auto &e = *execution_;
@@ -724,15 +750,17 @@ void WindowHost::position_source(TextCursor cursor, unsigned fraction, TextOutpu
         e.output.position_slot(*index, cursor, fraction, owner);
         return;
     }
-    require(e.state.unfocused_register_slot.has_value(),
+    const auto ambient = e.state.ambient_slot();
+    require(ambient.has_value(),
             "Unfocused text positioning requires the source ambient physical slot");
-    const auto index = *e.state.unfocused_register_slot;
+    const auto index = *ambient;
     e.output.position_slot(index, cursor, fraction, owner);
 }
 WindowMetadata &WindowHost::metadata(WindowId id) { return execution_->get(id); }
 std::array<WindowMenuOption, 70> &WindowHost::menu_options() { return execution_->menu_options; }
 MenuState &WindowHost::menu_state() { return execution_->menu_state; }
 PromptState &WindowHost::prompt_state() { return execution_->prompt_state; }
+const PromptState &WindowHost::prompt_state() const { return execution_->prompt_state; }
 std::span<const WindowId> WindowHost::draw_order() const { return execution_->order; }
 SavedWindowAttributes WindowHost::save_attributes() const {
     SavedWindowAttributes result;
@@ -793,6 +821,80 @@ void WindowHost::draw_tick() {
         e.draw(e.order.back());
     e.output.acknowledge_redraw();
 }
+void WindowHost::bind_ambient_register_source(std::span<const std::uint8_t, 65536> source) {
+    auto &e = *execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind ambient registers only with idle text output");
+    const unsigned offset = e.japanese() ? 0x8c24 : 0x88e2;
+    const auto word = source.subspan(offset, 2);
+    const auto &prior = e.state.unfocused_register_alias;
+    require(!prior || prior->word.data() == word.data(),
+            "Window host is bound to another ambient register source");
+    e.state.unfocused_register_alias = State::RegisterAlias{
+        std::span<const std::uint8_t, 2>(word.data(), 2), e.japanese() ? 76u : 82u};
+}
+void WindowHost::bind_ambient_animation_source(std::span<const std::uint8_t, 8192> source) {
+    auto &e = *execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind ambient animation only with idle text output");
+    require(!e.ambient_animation || e.ambient_animation->data() == source.data(),
+            "Window host is bound to another animation staging owner");
+    e.ambient_animation = source;
+}
+void WindowHost::bind_ambient_animation_layout(std::span<std::uint8_t, 8192> source) {
+    auto &e = *execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind ambient layout only with idle text output");
+    require(e.ambient_animation && e.ambient_animation->data() == source.data(),
+            "Mutable ambient layout must share the actual animation source");
+    require(!e.ambient_layout || e.ambient_layout->data() == source.data(),
+            "Window host is bound to another mutable animation owner");
+    e.ambient_layout = source;
+}
+std::optional<std::uint16_t> WindowHost::aliased_text_x() const {
+    const auto &e = *execution_;
+    if (!e.japanese() || e.state.focus || !e.state.unfocused_register_alias)
+        return std::nullopt;
+    const auto delta = std::uint16_t(*e.state.ambient_lookup() * 76u);
+    if (delta == std::uint16_t(0u - 76u) || (delta % 76 == 0 && delta / 76 < 8))
+        return std::nullopt;
+    // GET_TEXT_X does not use GET_ACTIVE's empty-window shortcut. Its
+    // pointer and text_x field addition both wrap as 16-bit source words.
+    const auto address = std::uint16_t(0x89c2u + delta + 14u);
+    require(e.ambient_animation && address >= 0xc000 && unsigned(address) + 2 <= 0xe000,
+            "Unfocused text X leaves owned animation staging");
+    const auto bytes = *e.ambient_animation;
+    const unsigned at = address - 0xc000;
+    return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
+}
+void WindowHost::aliased_newline(TextOutput::Owner owner) {
+    auto &e = *execution_;
+    require(aliased_text_x().has_value() && e.ambient_layout,
+            "Aliased newline requires its actual mutable layout owner");
+    const auto delta = std::uint16_t(*e.state.ambient_lookup() * 76u);
+    const auto base = std::uint16_t(0x89c2u + delta);
+    const auto bytes = *e.ambient_layout;
+    auto address = [&](unsigned field) {
+        const auto at = std::uint16_t(base + field);
+        require(at >= 0xc000 && unsigned(at) + 2 <= 0xe000,
+                "Aliased newline registers leave owned animation staging");
+        return unsigned(at) - 0xc000;
+    };
+    const auto height_at = address(12), x_at = address(14), y_at = address(16), font_at = address(21);
+    auto word = [&](unsigned at) {
+        return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
+    };
+    TextCursor cursor{word(x_at), word(y_at)};
+    e.output.newline_without_scroll(word(font_at), word(height_at), cursor, owner);
+    auto store = [&](unsigned at, std::uint16_t value) {
+        bytes[at] = std::uint8_t(value);
+        bytes[at + 1] = std::uint8_t(value >> 8);
+    };
+    // The source increments text_y before clearing text_x; all admission and
+    // the shared composition reset precede these actual retained-byte writes.
+    store(y_at, cursor.line);
+    store(x_at, cursor.column);
+}
 void WindowHost::bind_party(const party::State &state) {
     auto &e = *execution_;
     require(state.version() == version(), "Party and dialogue owners must share a region");
@@ -818,6 +920,12 @@ void WindowHost::bind_battle(const battle::Roster& roster, const battle::ActionS
     e.roster = &roster;
     e.action = &action;
 }
+std::optional<std::span<const std::uint8_t,14>> WindowHost::attacker_inventory() const {
+    const auto& e=*execution_;
+    if(!e.roster || !e.action || !e.party)return {};
+    require(e.action->attacker.has_value(),"Item query has no admitted current attacker");
+    return std::span<const std::uint8_t,14>(e.party->character(e.roster->at(*e.action->attacker).id).items);
+}
 std::optional<std::uint16_t> WindowHost::query_battle(const BattleGrammarRequest& request) const {
     const auto& e = *execution_;
     if (!e.roster || !e.action) return {};
@@ -833,12 +941,16 @@ std::optional<std::uint16_t> WindowHost::query_party(const PartyQueryRequest &re
     case PartyQueryKind::ControlledCount: return query.controlled_count();
     case PartyQueryKind::FirstConscious: return query.first_conscious();
     case PartyQueryKind::ConsciousCount: return query.conscious_count();
+    case PartyQueryKind::InventoryItem: return query.inventory_item(request.character,request.position);
     case PartyQueryKind::FewerControlledThan: return std::uint32_t(query.controlled_count()) < request.amount ? 1 : 0;
     case PartyQueryKind::StatusEquals:
         return std::uint16_t(query.status(request.character,request.group) == request.expected_status);
     }
     throw std::logic_error("Invalid native dialogue party query");
 }
+void WindowHost::save_text_context() { save_context(0); }
+void WindowHost::restore_text_context() { restore_context(0); }
+void WindowHost::request_redraw() { execution_->output.request_host_redraw(); }
 void WindowHost::publish_scene() { execution_->published = execution_->buffer; }
 void WindowHost::clear_auto_fight_indicator() {
     auto &e = *execution_;
@@ -849,6 +961,15 @@ void WindowHost::clear_auto_fight_indicator() {
     // are bound, just as other shared meter/window cells do.
     if (e.graphics) blank.image = e.graphics->image(0);
     std::fill_n(e.buffer.begin() + 18 * 32 - 6, 4, blank);
+}
+void WindowHost::stage_auto_fight_indicator(std::span<const std::uint16_t,4> words) {
+    std::array<ArtworkCellReference,4> cells{};
+    for(unsigned i=0;i<4;++i) {
+        const auto word=words[i];auto& c=cells[i];c.artwork_cell=word&0x3ff;
+        c.style.palette=(word>>10)&7;c.style.priority=(word&0x2000)!=0;
+        c.style.flip_horizontal=(word&0x4000)!=0;c.style.flip_vertical=(word&0x8000)!=0;
+    }
+    execution_->meter_row(execution_->buffer,18*32-6,cells);
 }
 void WindowHost::publish_meter_area() {
     auto &e = *execution_;

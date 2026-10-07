@@ -2,6 +2,7 @@
 // find_inventory_space{,2}, C22351, increase_wallet_balance;
 // C3EAD0/INITIALIZE_ITEM_TRANSFORMATION.
 #include "eb/native/party/inventory.hpp"
+#include "eb/native/character_growth.hpp"
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -58,6 +59,7 @@ struct Inventory::Execution {
   std::shared_ptr<const ItemTransformationResources> transformations;
   ItemTransformationState &timers;
   story::RandomState &random;
+  const CharacterGrowth *equipment{};
   bool active{}, poisoned{};
   Execution(State &p, std::shared_ptr<const dialogue::SubstitutionResources> i,
             std::shared_ptr<const ItemTransformationResources> t,
@@ -98,17 +100,46 @@ struct Inventory::Execution {
       return;
     }
   }
+  void remove_transformation(std::uint16_t item) {
+    unsigned row = 0;
+    while (transformations->record(row).item && transformations->record(row).item != std::uint8_t(item))
+      ++row;
+    auto &timer = timers.records.at(row);
+    if (valid(timer)) {
+      --timers.loaded_count;
+      timer.frequency = timer.transformation_countdown = 0;
+    }
+    // C3EB1C's inventory search stops at each first empty position. It restarts
+    // the timer even when a duplicate item remained, consuming its real RNG.
+    for (unsigned p = 0; p < party.controlled_count; ++p)
+      for (const auto existing : party.character(party.party_order.at(p)).items) {
+        if (!existing) break;
+        if (existing == std::uint8_t(item)) { start_transformation(item); return; }
+      }
+  }
+  std::uint16_t equip(std::uint16_t character, EquipmentSlot slot, std::uint16_t position) {
+    require(equipment, "Inventory removal/equipment requires its actual stat catalog");
+    auto &c = party.character(character);
+    return equipment->change_equipment(c, character, slot, position,
+        {c.boosted_speed,c.boosted_guts,c.boosted_vitality,c.boosted_iq,c.boosted_luck,false});
+  }
 };
 struct Inventory::Operation::Execution {
-  enum class Phase { Find, Write, Teddy, Transform, Finish };
+  enum class Mode { Give, Remove, Take, Transfer };
+  enum class Phase { Find, Write, Remove, Teddy, TeddyRemove, Transform, TransferCompact, TransferEquipment, Finish };
   Inventory::Execution &owner;
   std::uint16_t selector{}, item{}, character{}, position{}, result{};
   unsigned ordinal{};
+  std::uint16_t sender{}, original_position{};
+  bool transfer_received{};
+  Mode mode = Mode::Give;
   Phase phase = Phase::Find;
   std::optional<InventoryService> pending;
   bool done{};
-  Execution(Inventory::Execution &o, std::uint16_t s, std::uint16_t i)
-      : owner(o), selector(s), item(i) {}
+  Execution(Inventory::Execution &o, std::uint16_t s, std::uint16_t i, Mode m = Mode::Give)
+      : owner(o), selector(s), item(i), mode(m) {
+    if (m == Mode::Remove) { character = s; position = i; phase = Phase::Remove; }
+  }
   void finish(std::uint16_t value) {
     result = value;
     done = true;
@@ -117,6 +148,32 @@ struct Inventory::Operation::Execution {
   void step() {
     auto &o = owner;
     switch (phase) {
+    case Phase::TransferCompact: {
+      auto &c=o.party.character(sender);
+      item=c.items.at(original_position-1);
+      unsigned at=original_position-1;
+      while(at<13 && c.items[at+1]) {c.items[at]=c.items[at+1];++at;}
+      c.items[at]=0;
+      phase=Phase::Find;
+      return;
+    }
+    case Phase::TransferEquipment: {
+      auto &c=o.party.character(sender);
+      std::optional<unsigned> retained;
+      if(sender==selector) {
+        for(unsigned index=0;index<c.equipment.size();++index) if(c.equipment[index]==original_position) {
+          c.equipment[index]=std::uint8_t(o.empty(sender));retained=index;break;
+        }
+      } else {
+        for(unsigned slot=0;slot<c.equipment.size();++slot) if(c.equipment[slot]==original_position) {
+          o.equip(sender,static_cast<EquipmentSlot>(slot),0);break;
+        }
+      }
+      for(unsigned index=0;index<c.equipment.size();++index)
+        if(retained!=index && original_position<c.equipment[index])--c.equipment[index];
+      finish(transfer_received?character:0);
+      return;
+    }
     case Phase::Find:
       if (selector == 0xff) {
         if (ordinal >= o.party.controlled_count) {
@@ -128,10 +185,23 @@ struct Inventory::Operation::Execution {
         character = o.party.party_order.at(ordinal);
       } else
         character = selector;
+      if (mode == Mode::Take) {
+        const auto &inventory = o.party.character(character).items;
+        const auto match = std::find(inventory.begin(), inventory.end(), item);
+        if (match != inventory.end()) {
+          position = std::uint16_t(match - inventory.begin() + 1);
+          phase = Phase::Remove; return;
+        }
+        if (selector == 0xff) ++ordinal;
+        else finish(0);
+        return;
+      }
       position = o.empty(character);
       if (position == 14) {
         if (selector == 0xff)
           ++ordinal;
+        else if(mode==Mode::Transfer)
+          phase=Phase::TransferEquipment;
         else
           finish(0);
         return;
@@ -143,18 +213,45 @@ struct Inventory::Operation::Execution {
       // receipt. A full inventory above never reads metadata at all.
       const auto properties = o.items->item_properties(item);
       o.party.character(character).items[position] = std::uint8_t(item);
+      if(mode==Mode::Transfer)transfer_received=true;
       phase = properties.type == 4 ? Phase::Teddy : Phase::Transform;
       return;
     }
     case Phase::Teddy:
       pending = InventoryService::TeddyRefresh;
       return;
+    case Phase::Remove: {
+      if (!position || position > 14)
+        throw std::out_of_range("Removal position leaves owned inventory");
+      auto &c = o.party.character(character);
+      item = c.items[position - 1];
+      const auto properties = o.items->item_properties(item);
+      // Only the first matching equipment slot is unequipped, then every
+      // remaining source index after the removed position shifts one place.
+      for (unsigned slot = 0; slot < c.equipment.size(); ++slot)
+        if (c.equipment[slot] == position) {
+          o.equip(character, static_cast<EquipmentSlot>(slot), 0); break;
+        }
+      for (auto &slot : c.equipment) if (position < slot) --slot;
+      unsigned at = position - 1;
+      while (at < 13 && c.items[at + 1]) {
+        c.items[at] = c.items[at + 1]; ++at;
+      }
+      c.items[at] = 0;
+      phase = properties.type == 4 ? Phase::TeddyRemove : Phase::Transform;
+      return;
+    }
+    case Phase::TeddyRemove:
+      pending = InventoryService::TeddyRemove;
+      return;
     case Phase::Transform:
       // Source reloads flags after C216DB; resource ownership stays
       // immutable, while scheduler validity and random words stay live.
-      if (o.items->item_properties(item).flags & 0x10)
-        o.start_transformation(item);
-      phase = Phase::Finish;
+      if (o.items->item_properties(item).flags & 0x10) {
+        if (mode == Mode::Give || mode == Mode::Transfer) o.start_transformation(item);
+        else o.remove_transformation(item);
+      }
+      phase = mode==Mode::Transfer?Phase::TransferEquipment:Phase::Finish;
       return;
     case Phase::Finish:
       finish(selector == 0xff ? o.party.party_order.at(ordinal) : character);
@@ -226,6 +323,23 @@ void Inventory::rescan_transformations() {
     throw;
   }
 }
+void Inventory::bind_equipment(const CharacterGrowth &growth) {
+  auto &e = *execution_;
+  require(!e.active && !e.poisoned && growth.version() == e.party.version() &&
+          (!e.equipment || e.equipment == &growth), "Inventory has foreign or active equipment owner");
+  e.equipment = &growth;
+}
+std::uint16_t Inventory::change_equipment(std::uint16_t character, EquipmentSlot slot, std::uint16_t position) {
+  require(!execution_->active && !execution_->poisoned, "Equipment change requires idle inventory");
+  return execution_->equip(character, slot, position);
+}
+void Inventory::recalculate_derived_stat(std::uint16_t character,unsigned stat) {
+  auto &e=*execution_;
+  require(!e.active && !e.poisoned && e.equipment,"Stat recalculation requires idle inventory and stat catalog");
+  auto &c=e.party.character(character);
+  e.equipment->recalculate_derived_stat(c,character,stat,
+      {c.boosted_speed,c.boosted_guts,c.boosted_vitality,c.boosted_iq,c.boosted_luck,false});
+}
 std::uint16_t Inventory::first_empty_index(std::uint16_t character) const {
   return execution_->empty(character);
 }
@@ -250,6 +364,13 @@ std::uint32_t Inventory::add_wallet32(std::uint32_t amount) {
   value = std::bit_cast<std::int32_t>(sum) > 99999 ? 99999 : sum;
   return value;
 }
+std::uint16_t Inventory::subtract_wallet32(std::uint32_t amount) {
+  require(!execution_->poisoned, "Abandoned inventory invalidated its wallet owner");
+  auto &value=execution_->party.money_carried;
+  const auto difference=value-amount;
+  if(std::bit_cast<std::int32_t>(difference)<0)return 1;
+  value=difference;return 0;
+}
 std::unique_ptr<Inventory::Operation>
 Inventory::begin_give(std::uint16_t selector, std::uint16_t item) {
   auto &e = *execution_;
@@ -258,6 +379,34 @@ Inventory::begin_give(std::uint16_t selector, std::uint16_t item) {
       new Operation(std::make_unique<Operation::Execution>(e, selector, item)));
   e.active = true;
   return result;
+}
+std::unique_ptr<Inventory::Operation> Inventory::begin_remove(std::uint16_t character, std::uint16_t position) {
+  auto &e = *execution_;
+  require(!e.active && !e.poisoned && e.equipment, "Removal requires idle inventory and stat catalog");
+  (void)e.party.character(character);
+  if (!position || position > 14) throw std::out_of_range("Removal position leaves owned inventory");
+  auto result = std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(
+      e,character,position,Operation::Execution::Mode::Remove)));
+  e.active = true; return result;
+}
+std::unique_ptr<Inventory::Operation> Inventory::begin_take(std::uint16_t selector, std::uint16_t item) {
+  auto &e = *execution_;
+  require(!e.active && !e.poisoned && e.equipment, "Taking an item requires idle inventory and stat catalog");
+  auto result = std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(
+      e,selector,item,Operation::Execution::Mode::Take)));
+  e.active = true; return result;
+}
+std::unique_ptr<Inventory::Operation> Inventory::begin_transfer(std::uint16_t sender,
+    std::uint16_t position,std::uint16_t recipient) {
+  auto &e=*execution_;
+  require(!e.active && !e.poisoned && e.equipment,"Transfer requires idle inventory and stat catalog");
+  (void)e.party.character(sender);(void)e.party.character(recipient);
+  if(!position || position>14)throw std::out_of_range("Transfer position leaves owned inventory");
+  auto result=std::unique_ptr<Operation>(new Operation(std::make_unique<Operation::Execution>(
+      e,recipient,0,Operation::Execution::Mode::Transfer)));
+  auto &op=*result->execution_;op.sender=sender;op.original_position=position;
+  op.phase=Operation::Execution::Phase::TransferCompact;
+  e.active=true;return result;
 }
 Inventory::Operation::Operation(std::unique_ptr<Execution> e)
     : execution_(std::move(e)) {}
@@ -287,7 +436,7 @@ const std::optional<InventoryService> &Inventory::Operation::service() const {
 }
 void Inventory::Operation::respond() {
   auto &e = *execution_;
-  require(!e.owner.poisoned && e.pending == InventoryService::TeddyRefresh,
+  require(!e.owner.poisoned && (e.pending == InventoryService::TeddyRefresh || e.pending == InventoryService::TeddyRemove),
           "Inventory has no pending teddy reconciliation");
   e.pending.reset();
   e.phase = Execution::Phase::Transform;
@@ -296,5 +445,11 @@ bool Inventory::Operation::complete() const { return execution_->done; }
 std::uint16_t Inventory::Operation::recipient() const {
   require(execution_->done, "Inventory receipt has not completed");
   return execution_->result;
+}
+std::uint16_t Inventory::Operation::teddy_member() const {
+  const auto &e = *execution_;
+  require(e.pending == InventoryService::TeddyRemove, "Removal has no pending Teddy member");
+  const auto raw = e.owner.items->item_properties(e.item).parameters[0];
+  return raw < 128 ? raw : std::uint16_t(0xff00 | raw);
 }
 } // namespace eb::native::party
