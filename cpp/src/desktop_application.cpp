@@ -158,6 +158,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             if (display && presentation.presentation_due(now)) {
                 display->present(session.diagnostics(display->wants_register_diagnostics()),
                                  presentation.picture(now));
+                presentation.report_swap_cost(display->swap_duration());
                 presentation.presented(std::chrono::steady_clock::now());
             }
             now = std::chrono::steady_clock::now();

@@ -176,6 +176,10 @@ void PresentationPipeline::presented(Time now) {
     }
 }
 
+void PresentationPipeline::report_swap_cost(Time::duration cost) {
+    presentation_clock_.set_swap_cost(cost);
+}
+
 PresentationPipeline::Time PresentationPipeline::wake_time(Time now) const {
     if (!presentation_enabled_)
         return now;

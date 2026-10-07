@@ -15,6 +15,7 @@
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -307,8 +308,13 @@ struct DesktopDisplay::Impl {
         // Read back before swap so captures contain this frame and its overlay.
         if (!capture.empty())
             presenter_->capture().write_ppm(capture);
+        const auto swap_started = std::chrono::steady_clock::now();
         SDL_GL_SwapWindow(window_);
+        last_swap_duration_ = std::chrono::steady_clock::now() - swap_started;
     }
+    std::chrono::steady_clock::duration swap_duration() const { return last_swap_duration_; }
+
+    std::chrono::steady_clock::duration last_swap_duration_{};
 
   private:
 #ifdef __linux__
@@ -464,6 +470,9 @@ bool DesktopDisplay::fullscreen() const {
 }
 bool DesktopDisplay::wants_register_diagnostics() const {
     return impl_->wants_register_diagnostics();
+}
+std::chrono::steady_clock::duration DesktopDisplay::swap_duration() const {
+    return impl_->swap_duration();
 }
 double DesktopDisplay::frame_rate() const {
     return impl_->frame_rate();

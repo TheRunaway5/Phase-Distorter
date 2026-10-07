@@ -15,29 +15,25 @@ public:
     void reset(Time now, double rate) {
         tick_ = draw_ = now;
         draw_period_ = rate > 0 ? std::chrono::duration_cast<Duration>(std::chrono::duration<double>(1 / rate)) : Duration::zero();
-        arrival_ = now;
-        interval_ = FramePacer::period();
+        phase_ = swap_cost_ = Duration::zero();
     }
     void resume(Time now) {
         if (now - tick_ > std::chrono::milliseconds(250)) {
-            tick_ = draw_ = arrival_ = now;
-            interval_ = FramePacer::period();
+            tick_ = draw_ = now;
+            phase_ = swap_cost_ = Duration::zero();
         }
     }
     bool simulation_due(Time now) const { return now >= tick_; }
-    // The gap estimate rejects stalls by clamping; a multi-frame step is rare
-    // catch-up, for which the native period is the best next-gap prior.
+    // The phase estimate skips multi-frame steps (rare catch-up carries debt
+    // unrepresentative of the loop) and clamps to half a period.
     void simulated(Time now, std::uint64_t frames) {
-        tick_ += FramePacer::period() * frames;
+        const auto period = FramePacer::period();
         if (frames == 1) {
-            const auto interval = now - arrival_;
-            const auto period = FramePacer::period();
-            if (interval >= period / 4 && interval <= period * 4)
-                interval_ += (interval - interval_) / 8;
-        } else {
-            interval_ = FramePacer::period();
+            const auto lateness = now - tick_;
+            if (lateness >= Duration::zero() && lateness <= period / 2)
+                phase_ += (lateness - phase_) / 8;
         }
-        arrival_ = now;
+        tick_ += period * frames;
     }
     // A draw entering the clearance before the tick deadline is deferred past it.
     bool presentation_due(Time now) const { return !simulation_due(now) && now + clearance() <= tick_ && (draw_period_ == Duration::zero() || now >= draw_); }
@@ -47,8 +43,20 @@ public:
         // Omit missed presentation slots, never burst them or drop game ticks.
         if (draw_ <= now) draw_ += draw_period_ * ((now - draw_) / draw_period_ + 1);
     }
+    // Report the measured wall cost of a presentation swap; the draw clearance
+    // adapts to it instead of taxing modes whose swaps are cheap.
+    void set_swap_cost(Duration cost) {
+        if (cost >= Duration::zero() && cost <= FramePacer::period())
+            swap_cost_ += (cost - swap_cost_) / 4;
+    }
     double fraction(Time now) const {
-        return std::clamp(double((now - arrival_).count()) / double(interval_.count()), 0.0, 1.0);
+        // The ideal-grid rate: one frame of motion per native period wherever
+        // the window sits, so varying update costs move the window, not the
+        // speed. The tracked phase recenters it on actual arrivals, which
+        // bounds endpoint holds to lateness above the sustained mean.
+        return std::clamp(1.0 + double((now - tick_).count() - phase_.count()) /
+                                    double(FramePacer::period().count()),
+                          0.0, 1.0);
     }
     Time wake(Time now) const {
         if (draw_period_ != Duration::zero() && draw_ > now) {
@@ -58,14 +66,12 @@ public:
         return now + clearance() <= tick_ ? now : (tick_ > now ? tick_ : now);
     }
 private:
-    // Swap plus loop work completes inside this window before a tick deadline.
-    static Duration clearance() {
-        return std::min(std::chrono::duration_cast<Duration>(std::chrono::milliseconds(3)),
-                        FramePacer::period() / 4);
+    Duration clearance() const {
+        return std::min(swap_cost_ * 2, FramePacer::period() / 4);
     }
     Time tick_{}, draw_{};
     Duration draw_period_{};
-    Time arrival_{};
-    Duration interval_{};
+    Duration phase_{};
+    mutable Duration swap_cost_{};
 };
 } // namespace eb
