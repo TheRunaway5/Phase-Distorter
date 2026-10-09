@@ -21,6 +21,13 @@ unsigned prompt_offset(eb::GameVersion version) {
 }
 void resources(eb::GameVersion version) {
     Fixture f(version);
+    const unsigned tail_offset = version == eb::GameVersion::JP ? 0x040b34 : 0x040be8;
+    std::array<std::uint8_t,64> raw_tail;
+    for (unsigned cell = 0; cell < 32; ++cell) {
+        f.put(tail_offset + cell * 2,f.descriptor(cell % 4,cell % 4));
+        raw_tail[cell * 2] = f.image[tail_offset + cell * 2];
+        raw_tail[cell * 2 + 1] = f.image[tail_offset + cell * 2 + 1];
+    }
     // Deliberately differ from original descriptor constants: importing data
     // must preserve each phase's independent attributes, not recreate them.
     constexpr std::array<unsigned,3> prompt_tiles{20,21,17};
@@ -33,6 +40,9 @@ void resources(eb::GameVersion version) {
               (prompt_priorities[phase] ? 0x2000 : 0) | (prompt_horizontal[phase] ? 0x4000 : 0) |
               (prompt_vertical[phase] ? 0x8000 : 0));
     const auto native = f.import();
+    check(native->raw_fixed_tail_identity() == 0xc00000u + tail_offset &&
+          std::equal(raw_tail.begin(),raw_tail.end(),native->raw_fixed_tail().begin()),
+          "Fixed window transfer lost its regional raw donor bytes or immutable content identity");
     check(native->version() == version && native->configuration_count() == f.count &&
           native->configurations().size() == f.count,"Window region or configuration extent differs");
     for (unsigned id = 0; id < f.count; ++id)
@@ -86,7 +96,8 @@ void resources(eb::GameVersion version) {
     std::fill(f.image.begin(),f.image.end(),0);
     check(native->configuration(7) == held_config && native->border(WindowBorder::Corner,2) == held_border &&
           native->palette(1) == held_palette && native->pagination(1,2) == held_page &&
-          native->prompt(2,2) == held_prompt,
+          native->prompt(2,2) == held_prompt &&
+          std::equal(raw_tail.begin(),raw_tail.end(),native->raw_fixed_tail().begin()),
           "Window resources retained borrowed source-image memory");
     rejects([&]{native->configuration(f.count);},"Configuration read passed its declared table");
     rejects([&]{native->border(WindowBorder::Corner,0);},"Flavor zero was treated as a valid flavor");

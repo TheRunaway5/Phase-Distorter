@@ -43,7 +43,6 @@ void AudioFrameClock::elapsed(unsigned clocks) {
     vblank_latch_=true;
     if (peripherals_ && (clock_.effective_interrupt_mask() & 1)) peripherals_->begin_auto_read();
     if(clock_.effective_interrupt_mask()&0x80) {
-      vblank_latch_=false;
       if(!explicit_boundary_)nmi_();
     }
   } else if(phase_==length()) {
@@ -55,7 +54,7 @@ void AudioFrameClock::nmi_enabled(bool enabled) {
   if(clock_.retained_hardware_interrupt_mask)
     clock_.retained_hardware_interrupt_mask=std::uint8_t((clock_.effective_interrupt_mask()&0x7f)|(enabled?0x80:0));
   clock_.interrupt_mask=std::uint8_t((clock_.interrupt_mask&0x7f)|(enabled?0x80:0));
-  if(enabled && !before && vblank_latch_) {vblank_latch_=false;nmi_();}
+  if(enabled && !before && vblank_latch_) nmi_();
 }
 void AudioFrameClock::advance_boundary(NativeAudio &audio) {
   if(explicit_boundary_)throw std::logic_error("Physical boundary is recursive");

@@ -10,6 +10,7 @@
 #include "eb/native/world_screen_transition.hpp"
 #include "eb/native/world_script_teleport.hpp"
 #include "eb/native/world/teleport/travel.hpp"
+#include "eb/native/world/music/transition.hpp"
 #include "eb/native/story/audio_clock.hpp"
 #include "eb/native/story/special_events.hpp"
 #include "eb/direct_scene.hpp"
@@ -25,6 +26,7 @@ std::shared_ptr<const DirectSceneFrame> crop_native_scene(const DirectSceneFrame
 struct NativeSession::State {
     n::session::Content content;
     NativeAudio audio;
+    n::cutscenes::DisplayState cinematic_display_state;
     n::session::World world;
     n::story::AudioFrameClock physical_clock;
     n::session::BattleContent battle_content;
@@ -53,6 +55,8 @@ struct NativeSession::State {
     n::world::teleport::Travel travel;
     std::unique_ptr<n::world::teleport::Travel::Operation> traveling;
     n::WorldBattleReturn battle_return;
+    n::cutscenes::Display cinematic_display;
+    n::cutscenes::Services cinematics;
     n::story::SpecialEvents special_events;
     n::saves::Session persistence;
     std::unique_ptr<n::WorldBattleReturn::Operation> returning;
@@ -64,6 +68,8 @@ struct NativeSession::State {
     std::function<void()> finish_dismount;
     std::unique_ptr<n::WorldStartup::Operation> startup;
     std::unique_ptr<n::WorldRuntime::Operation> runtime;
+    std::unique_ptr<n::world::music::SectorTransition> sector_music;
+    n::WorldRuntime::Operation *sector_music_parent{};
     std::unique_ptr<n::battle::Encounter::Operation> encounter;
     std::unique_ptr<n::battle::Outcomes::Operation> instant;
     std::unique_ptr<n::story::Scene::Operation> scene;

@@ -481,7 +481,12 @@ void binding_and_images(eb::GameVersion version) {
         const auto &a = assets(version); State state; TextOutput output(a.fonts,state);
         WindowHost windows(a.windows,state,output);
         auto graphics = std::make_shared<WindowGraphics>(a.initialization,output);
+        rejects([&]{graphics->raw_fixed_tail();}, "Unbound graphics invented a fixed window donor");
+        rejects([&]{graphics->raw_fixed_tail_identity();}, "Unbound graphics invented a fixed window content identity");
         lifetime = graphics; windows.set_graphics(graphics);
+        check(graphics->raw_fixed_tail().data() == a.windows->raw_fixed_tail().data() &&
+                  graphics->raw_fixed_tail_identity() == a.windows->raw_fixed_tail_identity(),
+              "Bound window graphics failed to retain its actual immutable fixed donor owner");
         rejects([&]{windows.set_graphics(graphics);}, "Window graphics could be rebound after identity publication");
         auto open = windows.begin({WindowAction::Open,WindowId{0},{},0}); complete_window(*open);
         rejects([&]{windows.load_artwork(2);}, "Legacy art loader bypassed bound staged publication");

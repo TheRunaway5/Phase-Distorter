@@ -1,4 +1,18 @@
 #include "eb/native/story/scene.hpp"
+#include "eb/native/story/source_work.hpp"
+#include "eb/native/story/source_frame_input.hpp"
+#include "eb/native/story/source_screen.hpp"
+#include "eb/native/entities/graphics/source_objects.hpp"
+#include "eb/native/entities/graphics/source_actor_draw.hpp"
+#include "eb/native/entities/graphics/source_global_draw.hpp"
+#include "eb/native/story/source_foreground.hpp"
+#include "eb/native/story/source_window_publication.hpp"
+#include "eb/native/story/source_random.hpp"
+#include "eb/native/story/source_meter_roller.hpp"
+#include "eb/native/story/source_meter_tiles.hpp"
+#include "eb/native/story/source_meter_status.hpp"
+#include "eb/native/world_input_playback.hpp"
+#include "eb/native/battle/frame_display.hpp"
 #include "eb/native/world_display_fade.hpp"
 #include "eb/native/battle/animation_commands.hpp"
 #include "eb/native/battle/frame.hpp"
@@ -20,8 +34,11 @@ float camera_pixel(std::uint16_t value) {
 }
 struct Scene::Execution {
     dialogue::WindowHost &windows;
+    std::weak_ptr<const void> windows_lifetime;
     party::State &party;
+    std::weak_ptr<const void> party_lifetime;
     RandomState &random;
+    std::weak_ptr<const void> random_lifetime;
     npcs::Interactions *interactions{};
     party::Inventory *inventory{};
     PartyFormation *formation{};
@@ -30,6 +47,7 @@ struct Scene::Execution {
     battle::AnimationCommands *animations{};
     battle::Frame *battle_frame{};
     party::MeterWindows &meters;
+    std::weak_ptr<const void> meters_lifetime;
     TickState &clock;
     InputState &input;
     ActorWorld &actors;
@@ -41,11 +59,15 @@ struct Scene::Execution {
     std::uint64_t next{}, frames{};
     bool poisoned{}, publishing{};
     ScenePublication *publication{};
+    SourceWorkService *source_work{};
+    const WorldDisplayFade *source_fade{};
+    std::weak_ptr<const void> source_fade_lifetime;
+    WorldInputPlayback *source_input{};
     std::shared_ptr<const DirectSceneFrame> objects, world, published;
     std::vector<WorldSoundEvent> sounds;
     Execution(dialogue::WindowHost &w, party::State &p, RandomState &r, party::MeterWindows &m,
               TickState &c, InputState &i, ActorWorld &a, WorldMapArea &map, AreaPalettes &colors, SceneView v)
-        : windows(w), party(p), random(r), meters(m), clock(c), input(i), actors(a), area(map), palettes(colors), view(v), ticks(w,p,r,m,c) {
+        : windows(w), windows_lifetime(w.source_lifetime()), party(p), party_lifetime(p.source_lifetime()), random(r), random_lifetime(r.source_lifetime()), meters(m), meters_lifetime(m.source_lifetime()), clock(c), input(i), actors(a), area(map), palettes(colors), view(v), ticks(w,p,r,m,c) {
         require(view.width >= 256, "Native story scene must include the canonical screen");
         objects = actors.draw(view.width,palettes.sprites,view.identity,view.overscan);
         screen();
@@ -55,7 +77,8 @@ struct Scene::Execution {
         windows.bind_party(p);
     }
     void check(std::uint64_t owner) const {
-        require(!poisoned, "An abandoned scene operation invalidated its continuation");
+        require(!poisoned && (!source_work || !source_work->failed()),
+                "An abandoned scene or source-work operation invalidated its continuation");
         require((stack.empty() ? 0 : stack.back()) == owner, "A child operation owns the native scene");
     }
     void screen() {
@@ -100,11 +123,39 @@ struct Scene::Execution {
         try {
             if (publication) publication->complete_publication();
             if (boundary) boundary->after_publication();
+            if (publication) publication->complete_interrupt();
+            if (boundary && boundary->changes_display_registers()) {
+                stamp.frame = frames;
+                published = capture(stamp, false);
+            }
             publishing = false;
         } catch (...) { publishing = false; poisoned = true; throw; }
     }
 };
 void Scene::reset_object_builder() noexcept { execution_->objects.reset(); }
+void Scene::bind_source_work(SourceWorkService &work,const battle::PsiDisplayState &video) {
+    auto &s=*execution_;
+    require(!s.poisoned && !s.publishing && s.stack.empty() && s.publication &&
+            s.publication->frame_display() && s.publication->frame_display()->uses(video) &&
+            work.uses(s.actors,video) && (!s.source_work || s.source_work==&work),
+            "Source work requires the idle actual Scene actor/display owners");
+    s.source_work=&work;
+}
+void Scene::clear_source_work(const SourceWorkService &work) noexcept {
+    if(execution_->source_work==&work) {
+        if(work.failed() || !execution_->stack.empty() || execution_->publishing)execution_->poisoned=true;
+        execution_->source_work=nullptr;
+    }
+}
+bool Scene::uses_source_work(const SourceWorkService &work) const noexcept {
+    return execution_->source_work==&work;
+}
+void Scene::bind_source_input(WorldInputPlayback &input) {
+    auto &s=*execution_;s.check(0);
+    require(!s.publishing && input.uses(s.input) && (!s.source_input || s.source_input==&input),
+            "Source input requires this Scene's actual idle processed/raw owners");
+    s.source_input=&input;
+}
 struct Scene::Operation::Execution {
     Scene::Execution &scene;
     dialogue::Conversation *conversation{};
@@ -119,6 +170,23 @@ struct Scene::Operation::Execution {
     std::uint64_t owner{};
     std::uint64_t parent_owner{};
     std::uint64_t publications_at_wait{};
+    std::uint64_t source_interrupts_at_wait{};
+    std::shared_ptr<SourceFrameInput::Receipt> source_frame;
+    std::shared_ptr<SourceScreenReceipt> source_screen;
+    std::shared_ptr<SourceObjectReceipt> source_objects;
+    std::shared_ptr<SourceForegroundReceipt> source_foreground_receipt;
+    bool source_foreground{},source_window{},source_random{},source_meter{};
+    bool source_tiles{},source_status{};
+    const void *source_status_control{},*source_status_counter{},*source_status_palette{};
+    std::shared_ptr<SourceMeterStatusReceipt> source_status_receipt;
+    std::function<void()> source_status_guard;
+    const void *source_tiles_control{},*source_tiles_scratch{};
+    std::shared_ptr<SourceMeterTilesReceipt> source_tiles_receipt;
+    std::function<void()> source_tiles_guard;
+    std::shared_ptr<SourceMeterRollerReceipt> source_meter_receipt;
+    std::function<void()> source_meter_guard;
+    std::shared_ptr<SourceRandomReceipt> source_random_receipt;
+    std::shared_ptr<SourceWindowPublicationReceipt> source_window_receipt;
     bool done{}, tick_for_meter{}, party_sprite_blink{}, battle_after_wait{}, publication_only{};
     bool action_script_wait{};
     ActorFrameService *actor_frame_service{};
@@ -153,6 +221,10 @@ struct Scene::Operation::Execution {
         conversation->respond(response);
     }
     void finish() { scene.stack.pop_back(); done = true; }
+    void record_publication_wait() noexcept {
+        publications_at_wait=scene.clock.publications;
+        source_interrupts_at_wait=scene.source_work?scene.source_work->completed_source_interrupts():0;
+    }
     void step() {
         auto &s = scene;
         if (publication_only) { finish(); return; }
@@ -164,6 +236,7 @@ struct Scene::Operation::Execution {
             } else {
                 require(battle_frame->needs_publication(), "Battle frame lost its transfer continuation");
                 pending = SceneService::Publication;
+                record_publication_wait();
             }
             return;
         }
@@ -180,6 +253,7 @@ struct Scene::Operation::Execution {
                 require(animation->service().has_value(), "Battle animation lost its pending setup service");
                 pending = *animation->service() == battle::PsiSetupService::Publication
                     ? SceneService::Publication : SceneService::Frame;
+                record_publication_wait();
             }
             return;
         }
@@ -230,7 +304,16 @@ struct Scene::Operation::Execution {
             }
             if (progress == dialogue::Progress::BudgetExhausted) return;
             switch (*tick->service()) {
+            case TickService::WindowPublication:pending=SceneService::WindowPublication;return;
+            case TickService::SourceMeterStatus:pending=SceneService::SourceMeterStatus;return;
+            case TickService::SourceMeterTiles:pending=SceneService::SourceMeterTiles;return;
+            case TickService::SourceMeterRoller:pending=SceneService::SourceMeterRoller;return;
+            case TickService::SourceRandom:pending=SceneService::SourceRandom;return;
+            case TickService::ForegroundPrefix:pending=SceneService::ForegroundPrefix;return;
+            case TickService::SuppressedActors:pending=SceneService::SuppressedActors;return;
+            case TickService::ForegroundReturn:pending=SceneService::ForegroundReturn;return;
             case TickService::ClearObjects:
+                if(s.source_work)s.source_work->clear_objects();
                 s.objects.reset();
                 if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::ObjectsCleared);
                 tick->respond();
@@ -248,9 +331,11 @@ struct Scene::Operation::Execution {
                 return;
             }
             case TickService::UpdateScreen:
+                if(s.source_work) {pending=SceneService::ScreenUpdate;return;}
                 if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::BeforeScreen);
                 s.screen();
                 if(actor_frame_service) actor_frame_service->apply(ActorFramePhase::ScreenUpdated);
+                if(s.publication)s.publication->stage_world_objects(s.objects);
                 tick->respond(); return;
             case TickService::FrameBoundary:
                 if (s.battle_frame && tick->battle_body_pending()) {
@@ -400,7 +485,7 @@ struct Scene::Operation::Execution {
             }
         }
         else if (const auto *menu = std::get_if<dialogue::MenuEffect>(&event);
-                 menu && menu->kind == dialogue::MenuEffectKind::Input) answer_conversation();
+                 menu && menu->kind == dialogue::MenuEffectKind::Input) start_tick(TickKind::World);
         else pending = SceneService::Dialogue;
     }
 };
@@ -409,25 +494,40 @@ Scene::Scene(dialogue::WindowHost &w, party::State &p, RandomState &r, party::Me
     : execution_(std::make_unique<Execution>(w,p,r,m,c,i,a,map,colors,v)) {}
 Scene::~Scene() = default;
 Scene::Operation::Operation(std::unique_ptr<Execution> e) : execution_(std::move(e)) {}
-Scene::Operation::~Operation() { if (!execution_->done) execution_->scene.poisoned = true; }
+Scene::Operation::~Operation() {
+    if(execution_->source_frame)execution_->source_frame->live=false;
+    if(execution_->source_screen)execution_->source_screen->live=false;
+    if(execution_->source_objects)execution_->source_objects->live=false;
+    if(execution_->source_foreground_receipt)execution_->source_foreground_receipt->live=false;
+    if(execution_->source_window_receipt)execution_->source_window_receipt->live=false;
+    if(execution_->source_status_receipt)execution_->source_status_receipt->live=false;
+    if(execution_->source_tiles_receipt)execution_->source_tiles_receipt->live=false;
+    if(execution_->source_meter_receipt)execution_->source_meter_receipt->live=false;
+    if(execution_->source_random_receipt)execution_->source_random_receipt->live=false;
+    if (!execution_->done) execution_->scene.poisoned = true;
+}
 void Scene::require_nested(const Operation &parent) const {
+    require_nested_impl(parent,false);
+}
+void Scene::require_nested_impl(const Operation &parent,bool camera_publication) const {
     auto &s = *execution_;
     const auto &p = *parent.execution_;
     require(&p.scene == &s, "Nested scene work requires this scene's actual parent");
     s.check(p.owner);
-    require(!p.done && ((p.pending == SceneService::ActorEngine && p.tick) ||
+    require(!p.done && (((p.pending == SceneService::ActorEngine ||
+        (camera_publication && p.pending == SceneService::CameraRefresh && s.actors.camera_refresh())) && p.tick) ||
         (!p.tick && (p.pending == SceneService::Dialogue || p.pending == SceneService::BicycleDismount))),
         "Nested scene work requires a suspended actor, dialogue or formation callback");
 }
 std::unique_ptr<Scene::Operation> Scene::begin(std::optional<TickKind> kind, dialogue::Conversation *conversation,
                                             Operation *parent,std::optional<dialogue::WindowEffect> window,
                                             std::optional<std::array<std::uint16_t, 2>> animation,
-                                            bool battle_wait) {
+                                            bool battle_wait,bool camera_publication) {
     auto &s = *execution_;
     s.check(parent ? parent->execution_->owner : 0);
     Ticks::Operation *parent_tick{};
     if (parent) {
-        require_nested(*parent);
+        require_nested_impl(*parent,camera_publication);
         auto &p = *parent->execution_;
         parent_tick = p.tick ? p.tick.get() : p.parent_tick;
     }
@@ -462,6 +562,7 @@ std::unique_ptr<Scene::Operation> Scene::begin_publication() {
     auto operation = begin({}, nullptr, nullptr);
     operation->execution_->publication_only = true;
     operation->execution_->pending = SceneService::Publication;
+    operation->execution_->record_publication_wait();
     return operation;
 }
 void Scene::require_content_boundary(Operation *parent) const {
@@ -470,13 +571,34 @@ void Scene::require_content_boundary(Operation *parent) const {
     auto &p=*parent->execution_;
     require(&p.scene==&s,"Content work requires this Scene's actual parent");
     s.check(p.owner);
+    if(!p.done && p.tick && p.pending==SceneService::ActorEngine) {
+      const auto &actor=s.actors.request();
+      require(actor.has_value(),"Cinematic actor publication lost its actual request");
+      const auto operation=actor->binding.operation;
+      require((actor->origin==WorldActionOrigin::TickCallback && operation==NativeAction::TickCastScroll) ||
+          (actor->origin==WorldActionOrigin::Script &&
+           (operation==NativeAction::PrintCastName || operation==NativeAction::PrintCastPartyName ||
+            operation==NativeAction::PrintCastNameFromVariable ||
+            operation==NativeAction::CreateCastActor || operation==NativeAction::CreateActor ||
+            operation==NativeAction::InitializePartyActor ||
+            operation==NativeAction::SelectFourInitial || operation==NativeAction::SelectFourAnimation ||
+            operation==NativeAction::SelectFourFirst || operation==NativeAction::SelectFourSecond ||
+            operation==NativeAction::StepFourWalk || operation==NativeAction::StepEightAnimation ||
+            operation==NativeAction::SelectEightCurrent ||
+            operation==NativeAction::FollowVariableAngle || operation==NativeAction::SetDirectionFrame)),
+          "Nested actor publication requires its actual graphics or cast DMA command");
+      return;
+    }
     require(!p.done && !p.tick && p.pending==SceneService::Dialogue && p.conversation,
             "Content work requires a suspended authored content conversation");
     const auto &event=p.conversation->event();
     const auto *request=event?std::get_if<dialogue::Request>(&*event):nullptr;
     require(request && (request->kind==dialogue::RequestKind::Teleport ||
-        (request->kind==dialogue::RequestKind::SpecialEvent && request->special_event==7)),
-        "Only actual teleport or town-map requests admit nested map content work");
+        (request->kind==dialogue::RequestKind::SpecialEvent &&
+         (request->special_event==1 || request->special_event==2 ||
+          request->special_event==7 || request->special_event==9 || request->special_event==11 ||
+          request->special_event==12 || request->special_event==16 || request->special_event==17))),
+        "Nested map content requires an actual authored teleport or cinematic request");
 }
 std::unique_ptr<Scene::Operation> Scene::begin_nested_publication(Operation &parent) {
     require_content_boundary(&parent);
@@ -485,6 +607,23 @@ std::unique_ptr<Scene::Operation> Scene::begin_nested_publication(Operation &par
     auto operation=begin({},nullptr,&parent);
     operation->execution_->publication_only=true;
     operation->execution_->pending=SceneService::Publication;
+    operation->execution_->record_publication_wait();
+    return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_actor_publication(Operation &parent) {
+    auto &s=*execution_;auto &p=*parent.execution_;
+    require(&p.scene==&s,"Actor publication requires its actual Scene parent");
+    s.check(p.owner);
+    const auto &request=s.actors.request();
+    const bool camera=!p.done&&p.tick&&p.pending==SceneService::CameraRefresh&&s.actors.camera_refresh();
+    const bool maintenance=!p.done&&p.tick&&p.pending==SceneService::ActorEngine&&request&&
+        request->origin==WorldActionOrigin::TickCallback&&request->binding.operation==NativeAction::RunWorldMaintenance;
+    if(!camera&&!maintenance)return begin_nested_publication(parent);
+    require(s.clock.effective_interrupt_mask()&0x80,"Actor publication requires its actual NMI source");
+    auto operation=begin({},nullptr,&parent,{}, {},false,camera);
+    operation->execution_->publication_only=true;
+    operation->execution_->pending=SceneService::Publication;
+    operation->execution_->record_publication_wait();
     return operation;
 }
 std::unique_ptr<Scene::Operation> Scene::begin_battle_frame() {
@@ -500,6 +639,125 @@ std::unique_ptr<Scene::Operation> Scene::begin_nested_animation(std::uint16_t al
     return begin({}, nullptr, &parent, {}, std::array<std::uint16_t, 2>{ally, enemy});
 }
 std::unique_ptr<Scene::Operation> Scene::begin(TickKind kind) { return begin(kind,nullptr,nullptr); }
+std::unique_ptr<Scene::Operation> Scene::begin_source_meter_status_window_tick_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&)> validator,
+    std::function<void()> extra_guard,const void *control,const void *counter,const void *palette) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source meter status requires its actual bound work owner");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.random_lifetime.expired()&&
+        !s.windows_lifetime.expired(),"Source meter status lost an actual prefix owner");
+    s.check(0);
+    require(!s.windows.pending_publications()&&!s.publishing&&s.publication&&s.publication->frame_display(),
+        "Source meter status requires its actual idle Scene/display entry");
+    require(s.meters.bound_to(s.windows,s.party)&&!s.windows.output().policy().instant&&!s.windows.menu_state().early_tick_exit,
+        "Source meter status requires its exact non-exiting meter/party/window prefix");
+    extra_guard();validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows);
+    auto operation=begin(TickKind::Window,nullptr,nullptr);
+    operation->execution_->tick->enable_source_meter_status();operation->execution_->source_status=true;
+    operation->execution_->source_status_control=control;operation->execution_->source_status_counter=counter;operation->execution_->source_status_palette=palette;
+    operation->execution_->source_status_guard=[&s,&work,extra_guard] {
+        require(s.source_work==&work,"Source meter status work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired()&&
+            !s.random_lifetime.expired(),"Source meter status lost an actual prefix/party/meter owner");
+        extra_guard();require(s.meters.bound_to(s.windows,s.party),"Source meter status lost its exact meter/party/window binding");
+    };
+    return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_source_meter_tiles_window_tick_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&)> validator,
+    std::function<void()> extra_guard,const void *control,const void *scratch) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source meter tiles requires its actual bound work owner");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.random_lifetime.expired()&&
+        !s.windows_lifetime.expired(),"Source meter tiles lost an actual prefix owner");
+    s.check(0);
+    require(!s.windows.pending_publications()&&!s.publishing&&s.publication&&s.publication->frame_display(),
+        "Source meter tiles requires its actual idle Scene/display entry");
+    require(s.meters.bound_to(s.windows,s.party)&&!s.windows.output().policy().instant&&!s.windows.menu_state().early_tick_exit,
+        "Source meter tiles requires its exact non-exiting meter/party/window prefix");
+    extra_guard();validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows);
+    auto operation=begin(TickKind::Window,nullptr,nullptr);
+    operation->execution_->tick->enable_source_meter_tiles();operation->execution_->source_tiles=true;
+    operation->execution_->source_tiles_control=control;operation->execution_->source_tiles_scratch=scratch;
+    operation->execution_->source_tiles_guard=[&s,&work,extra_guard] {
+        require(s.source_work==&work,"Source meter tiles work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired()&&
+            !s.random_lifetime.expired(),"Source meter tiles lost an actual prefix/party/meter owner");
+        extra_guard();require(s.meters.bound_to(s.windows,s.party),"Source meter tiles lost its exact meter/party/window binding");
+    };
+    return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_source_meter_window_tick_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,dialogue::WindowHost&)> validator) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source meter roller requires its actual bound work owner");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.random_lifetime.expired(),"Source meter roller lost its actual shared party owner");
+    require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+        "Source meter roller has unrepresented pending window publication work");
+    s.check(0);
+    require(!s.publishing&&s.publication&&s.publication->frame_display(),
+        "Source meter roller requires its actual idle Scene/display entry");
+    require(s.meters.bound_to(s.windows,s.party)&&!s.windows.output().policy().instant&&!s.windows.menu_state().early_tick_exit,
+        "Source meter roller requires its exact non-exiting meter/party/window prefix");
+    validator(s.clock,*s.publication->frame_display(),s.party,s.windows);
+    auto operation=begin(TickKind::Window,nullptr,nullptr);
+    operation->execution_->tick->enable_source_meter_roller();
+    operation->execution_->source_meter=true;
+    operation->execution_->source_meter_guard=[&s,&work] {
+        require(s.source_work==&work,"Source meter roller work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired()&&
+            !s.random_lifetime.expired(),"Source meter roller lost a prefix/party/meter owner");
+        require(s.meters.bound_to(s.windows,s.party),"Source meter roller lost its exact meter/party/window binding");
+    };
+    return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_source_random_window_tick_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,RandomState&)> validator) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source RAND requires its actual bound work owner");
+    require(!s.random_lifetime.expired(),"Source RAND lost its actual shared RNG owner");
+    require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+        "Source RAND has unrepresented pending window publication work");
+    s.check(0);
+    require(!s.publishing&&s.publication&&s.publication->frame_display(),
+        "Source RAND requires its actual idle Scene/display entry");
+    validator(s.clock,*s.publication->frame_display(),s.random);
+    auto operation=begin(TickKind::Window,nullptr,nullptr);
+    operation->execution_->tick->enable_source_random();
+    operation->execution_->source_random=true;return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_source_window_tick_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,dialogue::WindowHost&,const WorldDisplayFade&)> validator) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source window requires its actual bound work owner");
+    require(!s.windows_lifetime.expired(),"Source window lost its actual WindowHost owner");
+    s.check(0);
+    require(s.source_fade&&!s.source_fade_lifetime.expired(),"Source window fade owner expired");
+    require(!s.publishing&&s.publication&&s.publication->frame_display()&&s.publication->display_fade()==s.source_fade&&
+        !s.windows.output().policy().instant&&!s.windows.menu_state().early_tick_exit,
+        "Source window requires its actual non-exiting Window/display entry");
+    validator(s.clock,*s.publication->frame_display(),s.windows,*s.publication->display_fade());
+    auto operation=begin(TickKind::Window,nullptr,nullptr);
+    operation->execution_->tick->enable_source_window_publication();
+    operation->execution_->source_window=true;
+    return operation;
+}
+std::unique_ptr<Scene::Operation> Scene::begin_source_world_frame_impl(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&)> validator) {
+    auto &s=*execution_;
+    require(s.source_work==&work,"Source foreground requires its actual bound work owner");
+    s.check(0);
+    require(!s.publishing&&s.publication&&s.publication->frame_display()&&
+        !s.meters.state().render&&!s.windows.prompt_state().battle_mode&&s.clock.action_scripts_disabled,
+        "Source foreground requires its actual no-window overworld suppressed entry");
+    require(!s.actors.in_tick()&&s.actors.object_draws().empty(),
+        "Source foreground has unrepresented recursive or cached actor emission");
+    validator(s.clock,*s.publication->frame_display());
+    auto operation=begin(TickKind::WorldFrame,nullptr,nullptr);
+    operation->execution_->tick->enable_source_foreground();
+    operation->execution_->source_foreground=true;
+    return operation;
+}
 std::unique_ptr<Scene::Operation> Scene::begin(dialogue::WindowEffect effect) {
     return begin({},nullptr,nullptr,effect);
 }
@@ -527,6 +785,9 @@ std::unique_ptr<Scene::Operation> Scene::begin_nested_actor_frame(ActorFrameServ
 dialogue::Progress Scene::Operation::advance(unsigned budget) {
     auto &e = *execution_;
     if (e.done) return dialogue::Progress::Finished;
+    if(e.source_status_guard)e.source_status_guard();
+    if(e.source_tiles_guard)e.source_tiles_guard();
+    if(e.source_meter_guard)e.source_meter_guard();
     e.scene.check(e.owner);
     // Erasing a suspended actor cancels only its request, never the whole tick.
     if (e.pending == SceneService::ActorEngine && !e.scene.actors.request()) e.pending.reset();
@@ -547,6 +808,406 @@ FrameRequirement Scene::Operation::frame_requirement() const {
     return clock.new_frame_started ? FrameRequirement::InputOnly : FrameRequirement::NmiPublication;
 }
 void Scene::Operation::complete_publication() { complete_publication_impl(nullptr); }
+void Scene::Operation::respond_source_publication() {
+    auto &e=*execution_;auto &s=e.scene;s.check(e.owner);
+    require(e.pending==SceneService::Publication && !s.publishing && s.source_work && !s.source_work->failed() &&
+            s.clock.publications>e.publications_at_wait &&
+            s.source_work->completed_source_interrupts()>e.source_interrupts_at_wait,
+            "Publication has no fresh completed actual source-work NMI receipt");
+    require(e.publication_only || bool(e.animation) || bool(e.battle_frame),"Publication lost its continuation");
+    try {
+        if(e.battle_frame)e.battle_frame->respond();
+        else if(e.animation)e.animation->respond();
+        e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceObjectReceipt> Scene::Operation::pin_source_objects(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source objects lost their actual bound work owner");
+    e.check(SceneService::ScreenUpdate);
+    require(!e.source_objects&&!e.source_screen&&!s.publishing&&e.tick&&e.tick->service()==TickService::UpdateScreen&&
+        s.publication&&s.publication->frame_display(),"Source objects lost their unclaimed actual tick/display continuation");
+    require((!s.objects||s.objects->quads.empty())&&s.actors.object_draws().empty(),
+        "Source objects have unrepresented deferred actor emission");
+    validator(s.clock,*s.publication->frame_display());
+    auto receipt=std::make_shared<SourceObjectReceipt>();receipt->work=&work;const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator] {
+        require(s.source_work==&work,"Source objects work owner was detached");e.check(SceneService::ScreenUpdate);
+        require(e.source_objects.get()==identity&&!s.publishing&&e.tick&&e.tick->service()==TickService::UpdateScreen&&
+            s.publication&&s.publication->frame_display(),"Source objects lost their exact parent tick/display lease");
+        require((!s.objects||s.objects->quads.empty())&&s.actors.object_draws().empty(),
+            "Source objects acquired unrepresented deferred actor emission");
+        validator(s.clock,*s.publication->frame_display());
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_objects=receipt;return receipt;
+}
+void Scene::Operation::respond_source_objects(SourceObjectPreparation &objects) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*objects.receipt_;
+    require(e.source_objects&&e.source_objects==objects.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.acknowledged&&!receipt.consumed&&!receipt.executing&&!receipt.emitting&&s.source_work==receipt.work,
+        "Source objects response lacks its exact fresh completed insertion receipt");
+    receipt.validate();receipt.acknowledged=true;
+}
+void Scene::Operation::respond_source_actor_draw(SourceActorDraw &draw) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*draw.receipt_;
+    require(e.source_objects&&e.source_objects==draw.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.acknowledged&&!receipt.consumed&&!receipt.executing&&!receipt.emitting&&s.source_work==receipt.work,
+        "Source actor draw response lacks its exact fresh completed near-call receipt");
+    receipt.validate();receipt.acknowledged=true;
+}
+std::shared_ptr<SourceObjectReceipt> Scene::Operation::pin_source_global_draw(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,const InputState&,const ActorWorld&)> validator) {
+    auto &s=execution_->scene;
+    return pin_source_objects(work,[&s,validator](TickState &ticks,const battle::FrameDisplay &frames) {
+        validator(ticks,frames,s.input,s.actors);
+    });
+}
+void Scene::Operation::respond_source_global_draw(SourceGlobalDraw &draw) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*draw.receipt_;
+    require(e.source_objects&&e.source_objects==draw.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.acknowledged&&!receipt.consumed&&!receipt.executing&&!receipt.emitting&&s.source_work==receipt.work,
+        "Source global draw response lacks its exact fresh completed near-call receipt");
+    receipt.validate();receipt.acknowledged=true;
+}
+std::shared_ptr<SourceScreenReceipt> Scene::Operation::pin_source_screen(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,SourceObjectReceipt*)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source screen lost its actual bound work owner");
+    e.check(SceneService::ScreenUpdate);
+    require(!e.source_screen&&!s.publishing&&e.tick&&e.tick->service()==TickService::UpdateScreen&&
+        s.publication&&s.publication->frame_display(),"Source screen lost its unclaimed actual tick/display continuation");
+    require((!s.objects||s.objects->quads.empty())&&s.actors.object_draws().empty(),
+        "Source screen has unrepresented deferred actor object emission");
+    const auto preparation=e.source_objects;
+    if(preparation)require(preparation->live&&preparation->completed&&preparation->acknowledged&&
+        !preparation->consumed&&!preparation->executing&&!preparation->emitting&&preparation->work==&work,
+        "Source screen lacks its exact acknowledged insertion preparation");
+    validator(s.clock,*s.publication->frame_display(),preparation.get());
+    auto receipt=std::make_shared<SourceScreenReceipt>();receipt->work=&work;receipt->objects=preparation;
+    const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator,preparation] {
+        require(s.source_work==&work,"Source screen work owner was detached");
+        e.check(SceneService::ScreenUpdate);
+        require(e.source_screen.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->service()==TickService::UpdateScreen&&s.publication&&s.publication->frame_display(),
+            "Source screen lost its exact tick/display lease");
+        require(e.source_objects==preparation,"Source screen lost its exact preparation parent receipt");
+        require((!s.objects||s.objects->quads.empty())&&s.actors.object_draws().empty(),
+            "Source screen acquired unrepresented deferred actor object emission");
+        validator(s.clock,*s.publication->frame_display(),preparation.get());
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_screen=receipt;
+    try {
+        if(e.actor_frame_service)e.actor_frame_service->apply(ActorFramePhase::BeforeScreen);
+        s.screen();receipt->world_objects=s.objects;receipt->validate();
+    } catch(...) {s.poisoned=true;throw;}
+    return receipt;
+}
+void Scene::Operation::respond_source_screen(SourceScreenUpdate &screen) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*screen.receipt_;
+    require(e.source_screen&&e.source_screen==screen.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source screen response lacks its exact fresh completed UPDATE_SCREEN receipt");
+    receipt.validate();
+    try {
+        if(e.actor_frame_service)e.actor_frame_service->apply(ActorFramePhase::ScreenUpdated);
+        if(receipt.objects) {receipt.objects->finish_emission();receipt.objects->consumed=true;receipt.objects->live=false;}
+        e.tick->respond();receipt.consumed=true;receipt.live=false;e.source_objects.reset();e.source_screen.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceMeterStatusReceipt> Scene::Operation::pin_source_meter_status(SourceWorkService &work,const void *control,const void *counter,const void *palette,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&,const void*)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source meter status lost its actual bound work owner");
+    require(e.source_status_control==control&&e.source_status_counter==counter&&e.source_status_palette==palette,
+        "Source meter status requires its exact declared parent control/counter/palette identities");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired(),
+        "Source meter status shared party/meter/window expired");
+    require(!s.windows.pending_publications()&&s.meters.bound_to(s.windows,s.party),
+        "Source meter status has unrepresented window work or a foreign meter binding");
+    e.check(SceneService::SourceMeterStatus);
+    require(e.source_status&&!e.source_status_receipt&&!s.publishing&&e.tick&&e.tick->source_meter_status_pending()&&
+        s.publication&&s.publication->frame_display(),"Source meter status lost its exact unclaimed pre-Palette suspension");
+    validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows,nullptr);
+    auto receipt=std::make_shared<SourceMeterStatusReceipt>();
+    receipt->work=&work;receipt->party=&s.party;receipt->windows=&s.windows;const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator] {
+        require(s.source_work==&work,"Source meter status work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired(),
+            "Source meter status lost an actual party/meter/window owner");
+        require(!s.windows.pending_publications()&&s.meters.bound_to(s.windows,s.party),
+            "Source meter status has unrepresented window work or a foreign meter binding");
+        e.check(SceneService::SourceMeterStatus);
+        require(e.source_status&&e.source_status_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_meter_status_pending()&&s.publication&&s.publication->frame_display(),
+            "Source meter status lost its exact active parent/display/helper lease");
+        validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows,identity);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_status_receipt=receipt;return receipt;
+}
+void Scene::Operation::respond_source_meter_status(SourceMeterStatus &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_status_receipt&&e.source_status_receipt==work.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source meter status response lacks its exact fresh completed helper receipt");
+    receipt.validate();
+    try {e.tick->respond_source_meter_status(receipt.palette_requested);receipt.consumed=true;receipt.live=false;
+        if(receipt.release)receipt.release();
+        e.source_status_receipt.reset();e.pending.reset();}
+    catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceMeterTilesReceipt> Scene::Operation::pin_source_meter_tiles(SourceWorkService &work,const void *control,const void *scratch,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&,const void*)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source meter tiles lost its actual bound work owner");
+    require(e.source_tiles_control==control&&e.source_tiles_scratch==scratch,
+        "Source meter tiles requires its exact declared parent control/arithmetic identities");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired(),
+        "Source meter tiles shared party/meter/window expired");
+    require(!s.windows.pending_publications()&&s.meters.bound_to(s.windows,s.party),
+        "Source meter tiles has unrepresented window work or a foreign meter binding");
+    e.check(SceneService::SourceMeterTiles);
+    require(e.source_tiles&&!e.source_tiles_receipt&&!s.publishing&&e.tick&&e.tick->source_meter_tiles_pending()&&
+        s.publication&&s.publication->frame_display(),"Source meter tiles lost its exact unclaimed pre-Update suspension");
+    validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows,nullptr);
+    auto receipt=std::make_shared<SourceMeterTilesReceipt>();
+    receipt->work=&work;receipt->party=&s.party;receipt->meters=&s.meters;receipt->windows=&s.windows;const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator] {
+        require(s.source_work==&work,"Source meter tiles work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired()&&!s.windows_lifetime.expired(),
+            "Source meter tiles lost an actual party/meter/window owner");
+        require(!s.windows.pending_publications()&&s.meters.bound_to(s.windows,s.party),
+            "Source meter tiles has unrepresented window work or a foreign meter binding");
+        e.check(SceneService::SourceMeterTiles);
+        require(e.source_tiles&&e.source_tiles_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_meter_tiles_pending()&&s.publication&&s.publication->frame_display(),
+            "Source meter tiles lost its exact active parent/display/helper lease");
+        validator(s.clock,*s.publication->frame_display(),s.party,s.meters,s.windows,identity);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_tiles_receipt=receipt;return receipt;
+}
+void Scene::Operation::respond_source_meter_tiles(SourceMeterTiles &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_tiles_receipt&&e.source_tiles_receipt==work.receipt_&&receipt.live&&receipt.completed&&
+        !receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source meter tiles response lacks its exact fresh completed helper receipt");
+    receipt.validate();
+    try {e.tick->respond_source_meter_tiles();receipt.consumed=true;receipt.live=false;
+        if(receipt.release)receipt.release();
+        e.source_tiles_receipt.reset();e.pending.reset();}
+    catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceMeterRollerReceipt> Scene::Operation::pin_source_meter_roller(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,party::State&,dialogue::WindowHost&,const void*)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source meter roller lost its actual bound work owner");
+    require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired(),"Source meter roller shared party expired");
+    require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+        "Source meter roller has unrepresented pending window publication work");
+    require(s.meters.bound_to(s.windows,s.party),"Source meter roller lost its actual meter/party/window binding");
+    e.check(SceneService::SourceMeterRoller);
+    require(e.source_meter&&!e.source_meter_receipt&&!s.publishing&&e.tick&&
+        e.tick->source_meter_roller_pending()&&s.publication&&s.publication->frame_display(),
+        "Source meter roller lost its exact unclaimed pre-Roll suspension");
+    validator(s.clock,*s.publication->frame_display(),s.party,s.windows,nullptr);
+    auto receipt=std::make_shared<SourceMeterRollerReceipt>();
+    receipt->work=&work;receipt->party=&s.party;receipt->windows=&s.windows;const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator] {
+        require(s.source_work==&work,"Source meter roller work owner was detached");
+        require(!s.party_lifetime.expired()&&!s.meters_lifetime.expired(),"Source meter roller shared party expired");
+        require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+            "Source meter roller has unrepresented pending window publication work");
+        require(s.meters.bound_to(s.windows,s.party),"Source meter roller lost its actual meter/party/window binding");
+        e.check(SceneService::SourceMeterRoller);
+        require(e.source_meter&&e.source_meter_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_meter_roller_pending()&&s.publication&&s.publication->frame_display(),
+            "Source meter roller lost its exact active parent/display/helper lease");
+        validator(s.clock,*s.publication->frame_display(),s.party,s.windows,identity);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_meter_receipt=receipt;return receipt;
+}
+void Scene::Operation::respond_source_meter_roller(SourceMeterRoller &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_meter_receipt&&e.source_meter_receipt==work.receipt_&&receipt.live&&
+        receipt.completed&&!receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source meter roller response lacks its exact fresh completed helper receipt");
+    receipt.validate();
+    try {
+        e.tick->respond_source_meter_roller();receipt.consumed=true;receipt.live=false;
+        if(receipt.release)receipt.release();
+        e.source_meter_receipt.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceRandomReceipt> Scene::Operation::pin_source_random(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,RandomState&,const void*)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source RAND lost its actual bound work owner");
+    require(!s.random_lifetime.expired(),"Source RAND shared RNG expired");
+    require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+        "Source RAND has unrepresented pending window publication work");
+    e.check(SceneService::SourceRandom);
+    require(e.source_random&&!e.source_random_receipt&&!s.publishing&&e.tick&&
+        e.tick->source_random_pending()&&s.publication&&s.publication->frame_display(),
+        "Source RAND lost its exact unclaimed pre-Random suspension");
+    validator(s.clock,*s.publication->frame_display(),s.random,nullptr);
+    auto receipt=std::make_shared<SourceRandomReceipt>();
+    receipt->work=&work;receipt->random=&s.random;const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,validator] {
+        require(s.source_work==&work,"Source RAND work owner was detached");
+        require(!s.random_lifetime.expired(),"Source RAND shared RNG expired");
+        require(!s.windows_lifetime.expired()&&!s.windows.pending_publications(),
+            "Source RAND has unrepresented pending window publication work");
+        e.check(SceneService::SourceRandom);
+        require(e.source_random&&e.source_random_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_random_pending()&&s.publication&&s.publication->frame_display(),
+            "Source RAND lost its exact active parent/display/helper lease");
+        validator(s.clock,*s.publication->frame_display(),s.random,identity);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_random_receipt=receipt;return receipt;
+}
+void Scene::Operation::respond_source_random(SourceRandom &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_random_receipt&&e.source_random_receipt==work.receipt_&&receipt.live&&
+        receipt.completed&&!receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source RAND response lacks its exact fresh completed helper receipt");
+    receipt.validate();
+    try {
+        e.tick->respond_source_random();receipt.consumed=true;receipt.live=false;
+        if(receipt.release)receipt.release();
+        e.source_random_receipt.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceWindowPublicationReceipt> Scene::Operation::pin_source_window_publication(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&,dialogue::WindowHost&,const WorldDisplayFade&)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source window lost its actual bound work owner");
+    require(!s.windows_lifetime.expired(),"Source window lost its actual WindowHost owner");
+    e.check(SceneService::WindowPublication);
+    require(s.source_fade&&!s.source_fade_lifetime.expired(),"Source window fade owner expired");
+    require(e.source_window&&!e.source_window_receipt&&!s.publishing&&e.tick&&
+        e.tick->source_window_publication_pending()&&s.publication&&s.publication->frame_display()&&
+        s.publication->display_fade()&&!s.meters.state().area_dirty,
+        "Source window lost its exact unclaimed Publish/prefix STZ boundary");
+    auto *fade=s.publication->display_fade();
+    validator(s.clock,*s.publication->frame_display(),s.windows,*fade);
+    auto receipt=std::make_shared<SourceWindowPublicationReceipt>();
+    receipt->work=&work;receipt->windows=&s.windows;receipt->fade=fade;
+    const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,fade,validator] {
+        require(s.source_work==&work,"Source window work owner was detached");
+        require(!s.windows_lifetime.expired(),"Source window WindowHost owner expired");
+        e.check(SceneService::WindowPublication);
+        require(s.source_fade==fade&&!s.source_fade_lifetime.expired(),"Source window fade owner expired");
+        require(e.source_window&&e.source_window_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_window_publication_pending()&&s.publication&&s.publication->frame_display()&&
+            s.publication->display_fade()==fade&&!s.meters.state().area_dirty,
+            "Source window lost its exact active parent/display/helper lease");
+        validator(s.clock,*s.publication->frame_display(),s.windows,*fade);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_window_receipt=receipt;return receipt;
+}
+void Scene::Operation::respond_source_window_publication(SourceWindowPublication &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_window_receipt&&e.source_window_receipt==work.receipt_&&receipt.live&&
+        receipt.completed&&!receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source window response lacks its exact fresh completed helper receipt");
+    receipt.validate();
+    try {
+        e.tick->respond_source_window_publication();receipt.consumed=true;receipt.live=false;if(receipt.release)receipt.release();
+        e.source_window_receipt.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceForegroundReceipt> Scene::Operation::pin_source_foreground(SourceWorkService &work,
+    std::function<void(TickState&,const battle::FrameDisplay&)> validator) {
+    auto &e=*execution_;auto &s=e.scene;
+    require(s.source_work==&work,"Source foreground lost its actual bound work owner");
+    require(e.source_foreground&&e.pending&&!e.source_foreground_receipt&&!s.publishing&&e.tick&&
+        e.tick->source_foreground_pending()&&s.publication&&s.publication->frame_display(),
+        "Source foreground lost its unclaimed explicit WorldFrame continuation");
+    const auto service=*e.pending;
+    SourceForegroundStage stage;
+    TickService tick_service;
+    switch(service) {
+    case SceneService::ForegroundPrefix:stage=SourceForegroundStage::Prefix;tick_service=TickService::ForegroundPrefix;break;
+    case SceneService::SuppressedActors:stage=SourceForegroundStage::SuppressedActors;tick_service=TickService::SuppressedActors;break;
+    case SceneService::ForegroundReturn:stage=SourceForegroundStage::Return;tick_service=TickService::ForegroundReturn;break;
+    default:throw std::logic_error("Source foreground has no pending literal boundary");
+    }
+    e.check(service);
+    require(e.tick->service()==tick_service&&!s.actors.in_tick()&&s.actors.object_draws().empty(),
+        "Source foreground lost its exact tick stage or actual idle actor owner");
+    validator(s.clock,*s.publication->frame_display());
+    auto receipt=std::make_shared<SourceForegroundReceipt>();receipt->work=&work;receipt->ticks=&s.clock;
+    receipt->render=&s.meters.state().render;receipt->battle=&s.windows.prompt_state().battle_mode;receipt->stage=stage;
+    const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,identity,service,tick_service,validator] {
+        require(s.source_work==&work,"Source foreground work owner was detached");
+        e.check(service);
+        require(e.source_foreground&&e.source_foreground_receipt.get()==identity&&!s.publishing&&e.tick&&
+            e.tick->source_foreground_pending()&&e.tick->service()==tick_service&&s.publication&&
+            s.publication->frame_display()&&!s.actors.in_tick()&&s.actors.object_draws().empty(),
+            "Source foreground lost its exact active tick/display/actor lease");
+        validator(s.clock,*s.publication->frame_display());
+    };
+    receipt->poison=[&s]{s.poisoned=true;};e.source_foreground_receipt=receipt;
+    return receipt;
+}
+void Scene::Operation::respond_source_foreground(SourceForegroundWork &work) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*work.receipt_;
+    require(e.source_foreground_receipt&&e.source_foreground_receipt==work.receipt_&&receipt.live&&
+        receipt.completed&&!receipt.consumed&&!receipt.executing&&s.source_work==receipt.work,
+        "Source foreground response lacks its exact fresh completed boundary receipt");
+    receipt.validate();
+    try {
+        e.tick->respond();receipt.consumed=true;receipt.live=false;e.source_foreground_receipt.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
+std::shared_ptr<SourceFrameInputReceipt> Scene::Operation::pin_source_frame(SourceWorkService &work,
+    WorldInputPlayback &raw,std::function<void(TickState &)> validate_clock) {
+    auto &e=*execution_;auto &s=e.scene;
+    // Compare the still-bound identity before calling or reading a borrowed
+    // work/clock. Destroying that owner invalidates the Scene first.
+    require(s.source_work==&work,"Source WAIT lost its actual bound work owner");
+    e.check(SceneService::Frame);
+    require(!e.source_frame && !s.publishing && (e.tick || e.animation),
+            "Source WAIT requires its unclaimed suspended frame continuation");
+    require(s.source_input==&raw && raw.uses(s.input) && !raw.state().flags,
+            "Source WAIT requires its actual inactive demo input owner");
+    validate_clock(s.clock);
+    require(!(s.clock.interrupt_mask&0xb0) || s.clock.new_frame_started || (s.clock.effective_interrupt_mask()&0x80),
+            "Source WAIT has no represented interrupt to release its pending-byte loop");
+    auto receipt=std::make_shared<SourceFrameInputReceipt>();receipt->work=&work;
+    receipt->ticks=&s.clock;receipt->input=&s.input;receipt->debug=&s.windows.prompt_state().debug;
+    const auto identity=receipt.get();
+    receipt->validate=[&e,&s,&work,&raw,identity,validate_clock] {
+        require(s.source_work==&work,"Source WAIT work owner was detached");
+        e.check(SceneService::Frame);
+        require(e.source_frame.get()==identity && !s.publishing && s.source_input==&raw,
+                "Source WAIT lost its exact suspended frame/clock lease");
+        validate_clock(s.clock);
+    };
+    receipt->poison=[&s]{s.poisoned=true;};
+    e.source_frame=receipt;return receipt;
+}
+void Scene::Operation::respond_source_frame(SourceFrameInput &input) {
+    auto &e=*execution_;auto &s=e.scene;auto &receipt=*input.receipt_;
+    require(e.source_frame && e.source_frame==input.receipt_ && receipt.live && receipt.completed &&
+            !receipt.consumed && !receipt.executing && s.source_work==receipt.work,
+            "Source frame response lacks this exact fresh completed WAIT receipt");
+    receipt.validate();
+    try {
+        if(receipt.waited_vblank && s.clock.publications==receipt.publications_at_start) {
+            auto stamp=*s.world;stamp.frame=s.frames+1;
+            auto image=s.capture(stamp,false);++s.frames;s.published=std::move(image);
+        }
+        ++s.clock.input_polls;
+        s.windows.prompt_state().pressed=s.input.pressed[0];
+        if(e.animation)e.animation->respond();
+        else {require(bool(e.tick),"Source frame lost its tick continuation");e.tick->respond();}
+        receipt.consumed=true;receipt.live=false;e.source_frame.reset();e.pending.reset();
+    } catch(...) {s.poisoned=true;throw;}
+}
 bool Scene::Operation::uses(const Scene &scene) const noexcept {
     return &execution_->scene == scene.execution_.get();
 }
@@ -562,6 +1223,8 @@ void Scene::Operation::complete_publication_impl(FrameBoundaryService *boundary)
     auto &e = *execution_;
     auto &s = e.scene;
     s.check(e.owner);
+    require(!e.source_foreground,"Source foreground requires its actual source WAIT/publication completion");
+    require(!e.source_frame,"The actual source WAIT owns this frame's completion");
     require(e.pending == SceneService::Publication ||
                 (e.pending == SceneService::Frame && frame_requirement() == FrameRequirement::NmiPublication),
             "Scene has no pending NMI publication");
@@ -583,6 +1246,63 @@ void Scene::Operation::complete_publication_impl(FrameBoundaryService *boundary)
 void Scene::interrupt_publication(FrameBoundaryService *boundary) {
     execution_->publish_nmi(boundary);
 }
+Scene::SourceInterrupt::SourceInterrupt(Scene &scene,FrameBoundaryService *boundary)
+    :scene_(scene),boundary_(boundary) {
+    auto &s=*scene_.execution_;
+    require(!s.poisoned && !s.publishing && (s.clock.effective_interrupt_mask()&0x80),
+            "Source NMI requires healthy nonrecursive actual publication");
+    require(!s.windows.pending_publications(),"Source NMI window work is not represented");
+    if(boundary_)boundary_->validate_publication();
+    s.publishing=true;
+}
+Scene::SourceInterrupt::~SourceInterrupt() {
+    if(!complete_) {scene_.execution_->poisoned=true;scene_.execution_->publishing=false;}
+}
+void Scene::SourceInterrupt::check() const {
+    require(!complete_ && !scene_.execution_->poisoned && scene_.execution_->publishing,
+            "Source NMI lost its live actual publication pin");
+}
+void Scene::SourceInterrupt::increment_pending() {
+    check(); require(phase_==0,"Source NMI pending byte is out of order");
+    ++scene_.execution_->clock.new_frame_started; ++phase_;
+}
+void Scene::SourceInterrupt::increment_counter() {
+    check(); require(phase_==1,"Source NMI counter byte is out of order");
+    ++scene_.execution_->clock.frame_counter; ++phase_;
+}
+void Scene::SourceInterrupt::publish() {
+    check(); require(phase_==2,"Source NMI display publication is out of order");
+    auto &s=*scene_.execution_;
+    try {
+        auto stamp=*s.world;stamp.frame=s.frames+1;
+        auto result=s.capture(stamp,true);
+        ++s.frames;++s.clock.publications;s.published=std::move(result);++phase_;
+    } catch(...) {s.poisoned=true;throw;}
+}
+void Scene::SourceInterrupt::callback() {
+    check(); require(phase_==3,"Source NMI callback is out of order");
+    auto &s=*scene_.execution_;
+    try {
+        if(s.publication)s.publication->complete_publication();
+        if(boundary_)boundary_->after_publication();
+        if(boundary_ && boundary_->changes_display_registers()) {
+            auto stamp=*s.world;stamp.frame=s.frames;s.published=s.capture(stamp,false);
+        }
+        ++phase_;
+    } catch(...) {s.poisoned=true;throw;}
+}
+void Scene::SourceInterrupt::rotate_heap() {
+    check(); require(phase_==4,"Source NMI heap phase is out of order");
+    if(scene_.execution_->publication)scene_.execution_->publication->complete_interrupt();
+    ++phase_;
+}
+void Scene::SourceInterrupt::complete() {
+    check();require(phase_==5,"Source NMI returned before completing actual phases");
+    scene_.execution_->publishing=false;complete_=true;
+}
+std::unique_ptr<Scene::SourceInterrupt> Scene::begin_source_interrupt(FrameBoundaryService *boundary) {
+    return std::unique_ptr<SourceInterrupt>(new SourceInterrupt(*this,boundary));
+}
 void Scene::Operation::complete_frame(std::array<std::uint16_t,2> raw) {
     complete_frame_impl(raw, nullptr);
 }
@@ -592,6 +1312,8 @@ void Scene::Operation::complete_frame(std::array<std::uint16_t,2> host, FrameBou
 void Scene::Operation::complete_frame_impl(std::array<std::uint16_t,2> raw, FrameBoundaryService *boundary) {
     auto &e = *execution_;
     e.check(SceneService::Frame);
+    require(!e.source_foreground,"Source foreground requires its actual literal WAIT receipt");
+    require(!e.source_frame,"The actual source WAIT owns this frame's completion");
     auto &s = e.scene;
     if (boundary) boundary->validate_input();
     const auto requirement = frame_requirement();
@@ -769,6 +1491,8 @@ void Scene::bind_publication(ScenePublication &publication) {
             "Scene publication must share the actual window host");
     require(!s.publication || s.publication == &publication, "Scene already has a publication owner");
     s.publication = &publication;
+    s.source_fade=publication.display_fade();
+    if(s.source_fade)s.source_fade_lifetime=s.source_fade->source_lifetime();
 }
 const ScenePublication *Scene::publication() const noexcept { return execution_->publication; }
 bool Scene::uses_battle_menu(const battle::Roster& roster,const battle::FrameState& frame,const battle::PaletteBankState& colors,const battle::PsiScratch& scratch,const RandomState& random) const noexcept {
@@ -836,6 +1560,8 @@ void Scene::handoff_publication(ScenePublication &expected, ScenePublication &ne
     // pointer commits do not capture, consume transfers or invoke callbacks.
     s.windows.replace_palette_publication(*before, *after);
     s.publication = &next;
+    s.source_fade=after_fade;
+    if(s.source_fade)s.source_fade_lifetime=s.source_fade->source_lifetime();
     s.battle_frame = services.frame;
     s.animations = services.animations;
 }
@@ -860,7 +1586,9 @@ void Scene::refresh_world_capture(Operation *parent) {
 bool Scene::shares_world(const dialogue::WindowHost& windows,const ActorWorld& actors) const {
     return &execution_->windows==&windows && &execution_->actors==&actors;
 }
-bool Scene::failed() const noexcept { return execution_->poisoned; }
+bool Scene::failed() const noexcept {
+    return execution_->poisoned || (execution_->source_work && execution_->source_work->failed());
+}
 bool Scene::busy() const noexcept { return !execution_->stack.empty(); }
 std::uint64_t Scene::completed_frames() const { return execution_->frames; }
 std::shared_ptr<const DirectSceneFrame> Scene::frame() const { return execution_->published; }

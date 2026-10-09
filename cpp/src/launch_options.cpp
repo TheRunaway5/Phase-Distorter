@@ -70,6 +70,7 @@ LaunchOptions parse_options(int argc, char **argv) {
                          "  --wav FILE         Record DSP output as 32 kHz stereo PCM WAV\n"
                          "  --no-audio         Disable the playback device (DSP still runs)\n"
                          "  --scale N          Initial window pixel scale, 1 through 8\n"
+                         "  --fullscreen       Start in desktop fullscreen mode\n"
                          "  --fps N            Presentation limit: 60 (native), 61..300, or 0 (uncapped)\n"
                          "  --direct-rendering Draw source artwork at higher rates (default)\n"
                          "  --native-frames    Repeat original completed frames without smoothing\n"
@@ -95,7 +96,9 @@ LaunchOptions parse_options(int argc, char **argv) {
                          "      Enter=Start, Right Shift=Select, F1=panel, F11=fullscreen,\n"
                          "      Escape=close panel or quit\n";
             std::exit(0);
-        } else if (arg == "--original-timing")
+        } else if (arg == "--fullscreen")
+            options.start_fullscreen = true;
+        else if (arg == "--original-timing")
             options.original_timing = true;
         else if (arg == "--replay-only")
             options.replay_only = true;

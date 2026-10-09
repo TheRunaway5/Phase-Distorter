@@ -5,8 +5,12 @@
 #include "eb/native/dialogue/prompt_state.hpp"
 #include "eb/native/dialogue/window_resources.hpp"
 
+namespace eb::native { struct PartyTrail; class ActorWorld; }
+namespace eb::native::cutscenes { struct DisplayState; }
+namespace eb::native::story { class SourceWindowPublication; class SourceMeterTiles; class SourceMeterStatus; }
 namespace eb::native::party { class MeterWindows; class State; }
-namespace eb::native::battle { class Roster; struct ActionState; }
+namespace eb::native::battle { class Roster; struct ActionState; struct PaletteBankState; }
+namespace eb::native::dialogue::ambient { struct ActorVariables; }
 namespace eb::native::dialogue {
 // A semantic cell in the shared UI surface. Artwork comes from the existing
 // WindowGraphics owner; no second font atlas or processor descriptor is held.
@@ -63,9 +67,21 @@ struct WindowMetadata {
 enum class WindowPaletteUpload : std::uint8_t { Background = 8, Full = 24 };
 class WindowPalettePublication {
   public:
+    WindowPalettePublication()=default;
+    WindowPalettePublication(const WindowPalettePublication&)=delete;
+    WindowPalettePublication& operator=(const WindowPalettePublication&)=delete;
+    WindowPalettePublication(WindowPalettePublication&&)=delete;
+    WindowPalettePublication& operator=(WindowPalettePublication&&)=delete;
+    std::weak_ptr<const void> source_lifetime() const noexcept {return source_lifetime_;}
+    virtual bool uses_palette_transport(const battle::PaletteBankState&) const noexcept {return false;}
+    virtual void store_source_window_color(unsigned,std::uint16_t,battle::PaletteBankState&,const void*) {
+        throw std::logic_error("Literal window palette projection is unowned");
+    }
     virtual ~WindowPalettePublication() = default;
     virtual void publish_window_range(unsigned first, std::span<const std::uint16_t>,
                                       WindowPaletteUpload = WindowPaletteUpload::Full) = 0;
+  private:
+    std::shared_ptr<const void> source_lifetime_=std::make_shared<const unsigned>(0);
 };
 
 // Original CREATE/CLOSE and BG2 window composition expressed as native state.
@@ -73,6 +89,20 @@ class WindowPalettePublication {
 // State, output and resources outlive this host; the host outlives borrowers.
 class WindowHost {
   public:
+    // CHAR_SELECT_PROMPT saves one argument and restores its captured source
+    // field after callbacks change focus or recycle a physical window slot.
+    // This token retains that actual owner, never an independent register bank.
+    class CapturedArgument {
+      public:
+        std::uint32_t value() const noexcept { return value_; }
+      private:
+        friend class WindowHost;
+        enum class Kind { Dummy, Slot, Alias } kind_{};
+        const WindowHost *host_{};
+        std::uint32_t value_{};
+        unsigned slot_{};
+        std::uint16_t address_{};
+    };
     class Operation {
       public:
         ~Operation();
@@ -99,6 +129,14 @@ class WindowHost {
     State &state();
     TextOutput &output();
     GameVersion version() const;
+    std::weak_ptr<const void> source_lifetime() const noexcept { return lifetime_; }
+    // Borrow the one BG2_BUFFER owner before explicit component work.
+    void bind_source_text_tiles(cutscenes::DisplayState &);
+    // Only the genuine cold C20171..C20184 zero loop, outside measured work:
+    // 896 word stores leave the retained final 256 bytes untouched.
+    void initialize_cold_text_tiles();
+    std::uint64_t source_scene_publications() const;
+    std::uint64_t source_tail_publications() const;
     // Bind before creating windows. Fixed text, titles and decorations then
     // retain the initializer's live published artwork identities.
     void set_graphics(std::shared_ptr<WindowGraphics>);
@@ -139,6 +177,14 @@ class WindowHost {
     // separate capability requires the identical read-only binding above;
     // it does not admit a drawable window or scrolling outside its bank.
     void bind_ambient_animation_layout(std::span<std::uint8_t, 8192>);
+    // JP CC00/CC01 may also address retained follower points and this host's
+    // menu pool. Borrow the real trail; neither binding copies native state.
+    void bind_ambient_party_trail(PartyTrail &);
+    // JP inherited window registers can straddle the live authored actor
+    // variable tables. Borrow those exact thirty-role, eight-word owners.
+    void bind_ambient_actor_variables(ActorWorld &);
+    CapturedArgument capture_argument() const;
+    void restore_argument(const CapturedArgument &);
     // JP GET_TEXT_X can address the same retained animation owner while
     // unfocused. An owned window bank is handled by TextOutput instead.
     // This query borrows two live bytes and never creates a window surface.
@@ -224,8 +270,29 @@ class WindowHost {
     void publish_palette(unsigned flavor, bool incapacitated = false, bool transitions_disabled = false);
     void animate_palette(unsigned flavor, std::uint64_t logical_frame);
     const std::array<std::uint16_t, 32> &palette() const;
+    std::shared_ptr<const WindowResources> source_palette_resources() const;
 
   private:
+    friend class story::SourceWindowPublication;
+    friend class story::SourceMeterTiles;
+    friend class story::SourceMeterStatus;
+    void validate_source_palette(const void*,const WindowPalettePublication&,const battle::PaletteBankState&) const;
+    void claim_source_palette(const void*,const WindowPalettePublication&,const battle::PaletteBankState&);
+    void store_source_palette_word(unsigned,std::uint16_t,battle::PaletteBankState&,const void*);
+    void validate_source_meter_tiles(const void*) const;
+    void store_source_meter_descriptor(unsigned,std::uint16_t);
+    std::shared_ptr<const void> lifetime_ = std::make_shared<const unsigned>(0);
+    void validate_source_publication(const void *lease) const;
+    void claim_source_publication(const void *);
+    void release_source_publication(const void *) noexcept;
+    std::span<const std::uint8_t,2048> source_text_tiles() const;
+    std::span<const std::uint8_t,64> source_tail() const;
+    std::uint32_t source_text_identity() const;
+    std::uint32_t source_tail_identity() const;
+    void publish_source_scene();
+    void publish_source_tail();
+    void publish_tail();
+    void bind_ambient_actor_variables_source(ambient::ActorVariables);
     friend class party::MeterWindows;
     friend class Conversation;
     friend class MenuPrinter;

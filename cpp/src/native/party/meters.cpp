@@ -1,6 +1,7 @@
 // Source: misc/hp_pp_roller.asm, unknown/C2/C20F58.asm, system/math/asr32.asm.
 // The US/JP layout differences are represented by the same typed party owner.
 #include "eb/native/party/meters.hpp"
+#include <stdexcept>
 
 namespace eb::native::party {
 namespace {
@@ -35,6 +36,7 @@ std::uint32_t effective_hp_speed(const MeterPolicy& policy) {
     return (policy.hp_speed >> 1) | (policy.hp_speed & 0x80000000u);
 }
 void advance_meters(State& party, std::uint16_t frame_counter, const MeterPolicy& policy) {
+    if(party.source_meter_active()) throw std::logic_error("Semantic meter rolling cannot borrow claimed literal party values");
     if (policy.rolling_disabled) return;
     const auto member = party.party_order[frame_counter & 3];
     if (!member || member > State::chosen_character_count) return;

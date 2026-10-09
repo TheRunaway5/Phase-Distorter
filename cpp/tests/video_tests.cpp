@@ -164,6 +164,89 @@ void verify(int scale, int horizontal_padding, int vertical_padding, int source_
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
 }
+void verify_sixteen_ten() {
+    constexpr int screen_width = 1280, screen_height = 800, source_width = 358;
+    eb::DisplaySettings settings;
+    settings.widescreen = true;
+    settings.aspect = eb::AspectRatio::SixteenTen;
+    if (settings.render_width(screen_width, screen_height) != source_width ||
+        settings.target_aspect(screen_width, screen_height) != 16.0 / 10)
+        throw std::runtime_error("16:10 must use a centered 358-column canvas and an exact display ratio");
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    SDL_Window* window = SDL_CreateWindow("16:10 presentation verification", SDL_WINDOWPOS_UNDEFINED,
+        SDL_WINDOWPOS_UNDEFINED, screen_width, screen_height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!window) throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
+    SDL_GLContext context = SDL_GL_CreateContext(window);
+    if (!context) {
+        SDL_DestroyWindow(window);
+        throw std::runtime_error(std::string("OpenGL context: ") + SDL_GetError());
+    }
+    try {
+        int drawable_width{}, drawable_height{};
+        SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+        if (drawable_width != screen_width || drawable_height != screen_height)
+            throw std::runtime_error("16:10 test requires an unscaled 1280x800 drawable");
+        eb::FramePresenter presenter;
+        auto scene = std::make_shared<eb::DirectSceneFrame>();
+        scene->width = scene->atlas_width = source_width;
+        scene->atlas_height = 224;
+        scene->atlas.resize(source_width * 224);
+        for (int y = 0; y < 224; ++y)
+            for (int x = 0; x < source_width; ++x)
+                scene->atlas[y * source_width + x] = 0xff000001 |
+                    ((x * 13 + y * 7) & 255) << 16 | y << 8 | ((x ^ y) & 254);
+        scene->quads = {{0, 0, source_width, 224, 0, 0, 0, 0, false}};
+        // Canvas rounding must not introduce letterboxing. Check both render
+        // paths at fractional output scale, including a windowed menu inset.
+        for (int inset : {0, 24}) {
+            const int view_width = inset ? 1242 : 1280, view_height = screen_height - inset;
+            const int left = (screen_width - view_width) / 2;
+            for (bool direct : {false, true}) {
+                const auto aspect = settings.target_aspect(drawable_width, drawable_height - inset);
+                if (direct) {
+                    if (!presenter.draw_scene({scene, {}}, drawable_width, drawable_height, aspect, inset))
+                        throw std::runtime_error("16:10 direct-scene rendering unavailable");
+                } else {
+                    presenter.draw(scene->atlas, source_width, 224, drawable_width, drawable_height, aspect, inset);
+                }
+                std::array<GLint, 4> viewport{};
+                glGetIntegerv(GL_VIEWPORT, viewport.data());
+                if (viewport != std::array<GLint, 4>{left, 0, view_width, view_height})
+                    throw std::runtime_error("16:10 viewport did not fill the available picture area");
+                const auto capture = presenter.capture();
+                if (capture.width != screen_width || capture.height != screen_height)
+                    throw std::runtime_error("16:10 capture lost part of the drawable");
+                for (int y = 0; y < screen_height; ++y)
+                    for (int x = 0; x < screen_width; ++x) {
+                        unsigned expected = 0, boundary_expected = 0;
+                        if (y >= inset && x >= left && x < left + view_width) {
+                            const int source_x = ((2 * (x - left) + 1) * source_width) / (2 * view_width);
+                            const int source_y = ((2 * (y - inset) + 1) * 224) / (2 * view_height);
+                            expected = scene->atlas[source_y * source_width + source_x] & 0xffffff;
+                            boundary_expected = expected;
+                            // At an exact texel boundary, nearest sampling may
+                            // select either adjacent row due to GL precision.
+                            if (((2 * (y - inset) + 1) * 224) % (2 * view_height) == 0)
+                                boundary_expected = scene->atlas[(source_y - 1) * source_width + source_x] & 0xffffff;
+                        }
+                        const auto at = (y * screen_width + x) * 3;
+                        const unsigned actual = capture.rgb[at] << 16 | capture.rgb[at + 1] << 8 | capture.rgb[at + 2];
+                        if (actual != expected && actual != boundary_expected)
+                            throw std::runtime_error("16:10 pixel mismatch at " + std::to_string(x) + "," +
+                                std::to_string(y) + " direct=" + std::to_string(direct) + " inset=" + std::to_string(inset));
+                    }
+            }
+        }
+        std::cout << "Verified 1280x800 16:10 framebuffer/direct-scene pixels with fullscreen and menu inset\n";
+    } catch (...) {
+        SDL_GL_DeleteContext(context);
+        SDL_DestroyWindow(window);
+        throw;
+    }
+    SDL_GL_DeleteContext(context);
+    SDL_DestroyWindow(window);
+}
 } // namespace
 
 int main() {
@@ -187,12 +270,14 @@ int main() {
         verify(2, 0, 0, 256, 25);
         verify(2, 17, 0, 256, 31);
         verify(1, 0, 13, 398, 24);
+        verify_sixteen_ten();
         eb::DisplaySettings settings;
         if (settings.render_width(1920, 1080) != 256) throw std::runtime_error("Original view must remain default");
         settings.widescreen = true;
         if (settings.render_width(1920, 1080) != 398) throw std::runtime_error("16:9 must extend the canvas");
         settings.aspect = eb::AspectRatio::Window;
-        if (settings.render_width(1680, 1050) != 358 || settings.render_width(0, 0) != 256)
+        if (settings.render_width(1280, 800) != 358 || settings.render_width(1680, 1050) != 358 ||
+            settings.render_width(0, 0) != 256)
             throw std::runtime_error("Window aspect adaptation invalid");
         settings.aspect = eb::AspectRatio::Custom;
         settings.custom_aspect = std::numeric_limits<float>::quiet_NaN();

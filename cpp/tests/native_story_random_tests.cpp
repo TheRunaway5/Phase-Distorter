@@ -9,7 +9,7 @@ int main() {
         // Source RAND's low-byte product, secondary carry, primary17th bit
         // and explicit rotated-low-bit insertion are distinct observable cases.
         struct Case { RandomState before, after; unsigned result; };
-        constexpr std::array cases{
+        const std::array cases{
             Case{{0,0},{0,0x006d},0},
             Case{{0xffff,0xffff},{0xffff,0x006c},0xe0},
             Case{{0xffff,1},{0x8001,0xff6e},0x0f},

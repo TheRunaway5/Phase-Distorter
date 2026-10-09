@@ -73,7 +73,10 @@ TextOutput::Owner Conversation::callback_owner(TextOutput &output) const {
                     request->kind == RequestKind::Selection ||
                     request->kind == RequestKind::SoundWorldTick ||
                     request->kind == RequestKind::Teleport ||
-                    (request->kind == RequestKind::SpecialEvent && request->special_event == 7));
+                    (request->kind == RequestKind::SpecialEvent && request->special_event &&
+                     (*request->special_event==1 || *request->special_event==2 ||
+                      *request->special_event==7 || *request->special_event==9 || *request->special_event==11 ||
+                      *request->special_event==12 || *request->special_event==16)));
     if (!callback)
         throw std::logic_error("Dialogue can nest only within a world or UI host event");
     return owner_;
@@ -159,19 +162,20 @@ Progress Conversation::advance(unsigned work_budget) {
             const auto& request = *runtime_.request();
             switch (request.kind) {
             case RequestKind::Glyph:
-            case RequestKind::Newline:
             case RequestKind::WidthHint:
             case RequestKind::ClearLine:
                 output_.begin(request, owner_);
                 phase_ = Phase::Output;
                 break;
+            case RequestKind::Newline:
             case RequestKind::ConditionalNewline:
                 if (windows_) {
                     if (const auto x = windows_->aliased_text_x()) {
-                        if (*x)
+                        if (request.kind == RequestKind::Newline || *x)
                             windows_->aliased_newline(owner_);
-                        // CC01's raw register newline has no glyph/footer
-                        // effect. A zero GET_TEXT_X skips PRINT_NEWLINE too.
+                        // PRINT_NEWLINE writes the actual aliased registers
+                        // without a glyph/footer effect. CC01 skips it when
+                        // GET_TEXT_X is zero; CC00 always executes it.
                         runtime_.respond();
                         break;
                     }

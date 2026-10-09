@@ -14,6 +14,18 @@ unsigned transfer_size(const PsiTransfer &t) noexcept {
          : t.kind == PsiTransferKind::Clear ? 2048 : 1024;
 }
 void validate_transfer(const PsiTransfer &t) {
+  if (!t.source.empty()) {
+    const unsigned count=t.byte_count?t.byte_count:65536;
+    const bool fixed=t.kind==PsiTransferKind::Vram&&(t.mode==3||t.mode==9||t.mode==15);
+    const unsigned reads=fixed?1:count;
+    const bool complete_bank=t.source.size()==65536&&!(t.source_identity&0xffff);
+    if(t.kind!=PsiTransferKind::Vram || t.source_identity>0xffffff ||
+       t.source.size()>65536 || (t.source_identity&0xffff)+t.source.size()>65536 ||
+       t.source_offset>=t.source.size() ||
+       (!complete_bank&&reads>t.source.size()-t.source_offset))
+      throw std::out_of_range("Cinematic DMA exceeds its dedicated live source");
+  }
+
   switch (t.kind) {
   case PsiTransferKind::FrameLowBytes:
   case PsiTransferKind::FrameHighBytes:
@@ -31,7 +43,7 @@ void validate_transfer(const PsiTransfer &t) {
   }
   throw std::out_of_range("Transfer exceeds its owned graphics/map domain");
 }
-void copy_vram(PsiDisplayState::VramImage &vram, const PsiScratch &scratch,
+void copy_vram(PsiDisplayState::VramImage &vram, const PsiScratch *scratch,
                const PsiTransfer &t) {
   unsigned mode = t.mode, destination = t.destination, count = t.byte_count;
   bool constant = false;
@@ -62,7 +74,7 @@ void copy_vram(PsiDisplayState::VramImage &vram, const PsiScratch &scratch,
     const auto source = std::uint16_t(t.source_offset + (fixed ? 0 : i));
     const unsigned word = destination + (alternating ? i / 2 : i);
     const unsigned lane = alternating ? i & 1 : unsigned(high);
-    vram[std::uint16_t(word * 2 + lane)] = constant ? value : scratch.bytes[source];
+    vram[std::uint16_t(word * 2 + lane)] = constant ? value : t.source.empty() ? scratch->bytes[source] : t.source[source];
   }
 }
 } // namespace
@@ -74,12 +86,12 @@ void PsiDisplayState::bind_peripherals(PeripheralState& state, GameVersion versi
   const auto constant = version == GameVersion::US ? 0xc2e6b3u : 0xc2e5c8u;
   if (peripherals_ && dma_constant_ != constant)
     throw std::logic_error("Display transport has another regional constant source");
-  peripherals_ = &state; dma_constant_ = constant;
+  peripherals_ = &state; peripheral_lifetime_=state.source_lifetime(); dma_constant_ = constant;
 }
 void PsiDisplayState::complete_dma(unsigned channel, const PsiTransfer& t) noexcept {
   if (!peripherals_) return;
   unsigned mode = t.mode, count = t.byte_count;
-  std::uint32_t source = 0x7f0000u + t.source_offset;
+  std::uint32_t source = (t.source.empty()?0x7f0000u:t.source_identity) + t.source_offset;
   switch (t.kind) {
   case PsiTransferKind::FrameLowBytes: mode = 6; count = 1024; break;
   case PsiTransferKind::FrameHighBytes: mode = 15; count = 1024; source = dma_constant_; break;
@@ -95,6 +107,32 @@ void PsiDisplayState::check() const {
   if (failed_)
     throw std::logic_error(
         "A transfer was abandoned before admission completed");
+}
+void PsiDisplayState::write_descriptor(unsigned slot, const PsiTransfer &t) noexcept {
+  unsigned mode=t.mode,count=t.byte_count,destination=t.destination;
+  auto source=(t.source.empty()?0x7f0000u:t.source_identity)+t.source_offset;
+  switch(t.kind) {
+  case PsiTransferKind::FrameLowBytes: mode=6;count=1024;destination=0x5800;break;
+  case PsiTransferKind::FrameHighBytes: mode=15;count=1024;destination=0x5800;source=dma_constant_;break;
+  case PsiTransferKind::Clear: mode=3;count=2048;destination=0x5800;source=dma_constant_+1;break;
+  case PsiTransferKind::Graphics: mode=0;destination/=2;break;
+  case PsiTransferKind::Vram: break;
+  }
+  auto *out=descriptors_.data()+slot*8;
+  out[0]=std::uint8_t(mode);out[1]=std::uint8_t(count);out[2]=std::uint8_t(count>>8);
+  out[3]=std::uint8_t(source);out[4]=std::uint8_t(source>>8);out[5]=std::uint8_t(source>>16);
+  out[6]=std::uint8_t(destination);out[7]=std::uint8_t(destination>>8);
+}
+void PsiDisplayState::write_descriptor_prefix(std::span<const std::uint8_t> bytes) {
+  check();
+  if(bytes.size()>descriptors_.size())
+    throw std::out_of_range("DMA descriptor alias exceeds retained queue");
+  for(unsigned i=0;i<32 && i*8<bytes.size();++i) {
+    const auto pending_count=(write_+32-read_)%32;
+    if(held_[i] || (i+32-read_)%32<pending_count)
+      throw std::logic_error("Palette alias would overwrite a referenced DMA descriptor");
+  }
+  std::copy(bytes.begin(),bytes.end(),descriptors_.begin());
 }
 std::span<const PsiTransfer> PsiDisplayState::pending() const noexcept {
   const auto count = (write_ + 32 - read_) % 32;
@@ -120,7 +158,10 @@ void PsiDisplayState::stage(PsiTransfer t) {
   if (next == read_)
     throw std::logic_error("Raw transfer staging requires ring admission");
   copy_ = t;
+  if(copy_.kind==PsiTransferKind::Vram&&copy_.source.empty()&&!copy_.source_identity)
+    copy_.source_identity=0x7f0000;
   queue_[write_] = t;
+  write_descriptor(write_,t);
   write_ = next;
   bytes_ = std::uint16_t(bytes_ + transfer_size(t));
 }
@@ -142,11 +183,53 @@ void PsiDisplayState::queue_graphics(std::uint16_t source, std::uint16_t size,
 }
 void PsiDisplayState::apply_immediate(const PsiScratch &scratch,
                                       PsiTransfer t) {
+  complete_source_dma(scratch,t);
+  transient_.after_immediate_transfer();
+  if(dma_constant_==0xc2e6b3u)dma_transfer_flag_=0;
+}
+PsiTransfer PsiDisplayState::source_copy_parameters() const noexcept {
+  auto t=copy_;
+  auto source=(t.kind==PsiTransferKind::Vram?t.source_identity:
+      t.source.empty()?0x7f0000u:t.source_identity)+t.source_offset;
+  switch(t.kind) {
+  case PsiTransferKind::FrameLowBytes:t.mode=6;t.byte_count=1024;t.destination=0x5800;break;
+  case PsiTransferKind::FrameHighBytes:t.mode=15;t.byte_count=1024;t.destination=0x5800;source=dma_constant_;break;
+  case PsiTransferKind::Clear:t.mode=3;t.byte_count=2048;t.destination=0x5800;source=dma_constant_+1;break;
+  case PsiTransferKind::Graphics:t.mode=0;t.destination/=2;break;
+  case PsiTransferKind::Vram:
+    if(t.source.empty()&&!t.source_identity)source=t.source_offset;
+    break;
+  }
+  t.kind=PsiTransferKind::Vram;
+  t.source={};t.source_identity=source&0xff0000;t.source_offset=std::uint16_t(source);
+  return t;
+}
+void PsiDisplayState::set_source_copy_parameters(PsiTransfer t) {
+  check();
+  if(t.kind!=PsiTransferKind::Vram || t.source_identity>0xffffff)
+    throw std::out_of_range("Source COPY parameters exceed their actual pointer domain");
+  copy_=t;
+}
+void PsiDisplayState::complete_source_dma(const PsiScratch &scratch,
+                                        PsiTransfer t,unsigned channel) {
+  complete_source_dma_impl(&scratch,t,channel);
+}
+void PsiDisplayState::complete_source_dma(PsiTransfer t,unsigned channel) {
+  if(t.source.empty())throw std::logic_error("Source DMA requires its actual persistent source span");
+  complete_source_dma_impl(nullptr,t,channel);
+}
+void PsiDisplayState::complete_source_dma_impl(const PsiScratch *scratch,PsiTransfer t,unsigned channel) {
+  check();
+  if(channel>1)throw std::out_of_range("Source transfer exceeds its owned DMA channels");
   validate_transfer(t);
   auto output = vram();
   copy_vram(output, scratch, t);
   store_vram(output);
-  complete_dma(1, t);
+  source_vmain_=t.kind==PsiTransferKind::Vram?(t.mode==6||t.mode==9?0:0x80):
+      t.kind==PsiTransferKind::FrameLowBytes?0:0x80;
+  source_vmadd_=t.kind==PsiTransferKind::Graphics?t.destination/2:
+      t.kind==PsiTransferKind::Vram?t.destination:0x5800;
+  complete_dma(channel, t);
 }
 void PsiDisplayState::transfer_graphics_immediate(const PsiScratch &scratch,
                                                   std::uint16_t source,
@@ -196,7 +279,7 @@ void PsiDisplayState::store_vram(const VramImage &image) noexcept {
 PsiDisplayState::VramImage PsiDisplayState::preview_vram(const PsiScratch &scratch) const {
   check();
   auto output = vram();
-  for (const auto &t : pending()) copy_vram(output, scratch, t);
+  for (const auto &t : pending()) copy_vram(output, &scratch, t);
   return output;
 }
 std::array<std::uint8_t, 8192>
@@ -256,6 +339,8 @@ bool PsiDisplayState::TransferOperation::advance() {
   auto &o = owner_;
   if (!phase_) {
     o.copy_ = command_;
+    if(o.copy_.kind==PsiTransferKind::Vram&&o.copy_.source.empty()&&!o.copy_.source_identity)
+      o.copy_.source_identity=0x7f0000;
     if (fade_.state().brightness & 0x80) {
       o.apply_immediate(scratch_, o.copy_);
       complete_ = true;
@@ -280,6 +365,8 @@ bool PsiDisplayState::TransferOperation::advance() {
   }
   if (phase_ == 2) {
     o.queue_[o.write_] = o.copy_;
+    o.write_descriptor(o.write_,o.copy_);
+    ++o.held_[o.write_];
     next_ = (o.write_ + 1) % 32;
     phase_ = 3;
   }
@@ -288,6 +375,7 @@ bool PsiDisplayState::TransferOperation::advance() {
     return false;
   }
   o.write_ = next_;
+  --o.held_[(next_+31)%32];
   complete_ = true;
   return true;
 }

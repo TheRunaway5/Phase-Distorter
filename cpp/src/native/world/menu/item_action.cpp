@@ -1,4 +1,5 @@
 #include "eb/native/world/menu/item_action.hpp"
+#include "eb/native/world/party/placement.hpp"
 #include <algorithm>
 #include <stdexcept>
 namespace eb::native::world::menu {
@@ -13,6 +14,7 @@ struct ItemAction::Operation::State {
     std::unique_ptr<story::Scene::Operation> child;
     std::unique_ptr<battle::actions::Executor::Operation> action;
     std::unique_ptr<story::PartyFormation::Operation> formation;
+    std::unique_ptr<PartyPlacement> placement;
     unsigned phase{}, member{};
     bool done{}, executing{};
     State(ItemAction &o,ItemActionRequest r):owner(o),request(r),
@@ -55,6 +57,9 @@ ItemAction::Operation::~Operation(){if(state_->owner.active_==this){if(!state_->
 bool ItemAction::Operation::complete() const noexcept{return state_->done;}
 story::Scene::Operation *ItemAction::Operation::scene() noexcept{return state_->child?state_->child.get():state_->action?state_->action->scene():nullptr;}
 story::PartyFormation::Operation *ItemAction::Operation::party_update() noexcept{return state_->formation?state_->formation.get():state_->action?state_->action->party_update():nullptr;}
+WorldRuntime::Operation *ItemAction::Operation::runtime_operation() noexcept {
+    return state_->placement?state_->placement->runtime_operation():nullptr;
+}
 story::TeddyParty::Operation *ItemAction::Operation::teddy_update() noexcept{return state_->action?state_->action->teddy_update():nullptr;}
 story::PartyMembership::Operation *ItemAction::Operation::membership_update() noexcept{return state_->action?state_->action->membership_update():nullptr;}
 dialogue::Progress ItemAction::Operation::advance(unsigned budget) {
@@ -91,6 +96,12 @@ dialogue::Progress ItemAction::Operation::advance(unsigned budget) {
                 if(p!=dialogue::Progress::Finished)continue;
                 s.formation.reset();
             }
+            if(s.placement) {
+                const auto p=s.placement->advance(1);
+                if(p==dialogue::Progress::Suspended){s.executing=false;return p;}
+                if(p!=dialogue::Progress::Finished)continue;
+                s.placement.reset();
+            }
             switch(s.phase) {
             case 0:
                 if(s.request.teleport){s.phase=1;break;}
@@ -117,7 +128,9 @@ dialogue::Progress ItemAction::Operation::advance(unsigned budget) {
                 } else o.roster.initialize_player(1,o.world.party,s.request.target);
                 s.action=o.executor.begin_action(s.kind);break;
             case 3:
-                o.following.position_after_pause();s.child=o.scene.begin(story::TickKind::WorldFrame);s.phase=4;break;
+                s.placement=std::make_unique<PartyPlacement>(o.following,o.world.actors,o.world.runtime);s.phase=5;break;
+            case 5:
+                s.child=o.scene.begin(story::TickKind::WorldFrame);s.phase=4;break;
             case 4:
                 o.world.interactions.set_actors_paused(true);
                 if(o.world.session.fading_actor) {

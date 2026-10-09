@@ -11,6 +11,7 @@
 #include "eb/native/dialogue/fonts.hpp"
 #include "eb/native/dialogue/initialization_resources.hpp"
 #include "eb/native/dialogue/window_graphics.hpp"
+#include "eb/native/dialogue/conversation.hpp"
 #include "detail/text_canvas.hpp"
 #include <algorithm>
 #include <array>
@@ -1152,6 +1153,30 @@ TextCompositionSnapshot TextOutput::composition_snapshot() const {
     result.publication_position = e.publication_position;
     result.partial_publication = e.published;
     return result;
+}
+void TextOutput::commit_cast_composition(const TextCompositionSnapshot &snapshot,Conversation *parent) {
+    auto &e=*execution_;
+    require(!e.japanese(),"Japanese cast has no US VWF composition destination");
+    if(parent) {
+        require(&parent->output_==this && parent->phase_==Conversation::Phase::Interpreter && parent->event_,
+            "Cast composition requires this output's suspended authored conversation");
+        e.require_owner(parent->active_owner());
+        const auto *request=std::get_if<Request>(&*parent->event_);
+        require(request && request->kind==RequestKind::SpecialEvent && request->special_event==11,
+            "Cast composition requires the actual SP11 request");
+    } else {
+        e.require_owner(0);
+        require(e.active().stage==Execution::Stage::Complete,"Cast composition cannot interrupt an active glyph");
+    }
+    require(snapshot.columns.size()==52 && snapshot.brush_column<52 &&
+        snapshot.fractional_offset<8 && snapshot.publication_position<=65535,
+        "Cast composition exceeds its original VWF ring or cursor");
+    for(const auto &column:snapshot.columns)for(const auto pixel:column)
+        require(pixel<=3,"Cast composition contains an invalid two-bit pixel");
+    for(unsigned i=0;i<52;++i)e.brush_history[i]->pixels=snapshot.columns[i];
+    e.brush_column=snapshot.brush_column;e.offset=snapshot.fractional_offset;
+    e.publication_position=snapshot.publication_position;e.published=snapshot.partial_publication;
+    e.composition=e.brush_history[e.brush_column];
 }
 TextPublicationSnapshot TextOutput::publication_snapshot() const {
     const auto &e = *execution_;

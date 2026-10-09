@@ -39,6 +39,7 @@ void run(eb::GameVersion region,unsigned count,unsigned budget) {
         f.windows.output().policy().text_speed==1 &&
         f.windows.prompt_state().text_speed_based_wait==60 &&
         f.enemies.population().maximum==10 && f.phone.timer==1687 && f.phone.queued==4 &&
+        f.spawn.enemies==0xffff &&
         f.queued.current==0 && f.queued.next==0 && !f.queued.pending && f.queued.current_type==0xffff,
         "Continue did not restore/reset the actual shared session owners");
   for(unsigned i=0;i<256;++i) {
@@ -79,10 +80,12 @@ void independent_reset(eb::GameVersion region) {
   check(operation->stage()==WorldStartupStage::ResetWorld,"Pre-game did not reach exact reset boundary");
   f.windows.prompt_state().battle_mode=0xabcd;
   f.control.encounter.mode=0x1234;
+  f.spawn.enemies=0x1234;
   operation->advance(1);
   check(operation->stage()==WorldStartupStage::CreateController &&
         !f.control.encounter.mode && f.windows.prompt_state().battle_mode==0xabcd,
         "World reset conflated encounter mode with rendering flag");
+  check(f.spawn.enemies==0xffff,"World reset normalized its actual enemy-enable word");
   // The rest of this synthetic world-only rig has no battle frame owner.
   f.windows.prompt_state().battle_mode=0;
   f.drive(*operation);

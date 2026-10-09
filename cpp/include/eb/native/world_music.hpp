@@ -35,6 +35,9 @@ struct WorldMusicState {
     std::uint16_t disable_changes{}, do_map_fade{};
     std::uint16_t next_track{}, current_map_track = 0xffff;
     std::optional<std::array<unsigned, 2>> selected;
+    // Host continuation diagnostic; abandonment cannot resume authored music work.
+    bool continuation_abandoned{};
+    const void *active_sector_transition{};
 };
 // C068F4/C069AF/C06A07 against real flags/leader/clock and the retained audio
 // owner. The selected entry and map track are distinct from the audio driver's
@@ -44,6 +47,10 @@ public:
     WorldMusic(const WorldMusicData &, WorldMusicState &,
                const npcs::InteractionState &, std::span<const std::uint8_t>,
                const story::TickState &, NativeAudio &);
+    bool uses(const WorldMusicState &state,const npcs::InteractionState &leader,
+              const story::TickState &clock) const noexcept {
+        return &state_==&state&&&leader_==&leader&&&clock_==&clock;
+    }
     void select(std::uint16_t x, std::uint16_t y);
     void apply_sector();
     void restore_sector();

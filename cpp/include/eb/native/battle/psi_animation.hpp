@@ -1,4 +1,5 @@
 #pragma once
+#include "eb/native/display/transient_memory.hpp"
 
 #include "eb/native/battle/palette_effects.hpp"
 #include "eb/native/peripheral_state.hpp"
@@ -52,15 +53,28 @@ struct PsiTransfer {
   // Its source is the borrowed live scratch bank. Existing PSI kinds retain
   // their fixed addresses and Graphics retains its byte-addressed destination.
   std::uint8_t mode{};
-  bool operator==(const PsiTransfer &) const = default;
+  // Dedicated live native source (VWF/credits composition), bounded to its
+  // actual owned bytes. Empty uses the ordinary retained BUFFER bank. The
+  // source and its semantic DMA identity remain stable through publication.
+  std::span<const std::uint8_t> source{};
+  std::uint32_t source_identity{};
+  bool operator==(const PsiTransfer &other) const noexcept {
+    return kind==other.kind && source_offset==other.source_offset &&
+        byte_count==other.byte_count && destination==other.destination && mode==other.mode &&
+        source.data()==other.source.data() && source.size()==other.source.size() &&
+        source_identity==other.source_identity;
+  }
 };
 // Actual visible PSI artwork/map and ordered pending source DMA operations.
 // Queueing a frame retains a scratch reference by offset, not a byte snapshot:
 // a real transfer reads live scratch, with16-bit source-bank wrap.
 class PsiDisplayState {
 public:
+  display::TransientMemory &transient_memory() noexcept { return transient_; }
+  const display::TransientMemory &transient_memory() const noexcept { return transient_; }
   void bind_peripherals(PeripheralState&, GameVersion);
-  PeripheralState* peripherals() const noexcept { return peripherals_; }
+  PeripheralState* peripherals() const noexcept { return peripheral_lifetime_.expired() ? nullptr : peripherals_; }
+  std::weak_ptr<const void> source_lifetime() const noexcept { return lifetime_; }
   using VramImage = std::array<std::uint8_t, 65536>;
   PsiDisplayState() = default;
   PsiDisplayState(const PsiDisplayState &) = delete;
@@ -125,19 +139,75 @@ public:
     return std::uint8_t(read_ * 8);
   }
   const PsiTransfer &copy_parameters() const noexcept { return copy_; }
+  // Projection of the actual eight-byte DMA_COPY parameter block. Timed
+  // PREPARE stores retain its overlapping words before the complete call.
+  PsiTransfer source_copy_parameters() const noexcept;
+  void set_source_copy_parameters(PsiTransfer);
+  // MDMAEN completes the actual borrowed transfer, independently of the
+  // later source heap and regional flag stores. Normal immediate callers
+  // retain their existing complete wrapper behavior.
+  void complete_source_dma(const PsiScratch &, PsiTransfer, unsigned channel=1);
+  // Persistent borrowed sources need no unrelated PSI scratch allocation.
+  void complete_source_dma(PsiTransfer, unsigned channel=1);
+  std::uint16_t dma_transfer_flag() const noexcept {return dma_transfer_flag_;}
+  void set_source_dma_transfer_flag(std::uint16_t value) noexcept {dma_transfer_flag_=value;}
+  // Last source setup writes, not a fabricated readable PPU register file.
+  std::uint8_t source_vmain() const noexcept {return source_vmain_;}
+  std::uint16_t source_vmadd() const noexcept {return source_vmadd_;}
+  void set_source_vmain(std::uint8_t value) noexcept {source_vmain_=value;}
+  void set_source_vmadd(std::uint16_t value) noexcept {source_vmadd_=value;}
+  // Retained physical DMA_QUEUE bytes. Idle descriptors may be written by
+  // the authored palette routine's adjacent 64-byte destination. Referenced
+  // and not-yet-published records cannot be overwritten by this service.
+  std::span<const std::uint8_t,256> descriptor_bytes() const noexcept { return descriptors_; }
+  void write_descriptor_prefix(std::span<const std::uint8_t>);
   bool failed() const noexcept { return failed_; }
   bool admits_without_wait(std::span<const PsiTransfer>) const noexcept;
   std::uint64_t publication_serial() const noexcept {
     return publication_serial_;
   }
   std::span<const PsiTransfer> pending() const noexcept;
+  // The shared PPU byte latch is distinct from the logical scroll mirrors.
+  // Source callbacks can observe the intermediate low-byte write; vertical
+  // hardware positions wrap at ten bits. Ordinary compositor offsets retain
+  // their complete sixteen-bit values after a whole screen publication.
+  std::uint8_t source_scroll_latch() const noexcept { return source_scroll_latch_; }
+  const std::array<PsiScroll,4>& source_hardware_scroll() const noexcept {
+    return source_hardware_scroll_;
+  }
+  void write_source_scroll_port(unsigned layer,bool vertical,std::uint8_t value) {
+    if(layer>=source_hardware_scroll_.size())
+      throw std::out_of_range("Source scroll write exceeds the actual four background ports");
+    auto &position=source_hardware_scroll_[layer];
+    if(vertical)position.y=std::uint16_t(((unsigned(value)<<8)|source_scroll_latch_)&0x3ff);
+    else position.x=std::uint16_t((unsigned(value)<<8)|(source_scroll_latch_&0xf8)|((position.x>>8)&7));
+    source_scroll_latch_=value;
+    if(vertical)scroll[layer].y=position.y;
+    else scroll[layer].x=position.x;
+  }
+  // Actual screen publisher writes BG1..BG4, X low/high then Y low/high.
+  // Its final BG4 Y high byte becomes the next callback's shared latch.
+  void publish_source_scroll(const std::array<PsiScroll,4>& positions) noexcept {
+    const auto snapshot=positions;
+    for(unsigned i=0;i<snapshot.size();++i) {
+      write_source_scroll_port(i,false,std::uint8_t(snapshot[i].x));
+      write_source_scroll_port(i,false,std::uint8_t(snapshot[i].x>>8));
+      write_source_scroll_port(i,true,std::uint8_t(snapshot[i].y));
+      write_source_scroll_port(i,true,std::uint8_t(snapshot[i].y>>8));
+    }
+    scroll=snapshot;
+  }
   // Explicit display transport; queue draining does not latch scroll.
-  void publish_scroll() noexcept { scroll = staged_scroll; }
+  void publish_scroll() noexcept { publish_source_scroll(staged_scroll); }
   std::array<std::uint8_t, 8192> graphics{};
   std::array<std::uint16_t, 1024> tilemap{};
   std::array<PsiScroll, 4> staged_scroll{}, scroll{};
 
 private:
+  std::shared_ptr<const void> lifetime_ = std::make_shared<const unsigned>(0);
+  std::weak_ptr<const void> peripheral_lifetime_;
+  void complete_source_dma_impl(const PsiScratch *, PsiTransfer, unsigned);
+  display::TransientMemory transient_;
   PeripheralState* peripherals_{};
   std::uint32_t dma_constant_{};
   void complete_dma(unsigned channel, const PsiTransfer&) noexcept;
@@ -147,8 +217,15 @@ private:
   // During full-ring admission its unpublished last record is already credited;
   // a real NMI can clear bytes before that producer index is finally published.
   std::array<PsiTransfer, 32> queue_{};
+  std::array<std::uint8_t,256> descriptors_{};
+  std::array<unsigned,32> held_{};
+  void write_descriptor(unsigned, const PsiTransfer&) noexcept;
   mutable std::array<PsiTransfer, 31> view_{}; // Read-only ordered projection.
-  PsiTransfer copy_{};
+  PsiTransfer copy_{PsiTransferKind::Vram};
+  std::uint16_t dma_transfer_flag_{},source_vmadd_{};
+  std::uint8_t source_vmain_{};
+  std::array<PsiScroll,4> source_hardware_scroll_{};
+  std::uint8_t source_scroll_latch_{};
   unsigned read_{}, write_{};
   std::uint16_t bytes_{};
   bool failed_{};

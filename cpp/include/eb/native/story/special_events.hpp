@@ -8,6 +8,8 @@
 #include "eb/native/party/meter_flipout.hpp"
 #include "eb/native/world_maintenance.hpp"
 #include "eb/native/world/townmap/scene.hpp"
+#include "eb/native/cutscenes/services.hpp"
+#include "eb/native/world/party/placement.hpp"
 
 namespace eb::native::story {
 struct SpecialEventOwners {
@@ -38,7 +40,11 @@ public:
     Operation &operator=(const Operation &) = delete;
     dialogue::Progress advance(unsigned work_budget=4096);
     Scene::Operation *scene() noexcept { return scene_.get(); }
+    WorldRuntime::Operation *runtime_operation() noexcept {
+      return placement_?placement_->runtime_operation():nullptr;
+    }
     PartyFormation::Operation *party_update() noexcept { return party_.get(); }
+    cutscenes::Services::Operation *cinematic() noexcept { return cinematic_.get(); }
     world::townmap::Scene::Operation *town_map() noexcept { return town_map_.get(); }
     bool bicycle_dismount_pending() const noexcept { return bicycle_; }
     void respond_bicycle_dismount();
@@ -55,11 +61,14 @@ public:
     bool done_{},executing_{},bicycle_{};
     std::unique_ptr<Scene::Operation> scene_;
     std::unique_ptr<PartyFormation::Operation> party_;
+    std::unique_ptr<world::PartyPlacement> placement_;
     WorldRuntime::Operation *runtime_parent_{};
     std::unique_ptr<world::townmap::Scene::Operation> town_map_;
+    std::unique_ptr<cutscenes::Services::Operation> cinematic_;
   };
   SpecialEvents(std::span<const std::uint8_t> image,GameVersion,SpecialEventOwners);
   void bind_town_map(world::townmap::Scene &);
+  void bind_cinematics(cutscenes::Services &);
   std::unique_ptr<Operation> begin(std::uint8_t event,Scene::Operation &parent,
                                  WorldRuntime::Operation *runtime_parent=nullptr);
   bool busy() const noexcept { return active_!=nullptr; }
@@ -68,6 +77,7 @@ private:
   SpecialEventOwners owners_;
   std::array<std::uint8_t,6> probabilities_{};
   world::townmap::Scene *town_map_{};
+  cutscenes::Services *cinematics_{};
   Operation *active_{};
   bool failed_{};
 };

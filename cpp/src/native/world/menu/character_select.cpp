@@ -4,8 +4,8 @@ namespace eb::native::world::menu {
 Commands::Operation::Execution::Routine Commands::Operation::Execution::character_select(unsigned mode,unsigned inventory_window) {
     // CHAR_SELECT_PROMPT preserves the captured active bank's argument even
     // when the cursor callback moves focus to a newly created inventory.
-    auto &o=owner;auto &w=o.windows;auto &argument=w.state().window().active.argument;
-    const auto saved_argument=argument;
+    auto &o=owner;auto &w=o.windows;
+    const auto saved_argument=w.capture_argument();
     if(mode==1) {
         w.save_text_context();
         const unsigned id=o.party.controlled_count==1?0x33:0x27+o.party.controlled_count;
@@ -17,7 +17,7 @@ Commands::Operation::Execution::Routine Commands::Operation::Execution::characte
         }
         co_await print();const auto result=co_await select();
         co_await window({dialogue::WindowAction::Close,dialogue::WindowId{id},{},0});
-        w.restore_text_context();argument=saved_argument;co_return result;
+        w.restore_text_context();w.restore_argument(saved_argument);co_return result;
     }
     unsigned index=mode==2 || o.meters.state().selected_phase==0xffff?0:o.meters.state().selected_phase;
     if(index>=o.party.controlled_count)throw std::out_of_range("Character selector retains a phase outside the live controlled party");
@@ -38,8 +38,8 @@ Commands::Operation::Execution::Routine Commands::Operation::Execution::characte
                 const auto pressed=o.input.pressed[0];
                 if(pressed&0x0200){candidate=index;do{candidate=candidate?candidate-1:o.party.controlled_count-1;}while(character_filter && !character_filter(o.party.party_order.at(candidate)));w.set_pagination(w.pagination_window(),2);moved=true;break;}
                 if(pressed&0x0100){candidate=index;do{candidate=candidate+1<o.party.controlled_count?candidate+1:0;}while(character_filter && !character_filter(o.party.party_order.at(candidate)));w.set_pagination(w.pagination_window(),3);moved=true;break;}
-                if(pressed&0x00a0){co_await sound(1);w.set_pagination(w.pagination_window(),{});argument=saved_argument;co_return o.party.party_order.at(index);}
-                if(pressed&0xa000){co_await sound(mode==0?27:2);co_await meter(o.meters.begin_clear_selection());w.set_pagination(w.pagination_window(),{});argument=saved_argument;co_return 0;}
+                if(pressed&0x00a0){co_await sound(1);w.set_pagination(w.pagination_window(),{});w.restore_argument(saved_argument);co_return o.party.party_order.at(index);}
+                if(pressed&0xa000){co_await sound(mode==0?27:2);co_await meter(o.meters.begin_clear_selection());w.set_pagination(w.pagination_window(),{});w.restore_argument(saved_argument);co_return 0;}
             }
             if(moved)break;
             w.set_pagination(w.pagination_window(),w.pagination_frame().value_or(0)?0:1);polls=0;wait=10;

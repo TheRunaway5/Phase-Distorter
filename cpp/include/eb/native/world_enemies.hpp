@@ -95,6 +95,12 @@ class WorldEnemies {
     const std::vector<EnemyActorState> &actors() const { return actors_; }
     const std::optional<EnemySpawnRequest> &request() const { return request_; }
     bool busy() const;
+    // Bound gameplay preserves CREATE_ENTITY's allocation/publication before
+    // INIT_ENTITY. Unbound component callers retain semantic creation.
+    void bind_actor_graphics(RawActorCreation &);
+    void clear_actor_graphics(RawActorCreation &) noexcept;
+    bool needs_graphics_publication() const noexcept;
+    void respond_graphics_publication(ActorWorld &);
     std::optional<EnemySpawnCreation> pending_creation() const;
     void begin_cell(ActorWorld &world, unsigned x, unsigned y, unsigned encounter,
                     unsigned width, unsigned height, EnemySpawnState state);
@@ -130,7 +136,7 @@ class WorldEnemies {
     // Persistent state provenance outlives an observer lease. It carries no
     // pointer to a destroyed world and cannot alias a new world's local IDs.
     std::shared_ptr<const void> world_identity_;
-    enum class Stage { Idle, Start, Normal, SelectMembers, Member, Position, NeedY, Terrain, Weakness };
+    enum class Stage { Idle, Start, Normal, SelectMembers, Member, Create, Position, NeedY, Terrain, Weakness };
     void begin(ActorWorld &world, std::vector<EnemySpawnCell> cells, EnemySpawnState state);
     void advance(ActorWorld &world);
     void random(EnemyRandomPurpose purpose);
@@ -154,6 +160,8 @@ class WorldEnemies {
     const std::vector<EnemySpawnMember> *members_{};
     unsigned alternate_{}, battle_{}, enemy_{}, remaining_{}, attempts_{};
     ActorId creating_{};
+    RawActorCreation *graphics_{};
+    std::unique_ptr<RawActorCreation::Operation> creation_;
     std::uint16_t candidate_x_{}, candidate_y_{};
     Stage stage_ = Stage::Idle;
     std::optional<EnemySpawnRequest> request_;

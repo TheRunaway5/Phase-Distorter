@@ -271,12 +271,52 @@ bool WorldPartyFollowing::update(ActorId id, bool movement,
   return true;
 }
 void WorldPartyFollowing::position_after_pause() {
+  for(unsigned role=24;role<30;++role)
+    if(const auto id=actors_.actor_for_role(role);id&&actors_.raw_graphics_owns(*id))
+      throw std::logic_error("Party placement requires its actual per-role raw upload continuation");
+  auto operation=begin_position_after_pause();
+  if(!operation->advance())throw std::logic_error("Unbound party placement unexpectedly requested raw transport");
+}
+std::unique_ptr<WorldPartyFollowing::Placement> WorldPartyFollowing::begin_position_after_pause() {
+  if(placement_||placement_failed_)throw std::logic_error("Party placement is failed or already active");
   if (actors_.in_tick() && !actors_.request())
     throw std::logic_error("Party placement requires an idle or explicitly suspended actor traversal");
-  const auto first_cursor = formation_.trail_cursors[0];
-  for (unsigned role = 24; role < 30; ++role) {
+  auto operation=std::unique_ptr<Placement>(new Placement(*this));placement_=operation.get();return operation;
+}
+WorldPartyFollowing::Placement::Placement(WorldPartyFollowing &owner)
+    :owner_(owner),first_cursor_(owner.formation_.trail_cursors[0]) {}
+WorldPartyFollowing::Placement::~Placement() {
+  if(owner_.placement_==this){owner_.placement_=nullptr;owner_.placement_failed_=true;}
+}
+bool WorldPartyFollowing::Placement::advance() {
+  if(owner_.placement_failed_)throw std::logic_error("Party placement lost its actual continuation");
+  if(done_)return true;
+  if(selected_actor_)return false;
+  try {
+    while(role_<30) {
+      const auto id=owner_.position_role(role_++,first_cursor_);
+      if(id&&owner_.actors_.raw_graphics_owns(*id)) {
+        const auto &actor=owner_.actors_.actor(*id);
+        if(!actor.appearance.displayed())throw std::logic_error("Party placement lost its actual Eight selection");
+        selected_actor_=id;selection_=actor.appearance.displayed();surface_=actor.behavior.surface_flags;
+        return false;
+      }
+    }
+    done_=true;owner_.placement_=nullptr;return true;
+  } catch(...) {owner_.placement_failed_=true;throw;}
+}
+void WorldPartyFollowing::Placement::respond_upload() {
+  if(owner_.placement_failed_||!selected_actor_||!selection_)
+    throw std::logic_error("Party placement has no actual selected raw upload");
+  const auto &actor=owner_.actors_.actor(*selected_actor_);
+  if(!owner_.actors_.raw_graphics_owns(*selected_actor_)||actor.authored_role()!=role_-1||
+      actor.appearance.displayed()!=selection_||actor.behavior.surface_flags!=surface_)
+    throw std::logic_error("Party placement changed its actual selected member during upload");
+  selected_actor_.reset();selection_.reset();
+}
+std::optional<ActorId> WorldPartyFollowing::position_role(unsigned role,std::uint16_t first_cursor) {
     const auto id = actors_.actor_for_role(role);
-    if (!id) continue;
+    if (!id) return std::nullopt;
     actors_.set_authored_pause(role, false, false);
     auto &actor = actors_.actor(*id);
     const auto record = actor.action().variables[1];
@@ -306,6 +346,6 @@ void WorldPartyFollowing::position_after_pause() {
     actor.behavior.projected_x = x < 0x8000 ? int(x) : int(x) - 0x10000;
     actor.behavior.projected_y = y < 0x8000 ? int(y) : int(y) - 0x10000;
     actor.appearance.select_eight(direction, actor.action().animation, actor.behavior.surface_flags);
-  }
+    return id;
 }
 } // namespace eb::native

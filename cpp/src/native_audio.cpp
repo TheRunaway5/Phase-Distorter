@@ -137,6 +137,9 @@ void NativeAudio::bind_clock(NativeAudioClock &clock) {
         throw std::logic_error("Native audio already has its stable physical clock");
     state_->physical_clock=&clock;
 }
+bool NativeAudio::uses_clock(const NativeAudioClock &clock) const noexcept {
+    return state_->physical_clock==&clock;
+}
 void NativeAudio::initialize() {
     auto &s = *state_; s.check();
     if (s.initialized) throw std::logic_error("Native audio initialization repeated");
@@ -192,7 +195,17 @@ void NativeAudio::change_music(std::uint16_t track, std::uint16_t disabled_trans
 }
 void NativeAudio::publication() {
     auto &s = *state_; s.require_initialized();
-    if (s.start != s.end) { s.to_audio[3] = s.effects[s.start]; s.start = (s.start + 1) & 7; }
+    if (s.start != s.end) { source_write_sound_port(); source_advance_sound_queue(); }
+}
+void NativeAudio::source_write_sound_port() {
+    auto &s=*state_;s.require_initialized();
+    if(s.start==s.end)throw std::logic_error("Source sound publication requires a queued effect");
+    s.to_audio[3]=s.effects[s.start];
+}
+void NativeAudio::source_advance_sound_queue() {
+    auto &s=*state_;s.require_initialized();
+    if(s.start==s.end)throw std::logic_error("Source sound publication requires its queued index");
+    s.start=(s.start+1)&7;
 }
 void NativeAudio::advance_master_clocks(unsigned clocks) { state_->check(); state_->advance(clocks); }
 std::vector<std::int16_t> NativeAudio::take_samples() { return state_->dsp.take_stereo_samples(); }
@@ -200,6 +213,8 @@ std::uint64_t NativeAudio::master_clocks() const noexcept { return state_->clock
 std::uint64_t NativeAudio::instructions() const noexcept { return state_->cpu.instruction_count; }
 std::uint64_t NativeAudio::sample_frames() const noexcept { return state_->dsp.generated_stereo_frame_count(); }
 std::uint16_t NativeAudio::current_track() const noexcept { return state_->track; }
+std::uint8_t NativeAudio::sound_queue_start() const noexcept { return std::uint8_t(state_->start); }
+std::uint8_t NativeAudio::sound_queue_end() const noexcept { return std::uint8_t(state_->end); }
 GameVersion NativeAudio::version() const noexcept { return state_->version; }
 bool NativeAudio::failed() const noexcept { return state_->failed; }
 } // namespace eb

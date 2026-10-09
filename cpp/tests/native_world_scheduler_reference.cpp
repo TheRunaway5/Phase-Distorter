@@ -133,18 +133,18 @@ struct Original {
     word(l.stairs_x, f.transition_state.stairs_target.x);
     word(l.stairs_x + 2, f.transition_state.stairs_target.y);
   }
-  unsigned invoke(bool process, unsigned delay = 0, Callback callback = {}) {
+  unsigned invoke(bool process, unsigned delay = 0, Callback callback = {}, bool bank_zero = false) {
     cpu.emulation_mode = false;
     cpu.status_register = eb::MainCpu65816::InterruptDisable;
     cpu.data_bank = 0x7e;
     cpu.direct_page = 0x1e00;
     cpu.stack_pointer = 0x1fff;
-    cpu.program_counter = 0xc0ff00;
+    cpu.program_counter = bank_zero?0x00ff00:0xc0ff00;
     cpu.accumulator = delay;
     cpu.x_index = 0;
     cpu.y_index = 0;
     dword(0x1e0e, l.callbacks[unsigned(callback)]);
-    const unsigned return_pc = process ? 0xc0ff03 : 0xc0ff04;
+    const unsigned return_pc = (bank_zero?0x00ff00:0xc0ff00)+(process?3:4);
     if (process) cpu.execute_instruction<0x20>(l.process & 0xffff, 3);
     else cpu.execute_instruction<0x22>(l.schedule, 4);
     for (unsigned i = 0; i < 10000; ++i) {
@@ -272,6 +272,7 @@ void run(const eb::GameAssets &assets) {
             << original.instructions << " source instructions\n";
 }
 }
+#ifndef NATIVE_WORLD_SCHEDULER_REFERENCE_NO_MAIN
 int main(int argc, char **argv) {
   try {
     require(argc >= 2, "native_world_scheduler_reference pack.ebpak ...");
@@ -279,3 +280,4 @@ int main(int argc, char **argv) {
     return 0;
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
+#endif

@@ -5,6 +5,7 @@
 #include "eb/native/world_enemies.hpp"
 #include "eb/native/world_party_following.hpp"
 #include "eb/native/world_party_movement.hpp"
+#include "eb/native/story/input.hpp"
 #include <algorithm>
 #include <map>
 #include <numeric>
@@ -66,6 +67,7 @@ struct ActorWorld::State {
   // Groups resolved by the actual completed C0A3A4 draw pass. Capture reads
   // these without repeating a one-shot clear of the retained raw priority.
   std::map<ActorId, std::uint16_t> drawing_priorities;
+  std::vector<WorldObjectDraw> object_draws;
   std::optional<WorldActionRequest> request;
   std::optional<WorldCameraRefresh> camera_refresh;
   ActorId first{}, last{}, current{}, next{};
@@ -77,6 +79,9 @@ struct ActorWorld::State {
   ActorTickService *tick_service{};
   WorldEnemies *enemies{};
   WorldOverlayPlayback *overlays{};
+  const RawActorCreation *raw_graphics{};
+  const story::InputState *drawing_input{};
+  std::optional<AppearanceServiceResult> raw_appearance_result;
   ActorId physics_current{};
   bool physics_started{}, physics_applied{};
 
@@ -164,6 +169,32 @@ void ActorWorld::bind_tick_service(ActorTickService &service) {
 }
 void ActorWorld::clear_tick_service(const ActorTickService &service) noexcept {
   if(state_->tick_service==&service)state_->tick_service=nullptr;
+}
+void ActorWorld::bind_drawing_input(const story::InputState &input) {
+  if (state_->in_tick || (state_->drawing_input && state_->drawing_input != &input))
+    throw std::logic_error("Actor drawing requires its stable actual input owner");
+  state_->drawing_input = &input;
+}
+void ActorWorld::clear_drawing_input(const story::InputState &input) noexcept {
+  if (state_->drawing_input == &input) state_->drawing_input = nullptr;
+}
+bool ActorWorld::uses_drawing_input(const story::InputState &input) const noexcept {
+  return state_->drawing_input==&input;
+}
+std::uint16_t ActorWorld::source_first_entity_offset() const {
+  if(!state_->first)return 0xffff;
+  const auto role=actor(state_->first).authored_role();
+  if(!role||*role>=30)throw std::logic_error("Source first entity has no actual authored row");
+  return std::uint16_t(*role*2);
+}
+std::uint16_t ActorWorld::source_next_entity_offset(unsigned role) const {
+  const auto id=actor_for_role(role);
+  if(!id)throw std::logic_error("Source next entity lost its actual active row");
+  const auto next=actor(*id).next_;
+  if(!next)return 0xffff;
+  const auto next_role=actor(next).authored_role();
+  if(!next_role||*next_role>=30)throw std::logic_error("Source next entity has no actual authored row");
+  return std::uint16_t(*next_role*2);
 }
 void ActorWorld::bind_enemies(WorldEnemies &enemies) {
   if (state_->enemies && state_->enemies != &enemies)
@@ -304,6 +335,9 @@ std::optional<ActorId> ActorWorld::create_authored(const WorldActorSpec &spec,
     return std::nullopt;
   const auto role = *found;
   auto prepared = spec;
+  // INIT_ENTITY and graphical CREATE_ENTITY leave this table word intact.
+  // Preserve the actual retired role's value before replacing its record.
+  prepared.behavior.moving_direction=s.dormant_roles[role].behavior.moving_direction;
   prepared.appearance_context.phase_id = std::uint16_t(role);
   const auto id = create_actor(prepared,true,duplicate_npc);
   if (s.enemies)
@@ -741,6 +775,50 @@ void ActorWorld::clear_collision_targets() {
     actor->behavior.collision_object = -1;
 }
 GameVersion ActorWorld::version() const { return state_->program->version(); }
+bool ActorWorld::uses(const SpriteResources &sprites) const noexcept {return state_->sprites.get()==&sprites;}
+void ActorWorld::bind_raw_graphics(const RawActorCreation &graphics) {
+  if(state_->in_tick||(state_->raw_graphics&&state_->raw_graphics!=&graphics)||!graphics.uses(*this))
+    throw std::logic_error("Raw graphics must bind this actual idle actor owner");
+  state_->raw_graphics=&graphics;
+}
+void ActorWorld::clear_raw_graphics(const RawActorCreation &graphics) noexcept {
+  if(state_->raw_graphics==&graphics)state_->raw_graphics=nullptr;
+}
+bool ActorWorld::uses(const RawActorCreation &graphics) const noexcept {return state_->raw_graphics==&graphics;}
+bool ActorWorld::raw_graphics_owns(ActorId id) const noexcept {
+  return state_->raw_graphics&&state_->raw_graphics->owns(id);
+}
+AppearanceServiceResult ActorWorld::prepare_raw_appearance() {
+  auto &s=*state_;
+  if(!s.raw_graphics||!s.request||s.request->origin!=WorldActionOrigin::Script||
+      !s.raw_graphics->owns(s.request->actor))
+    throw std::logic_error("Raw appearance preparation requires its actual gated script request");
+  const auto operation=s.request->binding.operation;
+  if(s.raw_appearance_result)return *s.raw_appearance_result;
+  if(operation==NativeAction::InitializePartyActor) {
+    if(!s.party_movement)throw std::logic_error("Raw party startup lacks its actual party movement owner");
+    const auto value=s.party_movement->prepare_startup(s.request->actor);
+    if(!value)throw std::logic_error("Raw party startup lacks its actual role/formation");
+    s.raw_appearance_result=AppearanceServiceResult{true,true,value,std::nullopt};
+    return *s.raw_appearance_result;
+  }
+  if(!s.appearance_data)throw std::logic_error("Raw appearance preparation lacks its actual appearance data");
+  if(operation!=NativeAction::SelectFourInitial&&operation!=NativeAction::SelectFourAnimation&&
+      operation!=NativeAction::SelectFourFirst&&operation!=NativeAction::SelectFourSecond&&
+      operation!=NativeAction::StepFourWalk&&operation!=NativeAction::StepEightAnimation&&
+      operation!=NativeAction::SelectEightCurrent)
+    throw std::logic_error("Raw appearance preparation requires its actual refresh call");
+  auto &actor=*s.actors.at(s.request->actor);
+  auto context=actor.appearance_context;
+  context.footstep_owner=s.appearance_scene.footstep_role&&actor.authored_role_==s.appearance_scene.footstep_role;
+  auto action=actor.action();auto appearance=actor.appearance;
+  const auto result=apply_appearance_action(s.request->binding,action,actor.behavior,context,
+      s.appearance_scene,*s.appearance_data,appearance);
+  if(!result.handled)throw std::logic_error("The gated raw appearance call was not handled");
+  actor.action()=action;actor.appearance=std::move(appearance);
+  if(result.sound)s.sounds.push_back({s.request->actor,s.ticks+1,*result.sound});
+  s.raw_appearance_result=result;return result;
+}
 void ActorWorld::reset_encounter_objects() {
   auto &s = *state_;
   if (s.in_tick || (s.enemies && s.enemies->busy()))
@@ -811,7 +889,7 @@ void ActorWorld::respond(std::uint16_t value, unsigned parameter_bytes,
     if (value || parameter_bytes || sleep_frames)
       throw std::invalid_argument(
           "Tick callback requires an empty acknowledgment");
-    s.request.reset();
+    s.request.reset();s.raw_appearance_result.reset();
     return;
   }
   if (!s.request->diagnostic.inline_length_known)
@@ -826,9 +904,14 @@ void ActorWorld::respond(std::uint16_t value, unsigned parameter_bytes,
       s.request->binding.operation != NativeAction::VelocityDistanceSleep)
     throw std::invalid_argument(
         "This native world service cannot assign task sleep");
+  if(s.raw_appearance_result&&s.request->binding.operation==NativeAction::InitializePartyActor) {
+    if(!s.raw_appearance_result->script_value||value!=*s.raw_appearance_result->script_value)
+      throw std::invalid_argument("Raw party startup requires its actual leader role result");
+    s.party_movement->finish_startup(s.request->actor);
+  }
   s.actors.at(s.request->actor)
       ->scripts_.respond(value, parameter_bytes, sleep_frames);
-  s.request.reset();
+  s.request.reset();s.raw_appearance_result.reset();
 }
 
 WorldTickResult ActorWorld::advance_tick() {
@@ -848,6 +931,7 @@ WorldTickResult ActorWorld::advance_tick() {
   }
   if (s.request && s.request->origin == WorldActionOrigin::Script &&
       s.party_movement &&
+      !(s.raw_graphics&&s.raw_graphics->owns(s.request->actor))&&
       s.request->binding.operation == NativeAction::InitializePartyActor) {
     if (const auto value = s.party_movement->startup(s.request->actor)) {
       s.actors.at(s.request->actor)->scripts_.respond(*value);
@@ -911,7 +995,8 @@ WorldTickResult ActorWorld::advance_tick() {
             continue;
           }
         if (s.party_movement &&
-            bound.operation == NativeAction::InitializePartyActor)
+            bound.operation == NativeAction::InitializePartyActor&&
+            !(s.raw_graphics&&s.raw_graphics->owns(s.current)))
           if (const auto value = s.party_movement->startup(s.current)) {
             actor.scripts_.respond(*value);
             continue;
@@ -921,8 +1006,23 @@ WorldTickResult ActorWorld::advance_tick() {
             actor.scripts_.respond(*value, bound.parameter_bytes);
             continue;
           }
+        if(s.raw_graphics&&s.raw_graphics->owns(s.current)&&
+            bound.operation==NativeAction::InitializePartyActor) {
+          s.raw_appearance_result.reset();
+          s.request=WorldActionRequest{s.current,request,bound,s.program->diagnostic(request.identifier)};
+          return WorldTickResult::NeedsEngine;
+        }
         if (s.appearance_data && actor.appearance_owned_ &&
             actor.appearance.available()) {
+          const auto operation=bound.operation;
+          if(s.raw_graphics&&s.raw_graphics->owns(s.current)&&(operation==NativeAction::SelectFourInitial||
+              operation==NativeAction::SelectFourAnimation||operation==NativeAction::SelectFourFirst||
+              operation==NativeAction::SelectFourSecond||operation==NativeAction::StepFourWalk||
+              operation==NativeAction::StepEightAnimation||operation==NativeAction::SelectEightCurrent)) {
+            s.raw_appearance_result.reset();
+            s.request=WorldActionRequest{s.current,request,bound,s.program->diagnostic(request.identifier)};
+            return WorldTickResult::NeedsEngine;
+          }
           // A refreshed pose sometimes has no semantic script return:
           // the old routine returned a graphics-upload destination.
           // Commit only if that value is defined or proven unused.
@@ -985,14 +1085,14 @@ WorldTickResult ActorWorld::advance_tick() {
     }
     if (actor.tick_callback_enabled &&
         (callback == ActorTickCallback::WorldMaintenance ||
-         callback == ActorTickCallback::EnemyPath)) {
+         callback == ActorTickCallback::EnemyPath || callback==ActorTickCallback::CastScroll)) {
       const auto callback_actor = s.current;
       s.current = s.next;
       s.actor_started = false;
       WorldActionRequest request;
       request.actor = callback_actor;
       request.origin = WorldActionOrigin::TickCallback;
-      request.binding.operation = callback == ActorTickCallback::EnemyPath
+      request.binding.operation = callback==ActorTickCallback::CastScroll ? NativeAction::TickCastScroll : callback == ActorTickCallback::EnemyPath
                                       ? NativeAction::RunEnemyPath
                                       : NativeAction::RunWorldMaintenance;
       s.request = std::move(request);
@@ -1057,22 +1157,62 @@ WorldTickResult ActorWorld::advance_tick() {
   }
   // Source drawing follows the completed physics/projection traversal. Overlay
   // clocks run once here; initial or repeated render capture never advances them.
-  for (auto id = s.first; id; id = s.actors.at(id)->next_) {
+  s.object_draws.clear();
+  std::vector<ActorId> deferred_draws;
+  const auto record_draw=[&](ActorId id,bool admit_anchor=true) {
     auto &actor = *s.actors.at(id);
-    if (!actor.appearance_owned_ || !actor.appearance.available() || !actor.behavior.draw_world ||
-        !actor.appearance.draw(actor.action(), actor.behavior.projected_x,
-                              actor.behavior.projected_y, actor.behavior.surface_flags).visible)
-      continue;
+    if (!actor.appearance_owned_ || !actor.appearance.available() || !actor.behavior.draw_world)
+      return;
+    const bool raw_owned = s.raw_graphics && s.raw_graphics->owns(id);
+    if (raw_owned) {
+      // C0A0E3 admits the retained physical map before the first graphics
+      // upload. A logical pose is unnecessary; its map-bank disable/flash
+      // bits and nonnegative animation remain the actual drawing gates.
+      if (!actor.action().alive || (actor.action().animation & 0x8000) ||
+          actor.appearance.flashing_hidden() || actor.appearance.fade_hidden()) return;
+    } else if (!actor.appearance.draw(actor.action(), actor.behavior.projected_x,
+                                    actor.behavior.projected_y, actor.behavior.surface_flags).visible)
+      return;
+    // The actual raw path admits anchors before C0A3A4. Logical software
+    // fixtures retain their existing artwork-bound presentation contract.
+    if(admit_anchor&&raw_owned){
+      const auto x=std::uint16_t(actor.behavior.projected_x),y=std::uint16_t(actor.behavior.projected_y);
+      if((y>=256&&y<0xffc0)||(x>=320&&x<0xffc0))return;
+    }
     const auto raw = actor.action().priority;
     const auto group = (raw & 0x8000u) ? authored_draw_priority(raw & 0x3fu) : raw;
     if (group > 3)
       throw std::out_of_range("Attached actor priority has no owned render group");
     s.drawing_priorities[id] = group;
+    s.object_draws.push_back({id,group});
     if ((raw & 0xc000u) == 0x8000u)
       actor.action().priority = 0;
     if (s.overlays)
       s.overlays->advance_draw(id);
+  };
+  const bool numeric_draw = s.drawing_input && (s.drawing_input->state[1] & 0x2000);
+  if (numeric_draw) {
+    // C0DA31 walks occupied numeric roles, without C0DB0F's whole-anchor
+    // clipping. Its priority1 list contains only screenY+8 in [0,512).
+    for (const auto id : s.role_actors) if (id) {
+      const auto &actor = *s.actors.at(id);
+      if (actor.action().priority == 1 &&
+          !(std::uint16_t(std::uint16_t(actor.behavior.projected_y) + 8) & 0xfe00))
+        deferred_draws.push_back(id);
+      else record_draw(id, false);
+    }
+  } else {
+    for(auto id=s.first;id;id=s.actors.at(id)->next_){
+      if(s.actors.at(id)->action().priority==1)deferred_draws.push_back(id);
+      else record_draw(id);
+    }
   }
+  // C0DA31 retains the first numeric role on an equal unsigned absolute Y;
+  // normal C0DB0F retains the first role in its completed linked traversal.
+  std::stable_sort(deferred_draws.begin(),deferred_draws.end(),[&](ActorId a,ActorId b){
+    return std::uint16_t(s.actors.at(a)->action().position[1]>>16)>
+        std::uint16_t(s.actors.at(b)->action().position[1]>>16);});
+  for(const auto id:deferred_draws)record_draw(id, !numeric_draw);
   s.in_tick = false;
   s.next = 0;
   s.physics_started = false;
@@ -1110,5 +1250,9 @@ ActorWorld::draw(unsigned width, const SpritePalettes &palettes,
   }
   return s.graphics.draw({0, 0, width, overscan}, palettes, s.ticks,
                          scene_identity);
+}
+std::span<const WorldObjectDraw> ActorWorld::object_draws() const noexcept {return state_->object_draws;}
+std::span<const OverlayObjectMap> ActorWorld::object_overlays(ActorId id) const {
+  (void)actor(id);return state_->overlays?state_->overlays->object_maps(id):std::span<const OverlayObjectMap>{};
 }
 } // namespace eb::native

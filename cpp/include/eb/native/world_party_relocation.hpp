@@ -2,6 +2,7 @@
 #include "eb/native/world_startup.hpp"
 #include "eb/native/world_doors.hpp"
 #include "eb/native/world_movement.hpp"
+#include "eb/native/world/party/placement.hpp"
 namespace eb::native {
 struct WorldPartyRelocationOwners {
   WorldStartupOwners world;
@@ -28,6 +29,9 @@ public:
     ~Operation();
     bool advance(unsigned work_budget=256);
     bool complete() const noexcept { return done_; }
+    WorldRuntime::Operation *runtime_operation() noexcept {
+      return placement_?placement_->runtime_operation():publication_.get();
+    }
   private:
     friend class WorldPartyRelocation;
     Operation(WorldPartyRelocation &,CameraPosition,std::uint16_t,WorldRuntime::Operation *parent = nullptr);
@@ -35,6 +39,15 @@ public:
     CameraPosition center_;
     std::uint16_t direction_{};
     std::unique_ptr<WorldDoors::Operation> door_;
+    std::unique_ptr<world::PartyPlacement> placement_;
+    std::unique_ptr<RawActorCreation::Operation> creation_;
+    std::unique_ptr<entities::graphics::Transport::Operation> upload_;
+    std::unique_ptr<WorldRuntime::Operation> publication_;
+    AuthoredActorPause pause_;
+    ActorTickCallback callback_=ActorTickCallback::None;
+    ActorId created_actor_{};
+    unsigned position_{},role_{},sprite_{};
+    bool hidden_{};
     unsigned phase_{};
     bool done_{},executing_{};
     WorldRuntime::Operation *parent_{};

@@ -32,12 +32,19 @@ struct Content {
 };
 struct Pose {
     std::array<std::shared_ptr<const std::vector<std::uint8_t>>, 2> pixels;
-    bool mirror, ignores_surface;
+    bool mirror{}, ignores_surface{};
+    std::uint16_t reference{};
+    std::array<std::uint32_t,2> raw_identity{};
+    std::array<std::shared_ptr<const std::vector<std::uint8_t>>,2> raw;
     std::array<std::array<std::array<std::weak_ptr<const SpriteImage>, 2>, 3>, 2> images;
 };
 struct Group {
     SpriteDefinition definition;
+    std::array<std::uint8_t,9> raw_header{};
+    std::uint32_t frame_table_identity{};
+    std::shared_ptr<const std::array<std::uint8_t,65536>> raw_bank;
     std::shared_ptr<const SpriteImage::Layout> layout;
+    std::vector<std::uint8_t> raw_shape;
     std::vector<Pose> poses;
 };
 
@@ -152,6 +159,8 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
     // Identical frame payloads are shared even across groups (common NPC poses).
     std::map<std::tuple<unsigned, unsigned, unsigned>, std::shared_ptr<const std::vector<std::uint8_t>>>
         decoded;
+    std::map<std::tuple<unsigned,unsigned,unsigned>,std::shared_ptr<const std::vector<std::uint8_t>>> planar;
+    std::map<unsigned,std::shared_ptr<const std::array<std::uint8_t,65536>>> banks;
     state_->groups.reserve(layout.group_count);
     for (const unsigned offset : offsets) {
         state_->frame_tables.try_emplace(offset + 9, state_->groups.size());
@@ -160,6 +169,23 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
             throw std::runtime_error("Invalid sprite frame table");
         const auto header = content.slice(offset, 9);
         Group group;
+        std::copy(header.begin(),header.end(),group.raw_header.begin());
+        group.frame_table_identity=0xc00000u+offset+9;
+        const unsigned bank=unsigned(header[8])<<16;
+        if(bank<0xc00000u||bank>=0xf00000u)throw std::runtime_error("Invalid sprite content bank");
+        const unsigned bank_offset=bank-0xc00000u;
+        // Existing bounded catalog imports may declare only the actual poses.
+        // Acquire/raw_frame keep that contract; a full retained-geometry bank
+        // is available only when its entire original extent was provided.
+        if(bank_offset<=assets.size()&&65536<=assets.size()-bank_offset) {
+            auto &raw_bank=banks[bank];
+            if(!raw_bank) {
+                const auto bytes=content.slice(bank_offset,65536);
+                auto imported=std::make_shared<std::array<std::uint8_t,65536>>();
+                std::copy(bytes.begin(),bytes.end(),imported->begin());raw_bank=std::move(imported);
+            }
+            group.raw_bank=raw_bank;
+        }
         auto &def = group.definition;
         def.width = (header[1] >> 4) * 8;
         def.height = header[0] * 8;
@@ -177,6 +203,7 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
         if (!parts || parts > 64 || def.upper_parts > parts)
             throw std::runtime_error("Invalid sprite shape size");
         const auto records = content.slice(shape + 2, parts * 10);
+        group.raw_shape.assign(records.begin(),records.end());
         auto image_layout = std::make_shared<SpriteImage::Layout>();
         image_layout->canvas_width = (def.width + 15) & ~15u;
         image_layout->canvas_height = (def.height + 15) & ~15u;
@@ -198,7 +225,8 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
         group.layout = std::move(image_layout);
         for (unsigned pose = 0; pose < def.frames; ++pose) {
             const unsigned reference = content.word(offset + 9 + pose * 2);
-            Pose entry{{}, bool(reference & 1), bool(reference & 2), {}};
+            Pose entry{};entry.mirror=reference&1;entry.ignores_surface=reference&2;
+            entry.reference=std::uint16_t(reference);
             for (unsigned format = 0; format < entry.pixels.size(); ++format) {
                 const unsigned address =
                     (unsigned(header[8]) << 16) | (reference & (format ? 0xfffe : 0xfff0));
@@ -211,6 +239,12 @@ SpriteResources::SpriteResources(std::span<const std::uint8_t> assets, SpriteCat
                     pixels = std::make_shared<const std::vector<std::uint8_t>>(
                         decode(content.slice(graphics, def.width * def.height / 2), def.width, def.height));
                 entry.pixels[format] = pixels;
+                auto &raw=planar[key];
+                if(!raw) {
+                    const auto bytes=content.slice(graphics,def.width*def.height/2);
+                    raw=std::make_shared<const std::vector<std::uint8_t>>(bytes.begin(),bytes.end());
+                }
+                entry.raw[format]=raw;entry.raw_identity[format]=address;
             }
             group.poses.push_back(std::move(entry));
         }
@@ -222,6 +256,27 @@ SpriteResources::SpriteResources(SpriteResources &&) noexcept = default;
 SpriteResources &SpriteResources::operator=(SpriteResources &&) noexcept = default;
 unsigned SpriteResources::size() const { return state_->groups.size(); }
 PixelBounds SpriteResources::artwork_bounds() const { return state_->artwork_bounds; }
+const std::array<std::uint8_t,9> &SpriteResources::raw_header(unsigned group) const {
+    return state_->groups.at(group).raw_header;
+}
+std::span<const std::uint8_t> SpriteResources::raw_shape(unsigned group) const {
+    return state_->groups.at(group).raw_shape;
+}
+std::uint32_t SpriteResources::frame_table_identity(unsigned group) const {
+    return state_->groups.at(group).frame_table_identity;
+}
+std::span<const std::uint8_t,65536> SpriteResources::raw_bank(unsigned group) const {
+    const auto &bank=state_->groups.at(group).raw_bank;
+    if(!bank)throw std::out_of_range("Raw sprite bank is unavailable in this bounded content import");
+    return *bank;
+}
+SpriteRawFrame SpriteResources::raw_frame(unsigned group,unsigned pose,SpriteFrameFormat format) const {
+    const unsigned index=format==SpriteFrameFormat::FourDirection?0:format==SpriteFrameFormat::EightDirection?1:2;
+    if(index>1)throw std::invalid_argument("Invalid raw sprite frame format");
+    const auto &frame=state_->groups.at(group).poses.at(pose);
+    return {*frame.raw[index],frame.raw_identity[index],frame.reference};
+}
+
 const SpriteDefinition &SpriteResources::definition(unsigned group) const {
     return state_->groups.at(group).definition;
 }

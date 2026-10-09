@@ -7,13 +7,15 @@ native desktop application for Linux and Windows. It includes keyboard and
 controller input, audio, persistent saves, a Settings window, and
 widescreen presentation with offscreen actor preloading.
 
-Version **0.2.1** is a development release. Both games run their respective
-compiled program and use assets imported from the player's own supported ROM.
+Version **0.3** is a development release. The default gameplay path runs each
+game's compiled program. An experimental `--native-session N` route continues
+a battery-save slot using the native engine; full native integration remains
+in progress. Both paths use assets imported from the player's own supported ROM.
 ROMs and extracted gameplay asset packs are not included. You must supply your
 own copy before playing. The launcher and window icons derive from the provided
 Saturn artwork.
 
-[v0.2.1 patch notes](releases/Phase-Distorter-0.2.1-patch-notes.md) · [Screenshots](#screenshots) · [Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
+[v0.3 patch notes](releases/Phase-Distorter-0.3-patch-notes.md) · [Screenshots](#screenshots) · [Installation](#installation) · [ROM setup](#first-launch-and-rom-setup) ·
 [Controls](#controls-and-display) · [Building](#building-from-source) ·
 [Saves](#saves-settings-and-updating) · [Troubleshooting](#troubleshooting)
 
@@ -56,8 +58,8 @@ A sanctuary cave panorama, including the sparkling boss encounter marker.
 
 ### Downloaded a release ZIP?
 
-1. Choose the [Windows ZIP](releases/Phase-Distorter-0.2.1-windows-x86_64.zip) or
-   [Linux ZIP](releases/Phase-Distorter-0.2.1-linux-x86_64.zip) from `releases/`.
+1. Choose the [Windows ZIP](releases/Phase-Distorter-0.3-windows-x86_64.zip) or
+   [Linux ZIP](releases/Phase-Distorter-0.3-linux-x86_64.zip) from `releases/`.
 2. Use **Extract All** or your archive manager to extract the entire application
    folder. **Do not run the application from inside the ZIP.** Keep its files
    together.
@@ -79,12 +81,12 @@ Platform archives are stored only in **`releases/`**:
 
 | Package | Contents |
 | --- | --- |
-| `releases/Phase-Distorter-0.2.1-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
-| `releases/Phase-Distorter-0.2.1-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
+| `releases/Phase-Distorter-0.3-windows-x86_64.zip` | Native Windows application, SDL2 runtime, optional shortcut setup, instructions and licenses |
+| `releases/Phase-Distorter-0.3-linux-x86_64.zip` | Native Linux application, SDL2/C++ runtimes, optional menu setup, instructions and licenses |
 
 Each ZIP contains one fresh application folder:
-`Phase-Distorter-0.2.1-windows-x86_64/` or
-`Phase-Distorter-0.2.1-linux-x86_64/`. Extract the entire ZIP and open the native
+`Phase-Distorter-0.3-windows-x86_64/` or
+`Phase-Distorter-0.3-linux-x86_64/`. Extract the entire ZIP and open the native
 application inside that folder. These runnable packages
 contain the required application files but no ROMs, imported gameplay asset
 packs, saves, or source/build trees. Supply your own supported ROM on first
@@ -92,11 +94,11 @@ launch. Each ZIP includes `README.txt`, a file manifest and checksums;
 `releases/SHA256SUMS` records the archive hashes, including retained older versions.
 
 For the repository-style executable layout, download the
-[combined v0.2.1 launcher ZIP](releases/Phase-Distorter-0.2.1-launchers-x86_64.zip)
-or use the [versioned launcher folder](releases/Phase-Distorter-0.2.1-launchers-x86_64/README.txt).
+[combined v0.3 launcher ZIP](releases/Phase-Distorter-0.3-launchers-x86_64.zip)
+or use the [versioned launcher folder](releases/Phase-Distorter-0.3-launchers-x86_64/README.txt).
 It includes both platforms, `launch.sh` / `launch.bat`, runtimes and shortcut
-setup. The canonical `launchers/` folder also contains the v0.2.1 binaries.
-Each v0.2.1 bundle includes `VERSION` and `PATCH-NOTES.md`.
+setup. The canonical `launchers/` folder also contains the v0.3 binaries.
+Each v0.3 bundle includes `VERSION` and `PATCH-NOTES.md`.
 
 ### Running from the source repository
 
@@ -547,7 +549,7 @@ cmake --build build --parallel 4
 
 ## Saves, settings, and updating
 
-Version 0.2.1 retains the existing `ebsrc/EarthBoundCpp` application-data location:
+Version 0.3 retains the existing `ebsrc/EarthBoundCpp` application-data location:
 
 | Platform | Default directory |
 | --- | --- |
@@ -655,8 +657,8 @@ in `launchers/linux/lib/`, maintainers can validate and recreate the whitelisted
 runnable packages using Python 3:
 
 ```sh
-python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2.1-patch-notes.md --include-launchers --check
-python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.2.1-patch-notes.md --include-launchers
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.3-patch-notes.md --include-launchers --check
+python3 cpp/tools/package_release.py --patch-notes releases/Phase-Distorter-0.3-patch-notes.md --include-launchers
 ```
 
 The packager writes versioned archives and the combined launcher snapshot to

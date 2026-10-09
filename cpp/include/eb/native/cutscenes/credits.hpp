@@ -5,10 +5,19 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace eb::native::cutscenes {
+namespace ending { class CreditsWork; }
+// Optional work borrower; this lower text owner does not depend on NMI/runtime.
+class CreditsTextScene;
+class CreditsCallbackWork {
+  public:
+    virtual ~CreditsCallbackWork() = default;
+    virtual void advance(CreditsTextScene &actual_text, std::span<const std::uint8_t> player_name) = 0;
+};
 using CreditsGlyph = std::array<std::uint8_t, 64>;
 
 // Owned content. Script bytes retain the authored staff encoding, not Unicode.
@@ -64,6 +73,11 @@ struct CreditsTextState {
 // Photos, music, fades and the ending's later 2000-frame hold belong to the host.
 class CreditsTextScene {
   public:
+    struct RowPublication {
+        unsigned source_row, destination_row, column, count;
+        bool clear;
+        bool operator==(const RowPublication&) const = default;
+    };
     // The US source initializer preserves this global buffer between scene
     // invocations. Supply the previous scene's converted_player_name() when
     // reopening credits; a new host/game starts with the default zero buffer.
@@ -73,9 +87,17 @@ class CreditsTextScene {
     // ending before 24 bytes has an implicit terminator. No game-state copy is retained.
     // Returns false without mutation after PLAY_CREDITS' regional scroll limit.
     bool advance_tick(std::span<const std::uint8_t> player_name = {});
+    // Actual CREDITS_SCROLL_FRAME interrupt callback. PLAY_CREDITS, rather
+    // than this callback, owns the scroll-limit test and RESET_IRQ_CALLBACK.
+    // Photographs and foreground work may keep the callback installed beyond
+    // that limit. The scene host invokes this exactly once after each NMI.
+    void advance_callback(std::span<const std::uint8_t> player_name = {});
     // Publishes exactly one queued update. False
     // means the queue was empty. No callback/scroll advancement occurs here.
     bool publish_next_row();
+    // The actual foreground queue consumer admits this descriptor before
+    // removing it. Its source remains the live composition ring until NMI.
+    std::optional<RowPublication> next_publication() const;
     std::size_t pending_rows() const { return publications_.size(); }
     bool script_ended() const { return state_.script_ended; }
     bool scroll_complete() const;
@@ -87,14 +109,13 @@ class CreditsTextScene {
     // fractional motion is available in state() for a native presentation host.
     std::vector<std::uint8_t> indexed_canvas(unsigned height = 224) const;
   private:
+    friend class ending::CreditsWork;
+    CreditsCallbackWork* source_work_{};
+    std::uint16_t source_queue_start_{},source_queue_end_{};
     std::uint8_t next_byte();
     void line(std::span<const std::uint8_t> glyphs, bool tall, bool player,
               unsigned first_row, unsigned screen_row);
     void command(std::span<const std::uint8_t> player_name);
-    struct RowPublication {
-        unsigned source_row, destination_row, column, count;
-        bool clear;
-    };
     void enqueue(RowPublication row);
     std::shared_ptr<const CreditsResources> resources_;
     CreditsTextState state_;

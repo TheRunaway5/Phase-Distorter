@@ -21,6 +21,10 @@ public:
     // Valid startup consumes exactly one shared RNG result and returns the
     // authored leader's numeric role doubled, not a native actor/resource ID.
     std::optional<std::uint16_t> startup(ActorId);
+    // C03DAA suspends after RNG/pose preparation at C0A780. Character fields
+    // and the footstep role are committed only after its real raw upload.
+    std::optional<std::uint16_t> prepare_startup(ActorId);
+    void finish_startup(ActorId);
     // Uses the owned cold or published projection cache, including retained
     // dormant leader tables. Absent caches, invalid roles, undefined table
     // offsets and untagged actors fail before projection.
@@ -31,5 +35,6 @@ private:
     WorldPartyState &state_;
     story::RandomState &random_;
     const WorldPartyMovementData &data_;
+    std::optional<ActorId> startup_actor_;
 };
 } // namespace eb::native

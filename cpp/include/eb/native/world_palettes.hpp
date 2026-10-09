@@ -56,6 +56,14 @@ class WorldPalettes {
     // Event bits use one-based authored IDs. Only flags used by the selected
     // branch are required; missing storage and cyclic branches are errors.
     AreaPalettes resolve(AreaPaletteId area, std::span<const std::uint8_t> event_flags) const;
+    // LOAD_MAP_PAL's photograph branch selects raw scenery directly, then
+    // uses the same source average and sprite overrides. Palette1 belongs to
+    // the retained credits frame and must be borrowed explicitly. A wrapped
+    // special-palette source outside CGRAM requires all sixteen words from
+    // its actual retained owner; this resolver does not own mutable WRAM.
+    AreaPalettes resolve_photograph(AreaPaletteId,
+        std::span<const std::uint16_t,96>, std::span<const std::uint16_t,16>,
+        std::span<const std::uint16_t> sprite_override={}) const;
 
   private:
     struct State;

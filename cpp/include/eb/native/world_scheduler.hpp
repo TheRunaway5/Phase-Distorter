@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <functional>
 
 namespace eb::native {
 class WorldScheduler;
@@ -12,6 +13,7 @@ struct WorldMaintenanceState;
 namespace dialogue { class WindowHost; }
 namespace npcs { struct DadPhoneState; }
 namespace story { struct TickState; }
+namespace story { class SourceWorkService; }
 
 // These are named native operations, never original function addresses. Other
 // source scheduler clients require their own real native operations before
@@ -66,6 +68,15 @@ public:
   // False means suppressed recursive entry, mirroring the IRQ callback guard;
   // gates that pause live tasks still count as a processed frame/phone phase.
   bool process_frame();
+  struct SourceCall {
+    bool bank_zero_code{true},unaligned_direct_page{true};
+  };
+  // NMI's real callback invokes process_frame exactly once inside this scope.
+  // Phone and task writes retire in their original order. Expiring callbacks
+  // require their own variable source work and are rejected before mutation.
+  void with_source_work(story::SourceWorkService &,SourceCall,const std::function<void()> &actual_callback);
+  unsigned source_master_clocks(SourceCall,bool fast_rom) const;
+  unsigned source_master_clocks(SourceCall,bool fast_rom,std::uint8_t published_frame_counter) const;
   bool processing() const noexcept { return processing_; }
   bool failed() const noexcept { return failed_; }
 
@@ -80,5 +91,8 @@ private:
   WorldSchedulerCallbacks *callbacks_{};
   WorldFoodStatus *food_{};
   bool processing_{}, failed_{};
+  story::SourceWorkService *source_work_{};
+  SourceCall source_call_{};
+  unsigned source_invocations_{};
 };
 } // namespace eb::native

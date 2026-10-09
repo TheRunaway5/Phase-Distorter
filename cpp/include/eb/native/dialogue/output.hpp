@@ -134,6 +134,10 @@ class TextOutput {
     bool saturn_composition_active() const;
     std::uint8_t last_character() const;
     TextCompositionSnapshot composition_snapshot() const;
+    // Cast's raw dynamic-name preparation uses this same52-column brush.
+    // Commit at idle or the actual suspended SP11 conversation; published
+    // window images and other text continuation state remain authoritative.
+    void commit_cast_composition(const TextCompositionSnapshot &,Conversation *parent=nullptr);
     TextPublicationSnapshot publication_snapshot() const;
     // Scene publication retains source-visible image aliases and original
     // attributes. The host applies source attribute addition before sampling.

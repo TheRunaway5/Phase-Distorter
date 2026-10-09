@@ -19,6 +19,28 @@ void WorldStreaming::bind_collision_window(const WorldCollisionWindow &window) {
         "Streaming requires its idle actual collision-window owner");
   collision_window_ = &window;
 }
+void WorldStreaming::bind_actor_graphics(RawActorCreation &graphics) {
+  if(busy_||failure_||(graphics_&&graphics_!=&graphics)||!graphics.uses(world_)||!world_.uses(graphics))
+    throw std::logic_error("World streaming requires its actual idle raw actor owner");
+  enemies_.bind_actor_graphics(graphics);
+  graphics_=&graphics;
+}
+void WorldStreaming::clear_actor_graphics(RawActorCreation &graphics) noexcept {
+  if(graphics_!=&graphics)return;
+  npc_creation_.reset();
+  enemies_.clear_actor_graphics(graphics);
+  graphics_=nullptr;
+}
+bool WorldStreaming::needs_graphics_publication() const noexcept {
+  return (npc_creation_&&npc_creation_->needs_publication()) ||
+         (enemy_strip_&&enemies_.needs_graphics_publication());
+}
+void WorldStreaming::respond_graphics_publication() {
+  if(!needs_graphics_publication()||failure_)
+    throw std::logic_error("World streaming has no actual graphics publication");
+  if(npc_creation_)npc_creation_->respond_publication();
+  else enemies_.respond_graphics_publication(world_);
+}
 void WorldStreaming::validate_begin(NpcStripAdmission admission) const {
   if (busy_ || activation_.request() || enemies_.busy())
     throw std::logic_error(
@@ -111,7 +133,7 @@ EnemySpawnState WorldStreaming::enemy_state() const {
   // a second pair of cached booleans could drift from dialogue/world writes.
   return {area_.combination(),
           {flags.begin(), flags.end()},
-          controls_.enemies,
+          controls_.enemies != 0,
           bool(flags[1] & 4),
           bool(flags[9] & 1),
           controls_.debug_forced_encounter,
@@ -151,7 +173,21 @@ bool WorldStreaming::advance(unsigned budget) {
         "Native streaming work budget must be positive");
   try {
     while (busy_ && budget--) {
-      if (enemy_strip_) {
+      if(npc_creation_) {
+        if(!npc_creation_->advance(1)) {
+          if(npc_creation_->needs_publication())return false;
+          continue;
+        }
+        ++work_.npc_strips;work_.npc_creations+=npc_creation_->created().size();
+        npc_creation_.reset();
+      } else if (enemy_strip_) {
+        if(enemies_.needs_graphics_publication())return false;
+        if(!enemies_.busy()) {
+          enemy_strip_=false;
+          activation_.complete_enemy_request();
+          if(!activation_.request())finish();
+          continue;
+        }
         if (!enemies_.request())
           throw std::logic_error("Unfinished enemy activation has no request");
         if (std::holds_alternative<EnemyRandomRequest>(*enemies_.request())) {
@@ -182,10 +218,11 @@ bool WorldStreaming::advance(unsigned budget) {
           throw std::logic_error(
               "Native streaming lost its ordered activation request");
         if (request->service == CameraRefreshService::Npcs) {
-          const auto created =
-              activation_.activate_next(world_, npc_state(), admission_);
-          ++work_.npc_strips;
-          work_.npc_creations += created.size();
+          if(graphics_)npc_creation_=activation_.begin_next(world_,npc_state(),admission_,*graphics_);
+          else {
+            const auto created=activation_.activate_next(world_,npc_state(),admission_);
+            ++work_.npc_strips;work_.npc_creations+=created.size();
+          }
         } else {
           enemies_.begin_strip(world_, *request, enemy_state());
           ++work_.enemy_strips;

@@ -10,6 +10,7 @@
 #include "generated_profile.hpp"
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -33,6 +34,7 @@ struct Fixture {
   unsigned first, free_actor, free_task, next_actor, next_task, npc, script;
   unsigned enabled, objects, photo, debug, flags, cell, row, create, retention, current;
   unsigned enemy_enabled, enemy_count, enemy_max;
+  std::function<void()> before_step;
   Fixture(const GameAssets &assets, unsigned width, MainCpuRuntime runtime,
           std::span<const std::uint8_t> content = {})
       : owned(std::make_unique<SnesBus>(content.empty() ? std::span<const std::uint8_t>(assets.image) : content,
@@ -94,12 +96,14 @@ struct Fixture {
   unsigned call(unsigned entry, unsigned a, unsigned x, bool far = true, unsigned y = 0) {
     cpu.emulation_mode = false; cpu.status_register = MainCpu65816::InterruptDisable;
     cpu.data_bank = 0x7e; cpu.direct_page = 0x1e00; cpu.stack_pointer = 0x1fff;
-    cpu.program_counter = 0xcfff00; cpu.accumulator = a; cpu.x_index = x; cpu.y_index = y;
+    const unsigned site = entry == row ? (jp ? 0xc01529 : 0xc01513) : 0xcfff00;
+    cpu.program_counter = site; cpu.accumulator = a; cpu.x_index = x; cpu.y_index = y;
     if (far) cpu.execute_instruction<0x22>(entry, 4);
     else cpu.execute_instruction<0x20>(entry & 0xffff, 3);
     for (unsigned steps = 0; steps < 2000000; ++steps) {
-      if (cpu.program_counter == 0xcfff00 + (far ? 4 : 3) && cpu.stack_pointer == 0x1fff)
+      if (cpu.program_counter == site + (far ? 4 : 3) && cpu.stack_pointer == 0x1fff)
         return cpu.accumulator;
+      if (before_step) before_step();
       cpu.step_instruction();
     }
     throw std::runtime_error("NPC preload source traversal failed to return: " + cpu.describe_registers());
@@ -138,14 +142,14 @@ NpcPlacement anchor(const GameAssets &assets, unsigned id) {
   throw std::runtime_error("Missing authored NPC reference placement");
 }
 
-void room_entry_rows(const GameAssets &assets, MainCpuRuntime runtime) {
+void room_entry(const GameAssets &assets, MainCpuRuntime runtime) {
   const NpcCatalog catalog(assets.image, npc_catalog_layout(assets.version, false));
-  for (unsigned center_x : {7632u, 7640u, 7648u, 7656u, 7664u}) {
-    const unsigned center_y = 488;
+  for (auto [center_x, center_y] : std::array<std::array<unsigned, 2>, 6>{{
+      {7456, 336}, {7464, 336}, {7472, 336}, {7480, 336}, {7488, 336}, {7552, 344}}}) {
     const unsigned combo = assets.image[source_profile(assets.version).rom_map_tileset_palette_sectors +
         center_y / 128 * 32 + center_x / 256] >> 3;
     std::vector<unsigned> expected;
-    for (unsigned width : {256u, 398u, 522u, 1024u}) {
+    for (unsigned width : {256u, 398u, 522u, 800u, 1024u}) {
       context = assets.title + " room entry center=" + std::to_string(center_x) + "," +
           std::to_string(center_y) + " width=" + std::to_string(width);
       Fixture f(assets, width, runtime);
@@ -158,11 +162,126 @@ void room_entry_rows(const GameAssets &assets, MainCpuRuntime runtime) {
       if (width == 256) {
         for (unsigned role = 0; role < 30; ++role)
           if (f.get(f.npc + role * 2) < catalog.size()) expected.push_back(f.get(f.npc + role * 2));
-        std::cout << context << " canonical NPCs:";
-        for (auto id : expected) std::cout << ' ' << id;
-        std::cout << '\n';
+        check(!expected.empty(), "Native room-entry control loaded no NPCs");
       } else for (auto id : expected)
         check(f.contains(id), "Room-entry scan skipped a canonical NPC/prop");
+    }
+  }
+}
+
+void room_transition_gate(const GameAssets &assets, MainCpuRuntime runtime) {
+  constexpr unsigned center_x = 7552, center_y = 344;
+  const unsigned combo = assets.image[source_profile(assets.version).rom_map_tileset_palette_sectors +
+      center_y / 128 * 32 + center_x / 256] >> 3;
+  for (unsigned width : {256u, 398u, 522u, 800u, 1024u}) {
+    context = assets.title + " room transition width=" + std::to_string(width);
+    Fixture f(assets, width, runtime);
+    f.camera(center_x - 128, center_y - 112, combo); f.put(f.enemy_enabled, 0);
+    // HDMA/window effects can change the visible hardware gate while a source
+    // row is in flight. Enter with ordinary scenery, then gate optional work
+    // after the row start has already selected its horizontal origin.
+    const auto gate = [](Fixture &state) {
+      if (state.cpu.program_counter == (state.jp ? 0xc02574u : 0xc02566u)) state.bus.write_byte(0x2130, 0);
+      if (state.cpu.program_counter == (state.jp ? 0xc025ceu : 0xc025c0u)) state.bus.write_byte(0x2130, 0x20);
+    };
+    std::unique_ptr<Fixture> restored;
+    unsigned starts = 0;
+    f.before_step = [&] {
+      if (f.cpu.program_counter == (f.jp ? 0xc02574u : 0xc02566u)) ++starts;
+      if (width == 522 && starts == 2 && !restored &&
+          f.cpu.program_counter == (f.jp ? 0xc02576u : 0xc02568u)) {
+        // Suspend after the optional row selected its left edge, before its
+        // scene gate changes. The resumed loop must keep that frozen width.
+        SnapshotArchive saved; saved(f.bus, f.cpu);
+        restored = std::make_unique<Fixture>(assets, 256, runtime);
+        SnapshotArchive loaded(saved.bytes()); loaded(restored->bus, restored->cpu); loaded.finish();
+        Fixture resized(assets, 256, runtime);
+        SnapshotArchive resized_state(saved.bytes()); resized_state(resized.bus, resized.cpu); resized_state.finish();
+        resized.cpu.set_world_preload_width(256);
+        const auto site = f.jp ? 0xc01529u : 0xc01513u;
+        for (auto *state : {restored.get(), &resized}) {
+          for (unsigned steps = 0; state->cpu.program_counter != site + 4 || state->cpu.stack_pointer != 0x1fff; ++steps) {
+            check(steps < 250000, "Restored/resized optional row did not return");
+            gate(*state); state->cpu.step_instruction();
+          }
+        }
+        check(restored->cpu.accumulator == resized.cpu.accumulator &&
+              restored->cpu.status_register == resized.cpu.status_register,
+              "Viewport resize changed the canonical row's return registers");
+      }
+      gate(f);
+    };
+    for (int row = -1; row < 31; ++row) {
+      f.bus.write_byte(0x2130, 0);
+      f.call(f.row, center_x / 8 - 16, center_y / 8 - 14 + row);
+      if (row == -1 && width == 522) {
+        check(bool(restored), "Optional NPC row snapshot boundary was never reached");
+        SnapshotArchive original, resumed; original(f.bus, f.cpu); resumed(restored->bus, restored->cpu);
+        check(original.bytes() == resumed.bytes(), "Snapshot changed the optional row's complete continuation");
+      }
+    }
+    check(f.contains(16), "Room transition skipped Ness's home phone");
+    check(f.contains(15), "Room transition skipped Ness's mother");
+  }
+}
+
+void legacy_row_snapshot(const GameAssets &assets, MainCpuRuntime runtime) {
+  constexpr unsigned width = 522, center_x = 7552, center_y = 344;
+  const auto phone = anchor(assets, 16);
+  const unsigned combo = assets.image[source_profile(assets.version).rom_map_tileset_palette_sectors +
+      center_y / 128 * 32 + center_x / 256] >> 3;
+  for (unsigned format : {3u, 4u, 5u, 6u, 7u, 8u}) {
+    context = assets.title + " in-flight legacy NPC row schema=" + std::to_string(format);
+    Fixture original(assets, width, runtime);
+    original.camera(center_x - 128, center_y - 112, combo); original.put(original.enemy_enabled, 0);
+    original.cpu.emulation_mode = false; original.cpu.status_register = MainCpu65816::InterruptDisable;
+    original.cpu.data_bank = 0x7e; original.cpu.direct_page = 0x1e00; original.cpu.stack_pointer = 0x1fff;
+    original.cpu.program_counter = 0xcfff00;
+    original.cpu.accumulator = center_x / 8 - 16; original.cpu.x_index = phone.y / 8;
+    original.cpu.execute_instruction<0x22>(original.row, 4);
+    const unsigned after_origin = original.jp ? 0xc02576 : 0xc02568;
+    for (unsigned steps = 0; original.cpu.program_counter != after_origin; ++steps) {
+      check(steps < 100, "Legacy row did not reach its origin");
+      original.cpu.step_instruction();
+    }
+    // Pre-format-9 builds shifted the source row in place. Encode that real
+    // stack-local state with the historical archive layout, without adding a
+    // new-style scan continuation that those builds could never have written.
+    const unsigned tiles = RenderDistance(width).activation_extension(
+        original.bus.native_sprite_runtime()->resources()->artwork_bounds()) / 8;
+    const unsigned origin = std::uint16_t(original.cpu.direct_page + 4);
+    original.put(origin, original.get(origin) - tiles);
+    SnapshotArchive saved(format); saved(original.bus, original.cpu);
+    Fixture restored(assets, 256, runtime);
+    SnapshotArchive loaded(saved.bytes(), format); loaded(restored.bus, restored.cpu); loaded.finish();
+    restored.bus.write_byte(0x2130, 0x20);
+
+    // Saving the migrated in-flight state again must preserve its matching
+    // bound, too, rather than silently reverting it to a native-width row.
+    SnapshotArchive migrated; migrated(restored.bus, restored.cpu);
+    Fixture resumed(assets, 256, runtime);
+    SnapshotArchive reload(migrated.bytes()); reload(resumed.bus, resumed.cpu); reload.finish();
+    for (auto *state : {&restored, &resumed}) {
+      for (unsigned steps = 0; state->cpu.program_counter != 0xcfff04; ++steps) {
+        check(steps < 250000, "Legacy NPC row failed to return after restore");
+        state->cpu.step_instruction();
+      }
+      check(state->contains(16), "Restored legacy row skipped Ness's home phone");
+    }
+    SnapshotArchive first, second; first(restored.bus, restored.cpu); second(resumed.bus, resumed.cpu);
+    check(first.bytes() == second.bytes(), "Resaving a migrated row changed its complete continuation");
+    restored.bus.write_byte(0x2130, 0);
+    restored.before_step = [&] {
+      if (restored.cpu.program_counter == after_origin)
+        check(restored.get(std::uint16_t(restored.cpu.direct_page + 4)) == center_x / 8 - 16,
+              "Legacy row policy leaked into the next canonical row");
+    };
+    // No recognized JSL caller: this isolated row must remain canonical.
+    restored.cpu.program_counter = 0xcfff00; restored.cpu.accumulator = center_x / 8 - 16;
+    restored.cpu.x_index = phone.y / 8; restored.cpu.execute_instruction<0x22>(restored.row, 4);
+    for (unsigned steps = 0; restored.cpu.program_counter != 0xcfff04; ++steps) {
+      check(steps < 250000, "Canonical row failed after legacy restore");
+      restored.before_step(); restored.cpu.step_instruction();
     }
   }
 }
@@ -555,7 +674,9 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
       const auto assets = load_game_assets(argv[i], asset_profiles());
       for (auto runtime : {MainCpuRuntime::Ported, MainCpuRuntime::Legacy}) {
-        room_entry_rows(assets, runtime);
+        room_transition_gate(assets, runtime);
+        legacy_row_snapshot(assets, runtime);
+        room_entry(assets, runtime);
         walking_column_handoff(assets, runtime); actual_edges(assets, runtime);
       }
       scene_gates(assets); source_guard(assets); priority_and_preview(assets);

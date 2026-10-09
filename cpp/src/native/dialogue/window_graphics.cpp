@@ -33,6 +33,7 @@ std::uint8_t backed(std::uint8_t glyph, std::uint8_t background) {
 
 struct WindowGraphics::Execution {
     std::shared_ptr<const WindowInitializationResources> resources;
+    std::shared_ptr<const WindowResources> window_resources;
     TextOutput &output;
     std::array<WindowArtwork, retained_cells> staged{};
     std::array<std::shared_ptr<TextImage>, published_cells> published;
@@ -150,6 +151,19 @@ WindowGraphics::WindowGraphics(std::shared_ptr<const WindowInitializationResourc
 WindowGraphics::~WindowGraphics() = default;
 GameVersion WindowGraphics::version() const { return execution_->resources->version(); }
 bool WindowGraphics::bound_to(const TextOutput &output) const { return &execution_->output == &output; }
+void WindowGraphics::bind_window_resources(std::shared_ptr<const WindowResources> resources) {
+    require(resources && resources->version() == version() && !execution_->window_resources,
+            "Window graphics requires one regional window resource owner");
+    execution_->window_resources = std::move(resources);
+}
+std::span<const std::uint8_t, 64> WindowGraphics::raw_fixed_tail() const {
+    require(bool(execution_->window_resources), "Fixed window transfer requires bound window resources");
+    return execution_->window_resources->raw_fixed_tail();
+}
+std::uint32_t WindowGraphics::raw_fixed_tail_identity() const {
+    require(bool(execution_->window_resources), "Fixed window transfer requires bound window resources");
+    return execution_->window_resources->raw_fixed_tail_identity();
+}
 
 void WindowGraphics::retain_prepared_artwork(unsigned first,
                                               std::span<const WindowArtwork> artwork) {
@@ -161,7 +175,10 @@ void WindowGraphics::retain_prepared_artwork(unsigned first,
     const auto &event = parent.event();
     const auto *request = event ? std::get_if<Request>(&*event) : nullptr;
     require(request && (request->kind == RequestKind::Teleport ||
-                (request->kind == RequestKind::SpecialEvent && request->special_event == 7)),
+                (request->kind == RequestKind::SpecialEvent && request->special_event &&
+                     (*request->special_event==1 || *request->special_event==2 ||
+                      *request->special_event==7 || *request->special_event==9 || *request->special_event==11 ||
+                      *request->special_event==12 || *request->special_event==16))),
             "Nested map artwork requires its actual suspended teleport or town-map conversation");
     retain_prepared_artwork(first, artwork, parent.callback_owner(execution_->output));
 }

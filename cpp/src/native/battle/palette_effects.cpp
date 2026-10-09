@@ -24,16 +24,22 @@ bool PaletteBankState::publish_pending() {
 }
 
 PaletteEffects::PaletteEffects(PaletteBankState& palettes, PaletteEffectState& state)
-    : palettes_(palettes), state_(state) {}
+    : palettes_(palettes), palette_lifetime_(palettes.source_lifetime()), state_(state) {}
 
 bool PaletteEffects::uses(const PaletteBankState& palettes,
                           const PaletteEffectState& state) const noexcept {
-    return &palettes == &palettes_ && &state == &state_;
+    return !palette_lifetime_.expired()&&&palettes == &palettes_ && &state == &state_;
 }
 
-void PaletteEffects::set_speed(std::uint16_t speed) { state_.speed = speed; }
+void PaletteEffects::set_speed(std::uint16_t speed) {
+    if(palette_lifetime_.expired())throw std::logic_error("Palette effect transport expired");
+    palettes_.require_semantic_write();
+    state_.speed = speed;
+}
 
 void PaletteEffects::reverse(unsigned index, std::uint16_t speed) {
+    if(palette_lifetime_.expired())throw std::logic_error("Palette effect transport expired");
+    palettes_.require_semantic_write();
     auto& bank = state_.banks.at(index);
     state_.speed = speed;
     bank.frames_left = speed;
@@ -45,6 +51,8 @@ void PaletteEffects::reverse(unsigned index, std::uint16_t speed) {
 
 void PaletteEffects::target(unsigned color, std::uint16_t red,
                             std::uint16_t green, std::uint16_t blue) {
+    if(palette_lifetime_.expired())throw std::logic_error("Palette effect transport expired");
+    palettes_.require_semantic_write();
     // Resolve the owned index before changing either state owner.
     auto& bank = state_.banks.at(color / 16);
     const auto packed = palettes_.palette(color / 16)[color % 16];
@@ -68,6 +76,8 @@ void PaletteEffects::target(unsigned color, std::uint16_t red,
 }
 
 void PaletteEffects::advance() {
+    if(palette_lifetime_.expired())throw std::logic_error("Palette effect transport expired");
+    palettes_.require_semantic_write();
     if (state_.speed == 0) {
         for (const auto& bank : state_.banks) {
             if (!bank.frames_left) continue;

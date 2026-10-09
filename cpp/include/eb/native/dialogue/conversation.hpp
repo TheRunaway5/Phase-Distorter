@@ -80,6 +80,7 @@ class Conversation {
     void observe(std::function<void(const Event&)>);
 
   private:
+    friend class TextOutput;
     friend class WindowHost;
     friend class MenuHost;
     friend class PromptHost;

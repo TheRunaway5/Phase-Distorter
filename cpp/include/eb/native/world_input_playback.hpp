@@ -38,6 +38,7 @@ public:
   bool uses(const npcs::InteractionState &,
             const story::InputState &) const noexcept;
   bool uses(const npcs::InteractionState &) const noexcept;
+  bool uses(const story::InputState &input) const noexcept { return &input_ == &input; }
   const WorldRawInputState &state() const noexcept { return state_; }
   std::size_t run_index() const noexcept { return run_index_; }
   const std::shared_ptr<const GeneratedInputSequence> &
@@ -58,6 +59,9 @@ public:
   // READ_JOYPAD consumes exactly one raw-input phase. A terminator samples both
   // host pads in this same call; retained playback does not touch host values.
   void read(std::array<std::uint16_t, 2> host);
+  // The literal inactive READ_JOYPAD stores pad2 before pad1. This boundary
+  // cannot consume playback or replace the actual raw-input owner.
+  void store_source_raw_word(unsigned pad, std::uint16_t value);
   // Complete C08496 when recording is inactive. Active recording is an explicit
   // unported dependency, rejected before raw/countdown/processed input changes.
   void poll(std::array<std::uint16_t, 2> host, std::uint16_t debug = 0);

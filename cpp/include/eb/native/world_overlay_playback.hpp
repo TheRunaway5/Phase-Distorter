@@ -23,9 +23,11 @@ public:
     return &world_ == &world;
   }
   void reset_after_map_load();
+  std::vector<OverlayPlanarRow> raw_uploads() const { return data_.raw_uploads(); }
   void retire_host_actor(ActorId id) noexcept { untagged_.erase(id); }
   void advance_draw(ActorId);
   std::span<const SpriteFragment> fragments(ActorId) const;
+  std::span<const OverlayObjectMap> object_maps(ActorId) const;
   const ActorOverlayState &state(ActorId) const;
   const ActorOverlayState &authored_state(unsigned role) const;
   bool failed() const noexcept { return failed_; }
@@ -34,6 +36,7 @@ private:
   struct ActorState {
     ActorOverlayState tracks;
     std::vector<SpriteFragment> fragments;
+    std::vector<OverlayObjectMap> object_maps;
   };
   void check() const;
   ActorState &state_for(ActorId);

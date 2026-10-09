@@ -5,6 +5,7 @@
 #include "eb/native/world_palettes.hpp"
 #include "eb/native/world_layers.hpp"
 #include "eb/native/battle_background_scene.hpp"
+#include "eb/native/cutscenes/display_view.hpp"
 namespace eb::native::battle { class PsiDisplayState; struct PsiScratch; }
 
 namespace eb::native {
@@ -27,6 +28,7 @@ public:
   // samples only displayed colors, and NMI consumes the last upload mode.
   void bind_palette_transport(battle::PaletteBankState &);
   bool uses_palette_transport(const battle::PaletteBankState &) const noexcept override;
+  void store_source_window_color(unsigned,std::uint16_t,battle::PaletteBankState&,const void*) override;
   void stage_world_palette();
   // Explicit source MEMSET16 palette write, preserving bit15 in transport.
   void fill_palette(std::uint16_t raw);
@@ -34,6 +36,7 @@ public:
   // this same NMI, palette, fade and OAM-buffer transport. No capture ticks it.
   void bind_video_transport(battle::PsiDisplayState &, const battle::PsiScratch &);
   void begin_distinct_scene(const void *owner);
+  void begin_distinct_scene(const cutscenes::DisplaySource &);
   void stage_distinct_scene(const void *owner, std::shared_ptr<const DirectSceneFrame>);
   void end_distinct_scene(const void *owner);
   void publish_scene_palette_range(unsigned first, std::span<const std::uint16_t>, std::uint8_t mode);
@@ -44,6 +47,10 @@ public:
   std::shared_ptr<const DirectSceneFrame> capture(const DirectSceneFrame &) const override;
   std::shared_ptr<const DirectSceneFrame> capture_next(const DirectSceneFrame &) override;
   void complete_publication() override;
+  void complete_interrupt() noexcept override;
+  void stage_world_objects(std::shared_ptr<const DirectSceneFrame>) override;
+  bool uses_video_transport(const battle::PsiDisplayState &, const battle::PsiScratch &) const noexcept;
+  bool uses_video_transport(const battle::PsiDisplayState &video) const noexcept { return video_transport_==&video; }
   dialogue::WindowPalettePublication *window_palette_publication() noexcept override { return this; }
   void bind_battle_background(BattleBackgroundScene &);
   void bind_scene_frame_state(story::TickState &, story::Scene &,
@@ -56,6 +63,9 @@ public:
   void publish_window_range(unsigned first, std::span<const std::uint16_t>,
                             dialogue::WindowPaletteUpload = dialogue::WindowPaletteUpload::Full) override;
   void restore_overworld_layers();
+  // Actual OVERWORLD_SETUP_VRAM, also used by ordinary map initialization.
+  // Changes the staged scroll and hardware layout; it performs no frame.
+  void setup_overworld_video();
   void restore_battle_palettes() override;
   void restore_selected_layer_configuration() override;
   bool uses(const ScenePalette &) const noexcept;
@@ -64,6 +74,8 @@ public:
   const WorldEncounterVisualState &visual() const noexcept { return visual_; }
 private:
   void stage_palette_range(unsigned first, unsigned count, std::uint8_t mode);
+  void require_palette_alive() const;
+  void require_palette_write() const;
   std::shared_ptr<const DirectSceneFrame> capture_with(const DirectSceneFrame &, unsigned brightness,
                                                        bool disable_rows,
                                                        const EncounterWindowMask * = nullptr,
@@ -80,9 +92,11 @@ private:
   battle::BackgroundDisplayState *background_layout_{};
   WorldEncounterEffects *effects_{};
   battle::PaletteBankState *palette_transport_{};
+  std::weak_ptr<const void> palette_lifetime_;
   battle::PsiDisplayState *video_transport_{};
   const battle::PsiScratch *scratch_{};
   const void *distinct_owner_{};
+  const cutscenes::DisplaySource *distinct_source_{};
   std::shared_ptr<const DirectSceneFrame> distinct_staged_, distinct_displayed_;
 };
 } // namespace eb::native

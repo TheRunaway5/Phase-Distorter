@@ -62,7 +62,6 @@ struct WorldScreenTransition::Operation::State final : story::ActorFrameService 
     }
     if(stage==story::ActorFramePhase::ScreenUpdated) {
       w.display.staged_scroll[0]=w.display.staged_scroll[1]={w.actors.scene().camera_x,w.actors.scene().camera_y};
-      w.frames.update_world_screen();
       checkpoint(ScreenTransitionCheckpoint::UpdateScreen);
       if(body && entering) {w.effects.advance();checkpoint(ScreenTransitionCheckpoint::AdvanceEffects);}
       checkpoint(ScreenTransitionCheckpoint::WaitFrame);

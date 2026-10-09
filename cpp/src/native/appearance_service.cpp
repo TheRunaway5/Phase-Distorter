@@ -38,7 +38,7 @@ AppearanceServiceResult apply_appearance_action(const BoundAction &action, Actio
     if (operation != A::SelectFourInitial && operation != A::SelectFourAnimation &&
         operation != A::SelectFourFirst && operation != A::SelectFourSecond &&
         operation != A::CheckAppearanceVisible && operation != A::StepFourWalk &&
-        operation != A::StepEightAnimation)
+        operation != A::StepEightAnimation && operation != A::SelectEightCurrent)
         return {};
     AppearanceServiceResult result{true, false, std::nullopt, std::nullopt};
     if (operation == A::CheckAppearanceVisible) {
@@ -56,6 +56,11 @@ AppearanceServiceResult apply_appearance_action(const BoundAction &action, Actio
              appearance_context.walking_style, context.surface_flags});
         if (!result.refreshed)
             result.script_value = updated_appearance.fingerprint();
+    } else if (operation == A::SelectEightCurrent) {
+        // C0AAAC enters C0A794 directly. It neither advances animation nor
+        // changes the retained selection fingerprint or footstep state.
+        updated_appearance.select_eight(context.direction,actor.animation,context.surface_flags);
+        result.refreshed = true;
     } else if (operation == A::StepEightAnimation) {
         const auto old_fingerprint = appearance.fingerprint();
         const auto update = updated_appearance.step_eight(

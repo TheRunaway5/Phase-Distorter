@@ -386,6 +386,15 @@ void camera_and_ownership(eb::GameVersion region) {
           "Raw camera boundary did not suspend before later actor");
     rejects([&]{f.scene->begin_nested(story::TickKind::Frame,*op);},"Camera request incorrectly authorized nested actor frame");
     rejects([&]{op->complete_frame({0,0});},"Camera request accepted frame completion");
+    const auto publications=f.clock.publications,polls=f.clock.input_polls,ticks=f.actors.ticks();
+    auto upload=f.scene->begin_actor_publication(*op);
+    service(*upload,story::SceneService::Publication);
+    rejects([&]{op->respond_camera();},"Parent camera response bypassed its actual publication child");
+    upload->complete_publication();finish(*upload);upload.reset();
+    check(f.clock.publications==publications+1&&f.clock.input_polls==polls&&f.actors.ticks()==ticks&&
+          op->service()==story::SceneService::CameraRefresh&&op->camera_request()->actor==camera&&
+          f.actors.actor(later).action().variables[0]==0,
+          "Camera graphics publication consumed input or resumed actor traversal");
     repeat_pending(*op,f);op->respond_camera();service(*op,story::SceneService::Frame);
     op->complete_frame({0,0});finish(*op);before.unchanged(f);
     check(f.actors.ticks()==1 && f.actors.actor(later).action().variables[0]==1,"Camera response repeated/skipped later actor");

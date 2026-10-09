@@ -13,7 +13,9 @@ class WorldCollisionWindow;
 // services; do not maintain separate NPC/enemy copies in render or tick code.
 struct WorldSpawnControls {
   NpcSpawnMode npcs = NpcSpawnMode::Disabled;
-  bool enemies{};
+  // ENEMY_SPAWNS_ENABLED is a retained source word. Spawning tests nonzero;
+  // startup and photograph restoration must preserve its complete value.
+  std::uint16_t enemies{};
   bool objects_only{}, photograph{};
   NpcActivationDebug npc_debug;
   bool debug_forced_encounter{}, bypass_enemy_chance{};
@@ -42,6 +44,11 @@ public:
   // A real map-loader binding makes source enemy placement sample that
   // loader's retained terrain. This never initializes or replaces its data.
   void bind_collision_window(const WorldCollisionWindow &);
+  void bind_actor_graphics(RawActorCreation &);
+  // Abandon retained raw creation before its borrowed graphics owner dies.
+  void clear_actor_graphics(RawActorCreation &) noexcept;
+  bool needs_graphics_publication() const noexcept;
+  void respond_graphics_publication();
   // Explicit scripted camera refresh, outside an actor's suspended callback.
   void begin_refresh(CameraPosition, NpcStripAdmission);
   // Consume the ActorWorld's current camera callback. Completion acknowledges
@@ -83,6 +90,8 @@ private:
   WorldSpawnControls &controls_;
   NpcStripAdmission admission_ = NpcStripAdmission::Rejected;
   WorldStreamingWork work_;
+  RawActorCreation *graphics_{};
+  std::unique_ptr<WorldActivation::RawOperation> npc_creation_;
   std::optional<WorldCameraRefresh> actor_refresh_;
   std::function<void()> camera_completion_;
   std::exception_ptr failure_;

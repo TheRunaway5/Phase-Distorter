@@ -1,4 +1,6 @@
 #include "eb/native/dialogue/window_host.hpp"
+#include "eb/native/display/text_tiles.hpp"
+#include "eb/native/dialogue/ambient/layout.hpp"
 #include "eb/native/dialogue/conversation.hpp"
 #include "eb/native/dialogue/window_graphics.hpp"
 #include "eb/native/dialogue/substitutions.hpp"
@@ -62,6 +64,7 @@ struct WindowHost::Execution {
     WindowMetadata dummy;
     std::array<std::uint8_t, 49> temporary_text{};
     std::array<WindowMenuOption, 70> menu_options;
+    ambient::Layout ambient_fields{menu_options};
     std::optional<Program> menu_program;
     // C19A11 and C1AA18 deliberately share WINDOW_TEXT_ATTRIBUTES_BACKUP.
     // A nested context command overwrites what its parent will later restore.
@@ -84,10 +87,15 @@ struct WindowHost::Execution {
     std::array<std::shared_ptr<TextImage>, 3> prompt_images;
     std::array<std::uint16_t, 32> colors{};
     WindowPalettePublication *palette_publication{};
+    std::weak_ptr<const void> palette_publication_lifetime;
     std::optional<WindowId> pagination;
     std::optional<unsigned> pagination_animation;
     unsigned flavor = 1;
     bool suppress_tick{};
+    cutscenes::DisplayState *text_tiles{};
+    std::weak_ptr<const void> text_lifetime;
+    const void *source_lease{};
+    std::uint64_t source_scene_count{},source_tail_count{};
     Scene buffer{}, published{};
     std::array<SceneCell, 32> published_tail{};
     std::array<SceneCell, 96> published_lower{};
@@ -199,15 +207,22 @@ struct WindowHost::Execution {
             return state.window();
         // GET_ACTIVE uses 16-bit arithmetic. CREATE reads the six registers
         // at offsets23..42 from that address before it allocates a window.
-        // Only this actual retained owner supplies off-window-bank bytes.
+        // Read only the represented retained owners; no foreign register
+        // bank or source processor pointer is synthesized.
         const auto address = std::uint16_t(0x89c2u + delta);
-        const unsigned first = unsigned(address) + 23;
-        require(ambient_animation && first >= 0xc000 && first + 20 <= 0xe000,
-                "Inherited window registers leave owned animation staging");
-        const auto bytes = *ambient_animation;
+        const auto first = std::uint16_t(address + 23u);
+        for(unsigned offset=0;offset<20;offset+=2) {
+            const auto at=std::uint16_t(first+offset);
+            require(ambient_fields.contains_word(at) ||
+                    (ambient_animation && at>=0xc000 && unsigned(at)+2<=0xe000),
+                    "Inherited window registers leave their actual retained owners");
+        }
         auto word = [&](unsigned offset) {
-            const unsigned at = first - 0xc000 + offset;
-            return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
+            const auto address=std::uint16_t(first+offset);
+            if(ambient_fields.contains_word(address))return ambient_fields.word(address);
+            const auto bytes=*ambient_animation;
+            const unsigned at=address-0xc000;
+            return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at+1]) << 8);
         };
         auto dword = [&](unsigned offset) {
             return std::uint32_t(word(offset)) | std::uint32_t(word(offset + 2)) << 16;
@@ -550,7 +565,7 @@ struct WindowHost::Operation::Execution {
 };
 WindowHost::WindowHost(std::shared_ptr<const WindowResources> resources, State &state, TextOutput &output)
     : execution_(std::make_unique<Execution>(std::move(resources), state, output)) {}
-WindowHost::~WindowHost() = default;
+WindowHost::~WindowHost() {lifetime_.reset();}
 TextSubstitutions &WindowHost::substitutions() {
     if (!execution_->substitutions)
         execution_->substitutions.reset(new TextSubstitutions(*this));
@@ -592,6 +607,7 @@ void WindowHost::set_graphics(std::shared_ptr<WindowGraphics> graphics) {
     require(graphics && graphics->bound_to(e.output) && graphics->version() == version(),
             "Window graphics must share this host's output and region");
     require(!e.graphics && e.order.empty(), "Bind window graphics before opening windows");
+    graphics->bind_window_resources(e.resources);
     e.output.bind_graphics(graphics, 0);
     e.graphics = std::move(graphics);
     constexpr std::array<unsigned, 5> borders{0x10, 0x13, 0x11, 0x12, 0x16};
@@ -851,6 +867,85 @@ void WindowHost::bind_ambient_animation_layout(std::span<std::uint8_t, 8192> sou
             "Window host is bound to another mutable animation owner");
     e.ambient_layout = source;
 }
+void WindowHost::bind_ambient_party_trail(PartyTrail &trail) {
+    auto &e=*execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind ambient follower layout only with idle text output");
+    e.ambient_fields.bind(trail);
+}
+void WindowHost::bind_ambient_actor_variables_source(ambient::ActorVariables actors) {
+    auto &e=*execution_;
+    e.output.require_owner(0);
+    require(e.output.complete(), "Bind ambient actor variables only with idle text output");
+    e.ambient_fields.bind(actors);
+}
+WindowHost::CapturedArgument WindowHost::capture_argument() const {
+    const auto &e=*execution_;
+    CapturedArgument captured;captured.host_=this;
+    if(e.state.windows.empty()) {
+        captured.value_=e.state.dummy.active.argument;
+        return captured;
+    }
+    std::optional<unsigned> slot;
+    if(e.state.focus)slot=e.find(*e.state.focus);
+    else if(!e.state.unfocused_register_alias)slot=e.state.ambient_slot();
+    else {
+        const auto stride=e.state.unfocused_register_alias->stride;
+        const auto delta=std::uint16_t(*e.state.ambient_lookup()*stride);
+        if(delta==std::uint16_t(0u-stride))slot=0xffff;
+        else if(delta%stride==0&&delta/stride<8)slot=delta/stride;
+        else {
+            require(e.japanese(),"Captured foreign argument requires its regional retained owner");
+            captured.kind_=CapturedArgument::Kind::Alias;
+            captured.address_=std::uint16_t(0x89c2u+delta+27u);
+            for(unsigned offset:{0u,2u}) {
+                const auto at=std::uint16_t(captured.address_+offset);
+                require(e.ambient_fields.contains_word(at) ||
+                        (e.ambient_animation&&at>=0xc000&&unsigned(at)+2<=0xe000),
+                        "Captured argument leaves its actual retained owners");
+            }
+            auto word=[&](unsigned offset) {
+                const auto at=std::uint16_t(captured.address_+offset);
+                if(e.ambient_fields.contains_word(at))return e.ambient_fields.word(at);
+                const auto bytes=*e.ambient_animation;const unsigned index=at-0xc000;
+                return std::uint16_t(unsigned(bytes[index])|unsigned(bytes[index+1])<<8);
+            };
+            captured.value_=std::uint32_t(word(0))|std::uint32_t(word(2))<<16;
+            return captured;
+        }
+    }
+    require(slot.has_value(),"Captured argument requires its actual active window address");
+    if(*slot==0xffff)captured.value_=e.state.dummy.active.argument;
+    else {
+        captured.kind_=CapturedArgument::Kind::Slot;captured.slot_=*slot;
+        captured.value_=e.state.registers_at(*slot).active.argument;
+    }
+    return captured;
+}
+void WindowHost::restore_argument(const CapturedArgument &captured) {
+    auto &e=*execution_;
+    require(captured.host_==this,"Captured argument belongs to another window host");
+    if(captured.kind_==CapturedArgument::Kind::Dummy) {
+        e.state.dummy.active.argument=captured.value_;return;
+    }
+    if(captured.kind_==CapturedArgument::Kind::Slot) {
+        e.state.registers_at(captured.slot_).active.argument=captured.value_;return;
+    }
+    for(unsigned offset:{0u,2u}) {
+        const auto at=std::uint16_t(captured.address_+offset);
+        require(e.ambient_fields.contains_word(at) ||
+                (e.ambient_layout&&at>=0xc000&&unsigned(at)+2<=0xe000),
+                "Restored argument leaves its actual mutable owners");
+    }
+    auto store=[&](unsigned offset,std::uint16_t value) {
+        const auto at=std::uint16_t(captured.address_+offset);
+        if(e.ambient_fields.contains_word(at)){e.ambient_fields.store_word(at,value);return;}
+        const auto bytes=*e.ambient_layout;const unsigned index=at-0xc000;
+        bytes[index]=std::uint8_t(value);bytes[index+1]=std::uint8_t(value>>8);
+    };
+    // Original MOVE_INT_YPTRDEST stores the low word, then the high word.
+    store(0,std::uint16_t(captured.value_));store(2,std::uint16_t(captured.value_>>16));
+}
 std::optional<std::uint16_t> WindowHost::aliased_text_x() const {
     const auto &e = *execution_;
     if (!e.japanese() || e.state.focus || !e.state.unfocused_register_alias)
@@ -861,40 +956,47 @@ std::optional<std::uint16_t> WindowHost::aliased_text_x() const {
     // GET_TEXT_X does not use GET_ACTIVE's empty-window shortcut. Its
     // pointer and text_x field addition both wrap as 16-bit source words.
     const auto address = std::uint16_t(0x89c2u + delta + 14u);
+    if(e.ambient_fields.contains_word(address))return e.ambient_fields.word(address);
     require(e.ambient_animation && address >= 0xc000 && unsigned(address) + 2 <= 0xe000,
-            "Unfocused text X leaves owned animation staging");
+            "Unfocused text X leaves its actual retained owners");
     const auto bytes = *e.ambient_animation;
     const unsigned at = address - 0xc000;
     return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
 }
 void WindowHost::aliased_newline(TextOutput::Owner owner) {
     auto &e = *execution_;
-    require(aliased_text_x().has_value() && e.ambient_layout,
-            "Aliased newline requires its actual mutable layout owner");
+    require(aliased_text_x().has_value(), "Aliased newline requires its actual layout owner");
     const auto delta = std::uint16_t(*e.state.ambient_lookup() * 76u);
     const auto base = std::uint16_t(0x89c2u + delta);
-    const auto bytes = *e.ambient_layout;
     auto address = [&](unsigned field) {
         const auto at = std::uint16_t(base + field);
-        require(at >= 0xc000 && unsigned(at) + 2 <= 0xe000,
-                "Aliased newline registers leave owned animation staging");
-        return unsigned(at) - 0xc000;
+        require(e.ambient_fields.contains_word(at) ||
+                (e.ambient_layout && at >= 0xc000 && unsigned(at) + 2 <= 0xe000),
+                "Aliased newline registers leave their actual retained owners");
+        return at;
     };
     const auto height_at = address(12), x_at = address(14), y_at = address(16), font_at = address(21);
-    auto word = [&](unsigned at) {
-        return std::uint16_t(unsigned(bytes[at]) | unsigned(bytes[at + 1]) << 8);
+    auto word = [&](std::uint16_t at) {
+        if(e.ambient_fields.contains_word(at))return e.ambient_fields.word(at);
+        const auto bytes=*e.ambient_layout;
+        const unsigned offset=at-0xc000;
+        return std::uint16_t(unsigned(bytes[offset]) | unsigned(bytes[offset + 1]) << 8);
     };
     TextCursor cursor{word(x_at), word(y_at)};
     e.output.newline_without_scroll(word(font_at), word(height_at), cursor, owner);
-    auto store = [&](unsigned at, std::uint16_t value) {
-        bytes[at] = std::uint8_t(value);
-        bytes[at + 1] = std::uint8_t(value >> 8);
+    auto store = [&](std::uint16_t at, std::uint16_t value) {
+        if(e.ambient_fields.contains_word(at)) {e.ambient_fields.store_word(at,value);return;}
+        const auto bytes=*e.ambient_layout;
+        const unsigned offset=at-0xc000;
+        bytes[offset] = std::uint8_t(value);
+        bytes[offset + 1] = std::uint8_t(value >> 8);
     };
-    // The source increments text_y before clearing text_x; all admission and
-    // the shared composition reset precede these actual retained-byte writes.
+    // Admission and composition reset precede the source-ordered writes to
+    // actual owners: increment text_y, then clear text_x.
     store(y_at, cursor.line);
     store(x_at, cursor.column);
 }
+
 void WindowHost::bind_party(const party::State &state) {
     auto &e = *execution_;
     require(state.version() == version(), "Party and dialogue owners must share a region");
@@ -951,6 +1053,111 @@ std::optional<std::uint16_t> WindowHost::query_party(const PartyQueryRequest &re
 void WindowHost::save_text_context() { save_context(0); }
 void WindowHost::restore_text_context() { restore_context(0); }
 void WindowHost::request_redraw() { execution_->output.request_host_redraw(); }
+void WindowHost::bind_source_text_tiles(cutscenes::DisplayState &owner) {
+    auto &e=*execution_;
+    require(!e.source_lease && (!e.text_tiles || e.text_tiles==&owner),
+        "Window BG2 binding requires its same idle actual owner");
+    e.text_tiles=&owner;e.text_lifetime=owner.source_lifetime();
+}
+void WindowHost::validate_source_publication(const void *lease) const {
+    const auto &e=*execution_;
+    require(e.text_tiles && !e.text_lifetime.expired(),"Source window publication lost its actual BG2 owner");
+    require(!e.source_lease || e.source_lease==lease,"Another source helper owns the window publication");
+    require(e.order.empty() && e.state.windows.empty() && e.output.complete() && e.publications.empty(),
+        "Source window publication has unrepresented open, glyph or queued composition work");
+    for(const auto &slot:e.slots)require(!slot.id,"Source window publication has an open physical slot");
+    require(!e.graphics || !e.graphics->pending_publications(),
+        "Source window publication has unrepresented glyph artwork publication");
+    // Resolve every retained descriptor before effects, through the one live
+    // atlas. A nonzero raw component input is allowed; its producer is excluded.
+    for(unsigned i=0;i<896;++i) {
+        const auto word=std::uint16_t(e.text_tiles->text_tiles[i*2] | (unsigned(e.text_tiles->text_tiles[i*2+1])<<8));
+        if(e.graphics)(void)e.graphics->image(word&0x3ff);
+        else require(!word,"Nonzero BG2 descriptors require their actual shared artwork owner");
+    }
+    (void)e.resources->fixed_tail(e.flavor);
+}
+void WindowHost::validate_source_meter_tiles(const void *lease) const {
+    const auto &e=*execution_;
+    if(!lease) {
+        validate_source_publication(nullptr);
+        require(e.graphics!=nullptr,"Source meter artwork requires the actual shared atlas");
+        for(unsigned i=0;i<1024;++i)(void)e.graphics->image(i);
+        return;
+    }
+    require(e.text_tiles&&!e.text_lifetime.expired()&&e.source_lease==lease&&e.graphics&&
+        e.order.empty()&&e.state.windows.empty()&&e.output.complete()&&e.publications.empty()&&
+        !e.graphics->pending_publications(),"Source meter artwork lost its exact closed BG2/artwork lease");
+    for(const auto &slot:e.slots)require(!slot.id,"Source meter artwork has an open physical slot");
+}
+void WindowHost::store_source_meter_descriptor(unsigned byte_offset,std::uint16_t word) {
+    auto &e=*execution_;
+    require(e.text_tiles&&!e.text_lifetime.expired()&&e.source_lease&&!(byte_offset&1)&&byte_offset+1<1792,
+        "Source meter descriptor left the claimed BG2 scene owner");
+    ArtworkCellReference cell;cell.artwork_cell=word&0x3ff;cell.style.palette=(word>>10)&7;
+    cell.style.priority=(word&0x2000)!=0;cell.style.flip_horizontal=(word&0x4000)!=0;cell.style.flip_vertical=(word&0x8000)!=0;
+    auto resolved=e.meter_cell(cell);
+    e.text_tiles->text_tiles[byte_offset]=std::uint8_t(word);
+    e.text_tiles->text_tiles[byte_offset+1]=std::uint8_t(word>>8);
+    e.buffer[byte_offset/2]=std::move(resolved);
+}
+void WindowHost::claim_source_publication(const void *lease) {
+    validate_source_publication(lease);
+    require(!execution_->source_lease,"Source window publication was already claimed");
+    execution_->source_lease=lease;
+}
+void WindowHost::release_source_publication(const void *lease) noexcept {
+    if(execution_->source_lease==lease)execution_->source_lease=nullptr;
+}
+void WindowHost::initialize_cold_text_tiles() {
+    auto &e=*execution_;
+    require(e.text_tiles&&!e.text_lifetime.expired()&&!e.source_lease&&e.order.empty()&&
+        e.state.windows.empty()&&e.output.complete()&&e.publications.empty(),
+        "Cold BG2 initialization requires its actual idle retained owner");
+    for(unsigned word=0;word<896;++word) {
+        e.text_tiles->text_tiles[word*2]=0;
+        e.text_tiles->text_tiles[word*2+1]=0;
+    }
+}
+std::span<const std::uint8_t,2048> WindowHost::source_text_tiles() const {
+    require(execution_->text_tiles&&!execution_->text_lifetime.expired(),"Source BG2 owner expired");
+    return execution_->text_tiles->text_tiles;
+}
+std::span<const std::uint8_t,64> WindowHost::source_tail() const {return execution_->resources->raw_fixed_tail();}
+std::uint32_t WindowHost::source_text_identity() const {return version()==GameVersion::US?0x7e7dfeu:0x7e8176u;}
+std::uint32_t WindowHost::source_tail_identity() const {return execution_->resources->raw_fixed_tail_identity();}
+std::uint64_t WindowHost::source_scene_publications() const {return execution_->source_scene_count;}
+std::uint64_t WindowHost::source_tail_publications() const {return execution_->source_tail_count;}
+void WindowHost::publish_source_scene() {
+    auto &e=*execution_;const auto raw=source_text_tiles();Scene resolved{};
+    for(unsigned i=0;i<resolved.size();++i) {
+        const auto word=std::uint16_t(raw[i*2] | (unsigned(raw[i*2+1])<<8));
+        auto &cell=resolved[i];
+        if(e.graphics)cell.image=e.graphics->image(word&0x3ff);
+        cell.style.palette=(word>>10)&7;cell.style.priority=(word&0x2000)!=0;
+        cell.style.flip_horizontal=(word&0x4000)!=0;cell.style.flip_vertical=(word&0x8000)!=0;
+        cell.zero_descriptor=!word;
+    }
+    e.published=std::move(resolved);++e.source_scene_count;
+}
+void WindowHost::publish_tail() {
+    auto &e=*execution_;
+    std::array<SceneCell, 32> resolved{};
+    const auto &tail = e.resources->fixed_tail(e.flavor);
+    for (unsigned i = 0; i < tail.size(); ++i) {
+        const auto &from = tail[i];
+        auto image = e.graphics ? e.graphics->image(from.artwork_cell) : std::make_shared<TextImage>();
+        if (!e.graphics) image->pixels = from.pixels;
+        TextStyle style;
+        style.palette = from.palette;
+        style.priority = from.priority;
+        style.flip_horizontal = from.flip_horizontal;
+        style.flip_vertical = from.flip_vertical;
+        resolved[i] = {std::move(image), style, false};
+    }
+    e.published_tail = std::move(resolved);
+}
+void WindowHost::publish_source_tail() {publish_tail();++execution_->source_tail_count;}
 void WindowHost::publish_scene() { execution_->published = execution_->buffer; }
 void WindowHost::clear_auto_fight_indicator() {
     auto &e = *execution_;
@@ -976,14 +1183,17 @@ void WindowHost::publish_meter_area() {
     std::copy_n(e.buffer.begin() + 18 * 32, 9 * 32, e.published.begin() + 18 * 32);
 }
 void WindowHost::queue_scene() {
+    require(!execution_->source_lease,"Source window work owns the actual BG2 staging surface");
     execution_->publications.push_back({Execution::Publication::Kind::Scene, 0, 0, {}});
     execution_->publications.push_back({Execution::Publication::Kind::Tail, 0, 0, {}});
 }
 void WindowHost::queue_meter_area() {
+    require(!execution_->source_lease,"Source window work owns the actual BG2 staging surface");
     execution_->publications.push_back({Execution::Publication::Kind::MeterArea, 0, 0, {}});
 }
 void WindowHost::queue_meter_row(unsigned first,
     std::shared_ptr<const std::array<ArtworkCellReference, 12>> cells, unsigned offset) {
+    require(!execution_->source_lease,"Source window work owns the actual BG2 staging surface");
     require(cells && offset <= 9 && first <= 32 * 28 - 3, "Invalid queued meter strip");
     execution_->publications.push_back({Execution::Publication::Kind::MeterRow, first, offset, std::move(cells)});
 }
@@ -993,23 +1203,7 @@ bool WindowHost::publish_next() {
     const auto &next = e.publications.front();
     switch (next.kind) {
     case Execution::Publication::Kind::Scene: publish_scene(); break;
-    case Execution::Publication::Kind::Tail: {
-        std::array<SceneCell, 32> resolved{};
-        const auto &tail = e.resources->fixed_tail(e.flavor);
-        for (unsigned i = 0; i < tail.size(); ++i) {
-            const auto &from = tail[i];
-            auto image = e.graphics ? e.graphics->image(from.artwork_cell) : std::make_shared<TextImage>();
-            if (!e.graphics) image->pixels = from.pixels;
-            TextStyle style;
-            style.palette = from.palette;
-            style.priority = from.priority;
-            style.flip_horizontal = from.flip_horizontal;
-            style.flip_vertical = from.flip_vertical;
-            resolved[i] = {std::move(image), style, false};
-        }
-        e.published_tail = std::move(resolved);
-        break;
-    }
+    case Execution::Publication::Kind::Tail: publish_tail(); break;
     case Execution::Publication::Kind::MeterArea: publish_meter_area(); break;
     case Execution::Publication::Kind::MeterRow:
         publish_meter_row(next.first, std::span<const ArtworkCellReference>(*next.meter).subspan(next.offset, 3));
@@ -1020,6 +1214,7 @@ bool WindowHost::publish_next() {
 }
 unsigned WindowHost::pending_publications() const { return unsigned(execution_->publications.size()); }
 void WindowHost::stage_meter_row(unsigned first, std::span<const ArtworkCellReference> cells) {
+    require(!execution_->source_lease,"Source window work owns the actual BG2 staging surface");
     execution_->meter_row(execution_->buffer, first, cells);
 }
 void WindowHost::publish_meter_row(unsigned first, std::span<const ArtworkCellReference> cells) {
@@ -1094,31 +1289,63 @@ void WindowHost::clear_published_tilemap() {
 }
 void WindowHost::load_artwork(unsigned flavor) { execution_->load_artwork(flavor); }
 void WindowHost::bind_palette_publication(WindowPalettePublication &publisher) {
+    require(!execution_->source_lease,"Source window work owns the actual palette publisher");
     require(!execution_->palette_publication || execution_->palette_publication == &publisher,
             "Window palette already has another publication owner");
     execution_->palette_publication = &publisher;
+    execution_->palette_publication_lifetime=publisher.source_lifetime();
 }
 WindowPalettePublication *WindowHost::palette_publication() const noexcept {
     return execution_->palette_publication;
 }
 void WindowHost::replace_palette_publication(const WindowPalettePublication &expected,
                                               WindowPalettePublication &next) {
+    require(!execution_->source_lease,"Source window work owns the actual palette publisher");
     require(execution_->palette_publication == &expected,
             "Window palette handoff lost its expected publication owner");
     execution_->palette_publication = &next;
+    execution_->palette_publication_lifetime=next.source_lifetime();
 }
 void WindowHost::clear_palette_publication(const WindowPalettePublication &publisher) noexcept {
     if (execution_->palette_publication == &publisher) execution_->palette_publication = nullptr;
 }
 void WindowHost::publish_palette(unsigned flavor, bool incapacitated, bool disabled) {
+    require(!execution_->source_lease,"Source window work owns the actual palette staging surface");
+    require(!execution_->palette_publication||!execution_->palette_publication_lifetime.expired(),"Window palette publisher expired");
     const auto colors = execution_->resources->palette(flavor, incapacitated, disabled);
     if (execution_->palette_publication) execution_->palette_publication->publish_window_range(0, colors, WindowPaletteUpload::Background);
     execution_->colors = colors;
 }
 void WindowHost::animate_palette(unsigned flavor, std::uint64_t frame) {
+    require(!execution_->source_lease,"Source window work owns the actual palette staging surface");
+    require(!execution_->palette_publication||!execution_->palette_publication_lifetime.expired(),"Window palette publisher expired");
     const auto &colors = execution_->resources->animated_palette5(flavor, frame);
     if (execution_->palette_publication) execution_->palette_publication->publish_window_range(20, colors, WindowPaletteUpload::Full);
     std::copy(colors.begin(), colors.end(), execution_->colors.begin() + 20);
+}
+std::shared_ptr<const WindowResources> WindowHost::source_palette_resources() const {return execution_->resources;}
+void WindowHost::validate_source_palette(const void *lease,const WindowPalettePublication &publisher,
+    const battle::PaletteBankState &palette) const {
+    const auto &e=*execution_;
+    require(e.palette_publication==&publisher&&!e.palette_publication_lifetime.expired(),
+        "Source window palette lost its actual live publisher");
+    require(publisher.uses_palette_transport(palette),"Source window palette has a foreign raw transport");
+    require(e.source_lease==lease,"Another source helper owns the window publication");
+    require(e.order.empty()&&e.state.windows.empty()&&e.output.complete()&&e.publications.empty(),
+        "Source window palette has unrepresented open/glyph/queued work");
+    for(const auto &slot:e.slots)require(!slot.id,"Source window palette has an open physical slot");
+    require(!e.graphics||!e.graphics->pending_publications(),"Source window palette has queued glyph artwork");
+}
+void WindowHost::claim_source_palette(const void *lease,const WindowPalettePublication &publisher,
+    const battle::PaletteBankState &palette) {
+    require(lease,"Source window palette claim is empty");validate_source_palette(nullptr,publisher,palette);
+    require(!execution_->source_lease,"Source window palette was already claimed");execution_->source_lease=lease;
+}
+void WindowHost::store_source_palette_word(unsigned index,std::uint16_t value,battle::PaletteBankState &palette,const void *lease) {
+    auto &e=*execution_;
+    require(lease&&e.source_lease==lease&&index<32&&e.palette_publication&&!e.palette_publication_lifetime.expired(),
+        "Source window palette store lost its exact live publisher/lease");
+    e.palette_publication->store_source_window_color(index,value,palette,lease);e.colors[index]=value;
 }
 const std::array<std::uint16_t, 32> &WindowHost::palette() const { return execution_->colors; }
 } // namespace eb::native::dialogue

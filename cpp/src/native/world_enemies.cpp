@@ -108,6 +108,24 @@ WorldEnemies::WorldEnemies(std::shared_ptr<const EnemySpawnData> data,std::share
         throw std::invalid_argument("Enemy activation lacks butterfly content");
 }
 bool WorldEnemies::busy() const {return stage_!=Stage::Idle;}
+void WorldEnemies::bind_actor_graphics(RawActorCreation &graphics) {
+    if(busy()||(graphics_&&graphics_!=&graphics))
+        throw std::logic_error("Enemy graphics require their actual idle creation owner");
+    graphics_=&graphics;
+}
+void WorldEnemies::clear_actor_graphics(RawActorCreation &graphics) noexcept {
+    if(graphics_!=&graphics)return;
+    creation_.reset();graphics_=nullptr;
+}
+bool WorldEnemies::needs_graphics_publication() const noexcept {
+    return creation_&&creation_->needs_publication();
+}
+void WorldEnemies::respond_graphics_publication(ActorWorld &world) {
+    require_world(world);
+    if(stage_!=Stage::Create||request_||!needs_graphics_publication())
+        throw std::logic_error("Enemy creation has no actual graphics publication");
+    creation_->respond_publication();advance(world);
+}
 void WorldEnemies::set_maximum(std::uint16_t value) {
     if (busy()) throw std::logic_error("Enemy maximum cannot change during spawn selection");
     population_.maximum = value;
@@ -125,6 +143,8 @@ std::optional<EnemySpawnCreation> WorldEnemies::pending_creation() const {
 }
 void WorldEnemies::begin(ActorWorld &world,std::vector<EnemySpawnCell> cells,EnemySpawnState state) {
     if(busy())throw std::logic_error("An enemy spawn operation is still pending");
+    if(graphics_&&(!graphics_->uses(world)||!world.uses(*graphics_)))
+        throw std::logic_error("Enemy graphics lost their actual bound actor world");
     synchronize_lifetimes(world);
     bind_world(world);
     input_=std::move(state);cells_=std::move(cells);cell_index_=0;stage_=cells_.empty()?Stage::Idle:Stage::Start;
@@ -207,11 +227,21 @@ void WorldEnemies::advance(ActorWorld &world){
             if(enemy_==data_->butterfly_enemy&&population_.butterfly_spawned)break;
             if(population_.count==population_.maximum){++population_.capacity_failures;break;}
             population_.capacity_failures=0;
-            {auto prepared=input_.prepared;prepared.x=0;prepared.direction=0;prepared.y=0;
+            {auto prepared=input_.prepared;prepared.x=0;prepared.direction=0;
+             // STZ_BADOPT also clears A on JP before the following y store.
+             prepared.y=0;
              const auto &definition=data_->enemies[enemy_];
-             const auto actor=world.create_authored(make_actor_spec(definition.sprite,definition.script,prepared,*sprites_,*scripts_));
+             const auto spec=make_actor_spec(definition.sprite,definition.script,prepared,*sprites_,*scripts_);
+             if(graphics_) {
+                 creation_=graphics_->begin_create(spec,{0,22});stage_=Stage::Create;break;
+             }
+             const auto actor=world.create_authored(spec);
              if(!actor)throw std::runtime_error("No free authored role for enemy creation");
              creating_=*actor;}
+            attempts_=0;stage_=Stage::Position;break;
+        case Stage::Create:
+            if(!creation_->advance())return;
+            creating_=creation_->actor();creation_.reset();
             attempts_=0;stage_=Stage::Position;break;
         case Stage::Position:
             if(attempts_==20){world.erase(creating_);creating_=0;stage_=Stage::Member;break;}
@@ -277,6 +307,8 @@ bool WorldEnemies::release_appearance(ActorWorld &world,ActorId actor){
     if(found!=actors_.end()&&busy())throw std::logic_error("Cannot release an enemy during spawn selection");
     if(found!=actors_.end()){if(found->has_identity)--population_.count;found->has_identity=false;
         if(found->enemy==data_->butterfly_enemy)population_.butterfly_spawned=0;}
+    if(graphics_&&graphics_->owns(actor))
+        graphics_->release(*world.actor(actor).authored_role());
     return world.release_appearance(actor);
 }
 bool WorldEnemies::erase(ActorWorld &world,ActorId actor){

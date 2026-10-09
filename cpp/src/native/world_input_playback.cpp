@@ -24,6 +24,11 @@ bool WorldInputPlayback::uses(
     const npcs::InteractionState &interaction) const noexcept {
   return &interaction_ == &interaction;
 }
+void WorldInputPlayback::store_source_raw_word(unsigned pad,std::uint16_t value) {
+  if(state_.flags || pad>=state_.raw.size())
+    throw std::logic_error("Source raw store requires inactive actual demo input");
+  state_.raw[pad]=value;
+}
 WorldInputInstall WorldInputPlayback::install(
     std::shared_ptr<const GeneratedInputSequence> sequence) {
   if (active())

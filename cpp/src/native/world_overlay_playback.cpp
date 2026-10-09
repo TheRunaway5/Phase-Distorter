@@ -51,6 +51,7 @@ void WorldOverlayPlayback::step(ActorState &state, OverlayKind kind,
   --track.remaining;
   if (!track.frame)
     return;
+  auto raw=data_.object_map(*track.frame+offset);raw.vertical=vertical;state.object_maps.push_back(raw);
   for (auto fragment : data_.frame(*track.frame + offset)) {
     fragment.top += vertical;
     state.fragments.push_back(std::move(fragment));
@@ -62,6 +63,7 @@ void WorldOverlayPlayback::advance_draw(ActorId id) {
     const auto &actor = world_.actor(id);
     auto &state = state_for(id);
     state.fragments.clear();
+    state.object_maps.clear();
     const auto surface = actor.behavior.surface_flags;
     const unsigned offset = surface & 1 ? 5 : 0;
     const auto water = surface & 12;
@@ -92,6 +94,9 @@ WorldOverlayPlayback::fragments(ActorId id) const {
   const auto *actor = find(id);
   return actor ? std::span<const SpriteFragment>(actor->fragments)
                : std::span<const SpriteFragment>{};
+}
+std::span<const OverlayObjectMap> WorldOverlayPlayback::object_maps(ActorId id) const {
+  check();const auto *actor=find(id);return actor?std::span<const OverlayObjectMap>(actor->object_maps):std::span<const OverlayObjectMap>{};
 }
 const ActorOverlayState &WorldOverlayPlayback::state(ActorId id) const {
   check();

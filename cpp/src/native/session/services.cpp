@@ -10,8 +10,21 @@ bool NativeSession::State::service(n::WorldRuntime::Operation &operation,std::ui
         if(operation.maintenance_request()) {
             const auto &request=*operation.maintenance_request();
             if(request.kind==n::WorldMaintenanceService::SectorMusic) {
-                world.music.select(world.interactions.state().leader_x,world.interactions.state().leader_y);
-                world.music.apply_sector(); operation.respond_maintenance(); return false;
+                if(!sector_music) {
+                    sector_music=n::world::music::SectorTransition::begin(*world.runtime,world.music,
+                        world.music_state,world.interactions.state(),world.clock,operation);
+                    sector_music_parent=&operation;
+                }
+                if(sector_music_parent!=&operation)
+                    throw std::logic_error("Sector music lost its actual suspended parent");
+                const auto progress=sector_music->advance();
+                if(progress==n::dialogue::Progress::Finished) {
+                    sector_music.reset();sector_music_parent=nullptr;
+                    operation.respond_maintenance();return false;
+                }
+                if(progress==n::dialogue::Progress::Suspended)
+                    return service(*sector_music->runtime_operation(),buttons);
+                return false;
             }
             throw std::runtime_error("Native session reached an unported world maintenance service");
         }

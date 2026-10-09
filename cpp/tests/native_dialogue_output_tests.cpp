@@ -395,6 +395,35 @@ void japanese_wide_saturn(const std::shared_ptr<const FontResources> &resources)
               partial.output.frame({0})->pixels != frozen && before->pixels == frozen,
           "Zero-advance wide glyph failed to update the existing partial publication faithfully");
 }
+void cast_composition(const std::shared_ptr<const FontResources> &us,
+                      const std::shared_ptr<const FontResources> &jp) {
+    Fixture f(us);
+    emit(f.output,0x71);
+    const auto published=f.output.frame({0});
+    const auto pixels=published->pixels;
+    auto brush=f.output.composition_snapshot();
+    for(unsigned col=0;col<52;++col)for(unsigned i=0;i<128;++i)
+        brush.columns[col][i]=std::uint8_t((col+i)&3);
+    brush.brush_column=7;brush.fractional_offset=3;
+    brush.publication_position=0;brush.partial_publication=false;
+    f.output.commit_cast_composition(brush);
+    check(f.output.composition_snapshot()==brush && f.output.frame({0})->pixels==pixels && published->pixels==pixels,
+        "Cast brush write changed a published window or lost retained columns/cursors");
+    auto bad=brush;bad.columns[51][127]=4;
+    rejects([&]{f.output.commit_cast_composition(bad);},"Cast brush accepted an invalid retained two-bit pixel");
+    bad=brush;bad.brush_column=52;
+    rejects([&]{f.output.commit_cast_composition(bad);},"Cast brush accepted a cursor outside the shared ring");
+    check(f.output.composition_snapshot()==brush,"Rejected cast brush partially mutated shared composition");
+    Fixture japanese(jp);
+    rejects([&]{japanese.output.commit_cast_composition(brush);},"Japanese output admitted the US cast ring");
+    f.output.policy().instant=false;f.output.policy().sound_mode=1;
+    f.output.begin_glyph(0x72);
+    check(f.output.advance()==OutputProgress::Suspended,"Cast ownership fixture did not suspend a real glyph");
+    const auto pending=f.output.composition_snapshot();
+    rejects([&]{f.output.commit_cast_composition(brush);},"Cast brush interrupted an active glyph continuation");
+    check(f.output.composition_snapshot()==pending,"Rejected active cast brush changed its glyph composition");
+    complete(f.output);
+}
 } // namespace
 int main() {
     try {
@@ -409,6 +438,7 @@ int main() {
         direct_menu_glyphs(us);
         direct_menu_glyphs(jp);
         japanese_wide_saturn(jp);
+        cast_composition(us,jp);
         Fixture normal(jp);
         emit(normal.output, 0x41);
         check(normal.output.window({0}).cursor == TextCursor{1, 0} &&

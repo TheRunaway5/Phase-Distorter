@@ -5,8 +5,8 @@ using namespace eb::native;
 unsigned checks;
 void check(bool value,const char* message){++checks;if(!value)throw std::runtime_error(message);}
 template<class F> void rejects(F f){bool caught{};try{f();}catch(const std::exception&){caught=true;}check(caught,"Invalid nested content owner accepted");}
-std::shared_ptr<const dialogue::Program> program(eb::GameVersion version,std::uint8_t command=0x21){
-  return std::make_shared<dialogue::Program>(version,std::vector<dialogue::ContentBlock>{{0,0,{0x1f,command,1,2}}},
+std::shared_ptr<const dialogue::Program> program(eb::GameVersion version,std::uint8_t command=0x21,std::uint8_t selector=1){
+  return std::make_shared<dialogue::Program>(version,std::vector<dialogue::ContentBlock>{{0,0,{0x1f,command,selector,2}}},
                                           std::vector<dialogue::Location>{{0,0}});
 }
 void finish(WorldRuntime::Operation& op){for(unsigned i=0;i<1000;++i)if(op.advance(1)==dialogue::Progress::Finished)return;throw std::runtime_error("Runtime completion stalled");}
@@ -79,7 +79,7 @@ void scenario(eb::GameVersion version){
   parent->respond_dialogue({});finish(*parent);foreign->respond_dialogue({});finish(*foreign);
   rejects([&]{f.runtime->require_content_boundary(parent.get());});
   f.runtime->require_idle();
-  dialogue::Conversation wrong(program(version,0x41),f.windows);wrong.start(dialogue::EntryId{0});
+  dialogue::Conversation wrong(program(version,0x41,3),f.windows);wrong.start(dialogue::EntryId{0});
   auto wrong_parent=f.runtime->begin(wrong);
   check(wrong_parent->advance()==dialogue::Progress::Suspended,"Wrong-command fixture did not yield");
   const auto retained=f.graphics->prepared_artwork().back();
@@ -89,6 +89,19 @@ void scenario(eb::GameVersion version){
   rejects([&]{f.runtime->begin_nested_publication(*wrong_parent);});
   dialogue::Response response;response.special_event_result=1;wrong_parent->respond_dialogue(response);finish(*wrong_parent);
   check(!f.runtime->failed(),"Read-only nested admission failure poisoned later valid work");
+  dialogue::Conversation homesick(program(version,0x41,17),f.windows);homesick.start(dialogue::EntryId{0});
+  auto homesick_parent=f.runtime->begin(homesick);
+  check(homesick_parent->advance()==dialogue::Progress::Suspended,
+        "Homesickness parent did not retain its authored special-event request");
+  const auto homesick_event=*homesick_parent->dialogue_event();
+  const auto before_polls=f.clock.input_polls,before_publications=f.clock.publications;
+  auto raw_child=f.runtime->begin_nested_publication(*homesick_parent);
+  rejects([&]{homesick_parent->respond_dialogue(response);});
+  raw_child->complete_publication();finish(*raw_child);raw_child.reset();
+  check(f.clock.input_polls==before_polls&&f.clock.publications==before_publications+1&&
+        *homesick_parent->dialogue_event()==homesick_event,
+        "Homesickness raw upload consumed input or acknowledged its parent");
+  homesick_parent->respond_dialogue(response);finish(*homesick_parent);
 }
 }
 int main(){try{for(auto region:{eb::GameVersion::US,eb::GameVersion::JP})scenario(region);

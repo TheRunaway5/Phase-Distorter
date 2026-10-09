@@ -56,6 +56,10 @@ class WindowGraphics {
     WindowGraphics &operator=(const WindowGraphics &) = delete;
     GameVersion version() const;
     bool bound_to(const TextOutput &) const;
+    // Actual C2038B descriptor donor retained from this graphics owner's
+    // bound WindowHost, distinct from its generated indexed artwork.
+    std::span<const std::uint8_t, 64> raw_fixed_tail() const;
+    std::uint32_t raw_fixed_tail_identity() const;
     // Shared authored artwork staging may be produced by map decompression.
     // Replaces actual native cells without publishing them or changing atlas
     // subscribers. Requires idle output and no queued transfer using staging.
@@ -83,6 +87,7 @@ class WindowGraphics {
   private:
     friend class TextOutput;
     friend class WindowHost;
+    void bind_window_resources(std::shared_ptr<const WindowResources>);
     void bind_cell(unsigned cell, const std::shared_ptr<TextImage> &);
     std::shared_ptr<TextImage> image(unsigned cell) const;
     void prepare(const PartyNameInputs &, unsigned, TextOutput::Owner);

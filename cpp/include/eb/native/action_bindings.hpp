@@ -92,6 +92,9 @@ enum class NativeAction {
   ReadMovedThisTick,
   ChooseRandom,
   DirectionFromLeader,
+  TestPlayerInArea,
+  ShiftMapPalette,
+  ReadPendingDmaBytes,
   NpcInitialDirection,
   RefreshGiftAppearance,
   SetDirectionAndRefresh,
@@ -125,7 +128,24 @@ enum class NativeAction {
   CheckProspectiveNpcCollision,
   FaceSpriteTowardActor,
   SetMovementBounds,
-  CheckMovementBounds
+  CheckMovementBounds,
+  SetCastScrollThreshold,
+  CheckCastScrollThreshold,
+  IsEntityStillOnCastScreen,
+  CreateCastActor,
+  PrintCastName,
+  PrintCastPartyName,
+  PrintCastNameFromVariable,
+  UploadCastPalette,
+  ConvertCastActorToScreen,
+  TickCastScroll,
+  WriteCastTileOffset,
+  WriteCastInitialSleep,
+  WriteCastTextCursor,
+  AngleToDirection,
+  HalveVerticalVelocity,
+  FollowVariableAngle,
+  SelectEightCurrent
 };
 
 enum class ActionTemporaryInput { Observed, Independent, Forwarded };
@@ -146,9 +166,13 @@ struct MovementBoundsOperands {
   std::uint16_t x_extent{}, y_extent{};
   bool operator==(const MovementBoundsOperands &) const = default;
 };
+struct CastNameOperands {
+  std::uint16_t name{}, column{}, row{};
+  bool operator==(const CastNameOperands &) const = default;
+};
 using ActionPayload =
     std::variant<std::monostate, CreateActorOperands, ChooseRandomOperands,
-                 MovementBoundsOperands>;
+                 MovementBoundsOperands, CastNameOperands>;
 
 struct BoundAction {
   NativeAction operation = NativeAction::Unsupported;
@@ -214,7 +238,8 @@ enum class ActorTickCallback {
   EnemyPath,
   TeleportLeader,
   TeleportFollower,
-  TeleportFailureFollower
+  TeleportFailureFollower,
+  CastScroll
 };
 
 struct ActorActionContext {

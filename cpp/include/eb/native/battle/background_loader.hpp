@@ -3,10 +3,9 @@
 #include "eb/native/battle/frame_display.hpp"
 #include "eb/native/battle_background_scene.hpp"
 #include "eb/native/story/ticks.hpp"
+#include "eb/native/story/scene.hpp"
 #include "eb/native/world_display_fade.hpp"
 #include "eb/native/world_layers.hpp"
-
-namespace eb::native::story { class Scene; }
 
 namespace eb::native::battle {
 // Actual retained BGMODE/BGxSC/BGxNBA mirrors. Four-bit LOAD deliberately
@@ -61,13 +60,37 @@ enum class DisplayBlankKind { Reset, Retain };
 class DisplaySetup {
   friend class Frame;
 public:
+  // C08726/C08744's actual instruction-time continuation. The retained
+  // publication pin is the same one used by the ordinary blank helper.
+  class SourceOperation {
+  public:
+    ~SourceOperation();
+    SourceOperation(const SourceOperation &) = delete;
+    bool advance(unsigned work_budget = 4096);
+    bool complete() const noexcept { return complete_; }
+  private:
+    friend class DisplaySetup;
+    SourceOperation(DisplaySetup &, story::SourceWorkService &);
+    DisplaySetup &owner_;
+    story::SourceWorkService &work_;
+    std::uint64_t source_receipt_{};
+    unsigned phase_{};
+    std::uint8_t observed_flag_{};
+    bool complete_{}, executing_{};
+  };
   DisplaySetup(GameVersion, WorldDisplayFade &, FrameDisplay &, story::TickState &,
                WorldEncounterVisualState &, const story::Scene &);
-  void begin(DisplayBlankKind);
+  void begin(DisplayBlankKind, story::Scene::Operation *parent = nullptr);
+  std::unique_ptr<SourceOperation> begin_source(story::SourceWorkService &, DisplayBlankKind,
+                                              story::Scene::Operation *parent = nullptr);
   void finish();
   bool pending() const noexcept { return pending_; }
   bool uses(const WorldDisplayFade&, const story::TickState&, const story::Scene&) const noexcept;
 private:
+  void admit(DisplayBlankKind, story::Scene::Operation *) const;
+  void reset_rows();
+  void finish_source(SourceOperation &);
+  void finish_publication();
   GameVersion version_;
   WorldDisplayFade &fade_;
   FrameDisplay &frames_;
@@ -75,6 +98,7 @@ private:
   WorldEncounterVisualState &visual_;
   const story::Scene &scene_;
   std::uint64_t receipt_{};
+  SourceOperation *source_active_{};
   bool pending_{}, reset_{};
 };
 } // namespace eb::native::battle

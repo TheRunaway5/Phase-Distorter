@@ -201,7 +201,11 @@ CommandMenu::Operation::Execution::effect(const dialogue::MenuPrintEffect &e) {
 CommandMenu::Operation::Execution::Routine
 CommandMenu::Operation::Execution::window(
     dialogue::WindowCommand c, dialogue::MenuHost::Operation *parent) {
-  ambient();
+  // SET_WINDOW_FOCUS stores its explicit ID and never reads GET_ACTIVE.
+  // The retained scratch lookup only belongs to commands that actually read
+  // the active register bank before changing focus.
+  if (c.action != dialogue::WindowAction::Focus)
+    ambient();
   auto op = parent ? owner.menus.begin_window(std::move(c), *parent)
                    : owner.windows.begin(std::move(c));
   while (op->advance() != dialogue::OutputProgress::Complete) {

@@ -22,7 +22,7 @@ class SnapshotArchive {
     static constexpr std::uint32_t maximum_objects = 1024 * 1024;
     SnapshotArchive() = default;
     explicit SnapshotArchive(unsigned format_version) : format_version_(format_version) {}
-    explicit SnapshotArchive(std::span<const std::uint8_t> input, unsigned format_version = 8)
+    explicit SnapshotArchive(std::span<const std::uint8_t> input, unsigned format_version = 9)
         : input_(input), loading_(true), format_version_(format_version) {
         if (input.size() > maximum_bytes) throw std::runtime_error("Snapshot exceeds the size limit");
     }
@@ -186,7 +186,7 @@ class SnapshotArchive {
     std::vector<std::uint8_t> output_;
     std::size_t position_{};
     bool loading_{};
-    unsigned format_version_ = 8;
+    unsigned format_version_ = 9;
     template<class T> void check_allocation(std::uint32_t size, std::size_t extra = 0) const {
         if (size > maximum_bytes / (sizeof(T) + extra))
             throw std::runtime_error("Snapshot container exceeds the allocation limit");

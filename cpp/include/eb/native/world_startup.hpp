@@ -36,6 +36,8 @@ struct WorldSessionState {
   // GAME_STATE.unknownC3: selected Teleport Box destination, not the active
   // PSI_TELEPORT_DESTINATION owned by ActorWorld's appearance scene.
   std::uint8_t teleport_box_destination{};
+  // Exact saved photograph records used by the ending and live photographer.
+  std::array<saves::PhotoState,32> photos{};
   std::uint16_t current_sector_attributes{};
   std::optional<CameraTarget> fading_actor;
 };
@@ -113,6 +115,8 @@ public:
   WorldStartup &operator=(const WorldStartup &) = delete;
   std::unique_ptr<Operation> begin(saves::ContinueSnapshot);
   void bind_map_load(WorldMapLoad &, const WorldStartupData &, dialogue::WindowGraphics &);
+  void bind_actor_graphics(RawActorCreation &);
+  void bind_window_transport(battle::PsiScratch &,battle::PsiDisplayState &,WorldDisplayFade &);
   bool busy() const noexcept { return active_ != nullptr; }
   bool failed() const noexcept { return failed_; }
   // Exact C039E5 operation, available for the later real map owner. It changes
@@ -127,6 +131,10 @@ private:
   WorldMapLoad *map_load_{};
   const WorldStartupData *startup_data_{};
   dialogue::WindowGraphics *graphics_{};
+  RawActorCreation *actor_graphics_{};
+  battle::PsiScratch *scratch_{};
+  battle::PsiDisplayState *video_{};
+  WorldDisplayFade *fade_{};
   Operation *active_{};
   bool failed_{};
 };

@@ -1,6 +1,6 @@
 # Native engine completion checklist
 
-Updated: 2026-10-05. Active scope: **all remaining engine work except audio**.
+Updated: 2026-10-07. Active scope: **all remaining engine work except audio**.
 
 This is the execution checklist for the current goal. Update it when work starts,
 lands, passes its acceptance checks, or exposes another required dependency.
@@ -22,10 +22,18 @@ integration fixtures complete a real overworld encounter, command menu, actions,
 victory and map return; repeated display sampling preserves gameplay and PCM.
 See [native battle/session scope](native-battle-session.md). This does not close
 the entire game checklist: title/new-game, game-over, general cinematic services
-and broader live/platform acceptance still require their own proof. World
+and broader live/platform acceptance still require their own proof. The current
+cutscene implementation, source comparisons and remaining full-scene gates are
+in [native cutscene scope](native-cutscenes.md). World
 menus, field actions, doors and town maps are the current integration phase;
 see [native world/session scope](native-world-session.md) for its actual
 ownership, acceptance and remaining fidelity boundaries.
+
+The default desktop route still uses `GameSession`. The optional native Continue
+route uses its existing frame and publication services; the explicitly bound
+source-clock cutscene helpers are not yet installed into that desktop route.
+Their original-reference checks do not establish its complete physical cutscene
+timing.
 
 Historical installed verification on 2026-10-02: the default desktop path used
 `GameSession`. Both installed Linux executable paths matched SHA-256

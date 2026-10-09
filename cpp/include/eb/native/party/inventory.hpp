@@ -86,6 +86,9 @@ public:
   // party, retaining existing valid timers and stopping absent items. Uses
   // this owner's imported table and shared RNG; no item or frame is advanced.
   void rescan_transformations();
+  // US LOAD_CAST_SCENE clears only ITEM_TRANSFORMATIONS_LOADED. The timer
+  // records and next-check deadline remain retained; no item/RNG work occurs.
+  void reset_loaded_transformations();
   void bind_equipment(const CharacterGrowth &);
   std::uint16_t change_equipment(std::uint16_t character, EquipmentSlot,
                                 std::uint16_t position);

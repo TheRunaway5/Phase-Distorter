@@ -8,7 +8,8 @@ namespace eb::native {
 enum class WorldPartyCreationServiceKind {
   CompareInsertionMember,
   RefreshMovementPolicy,
-  RefreshWindowPalette
+  RefreshWindowPalette,
+  GraphicsPublication
 };
 struct WorldPartyCreationService {
   WorldPartyCreationServiceKind kind{};
@@ -45,23 +46,27 @@ public:
       return service_;
     }
     void respond();
+    void respond_graphics_publication();
     void respond_comparison(bool unconscious);
     bool complete() const { return complete_; }
     std::span<const WorldPartyCreatedActor> created() const { return created_; }
 
   private:
     friend class WorldPartyCreation;
-    Operation(WorldPartyCreation &, std::optional<unsigned> member);
+    Operation(WorldPartyCreation &, std::optional<unsigned> member,RawActorCreation * = nullptr);
     void start_insertion(unsigned);
     bool find_insertion();
     void insert();
+    void complete_actor_creation(ActorId);
     void finish_insertion();
     WorldPartyCreation &owner_;
     std::optional<unsigned> single_member_;
     std::optional<WorldPartyCreationService> service_;
     std::unique_ptr<WorldParty::Operation> update_;
+    RawActorCreation *graphics_{};
+    std::unique_ptr<RawActorCreation::Operation> graphical_creation_;
     std::vector<WorldPartyCreatedActor> created_;
-    unsigned member_{}, position_{}, rebuild_index_{};
+    unsigned member_{}, position_{}, rebuild_index_{},created_role_{};
     std::uint16_t spawn_x_{}, spawn_y_{};
     unsigned phase_{};
     bool complete_{};
@@ -73,6 +78,7 @@ public:
   WorldPartyCreation &operator=(const WorldPartyCreation &) = delete;
   std::unique_ptr<Operation> begin_insert(unsigned one_based_member);
   std::unique_ptr<Operation> begin_rebuild();
+  std::unique_ptr<Operation> begin_rebuild(RawActorCreation &);
   bool uses(const party::State& party, const ActorWorld& actors) const noexcept {
     return &party_ == &party && &actors_ == &actors;
   }

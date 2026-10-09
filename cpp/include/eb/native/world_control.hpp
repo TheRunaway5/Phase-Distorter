@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <variant>
 
+namespace eb::native::story {class SourceMeterTiles;class SourceMeterStatus;}
 namespace eb::native {
 // An authored scene role survives the lifetime of its current host actor.
 // Host-only camera targets instead retain their strict ActorId lifetime.
@@ -30,7 +31,28 @@ using CameraTarget = std::variant<AuthoredRoleRef, ActorId>;
 // Whole XY, facing, walking style and input/collision mode already belong to
 // InteractionState. This owner holds only the remaining world controller
 // fields, not another set of party positions or input words.
+class WorldControlSourceOwnership {
+public:
+  WorldControlSourceOwnership()=default;
+  WorldControlSourceOwnership(const WorldControlSourceOwnership&) {}
+  WorldControlSourceOwnership& operator=(const WorldControlSourceOwnership&) {
+    if(lease_)throw std::logic_error("World control is claimed by source meter artwork");
+    return *this;
+  }
+  std::weak_ptr<const void> lifetime() const noexcept {return lifetime_;}
+  bool active() const noexcept {return lease_!=nullptr;}
+private:
+  friend class story::SourceMeterTiles;
+    friend class story::SourceMeterStatus;
+  std::shared_ptr<const void> lifetime_=std::make_shared<const unsigned>(0);
+  const void *lease_{};
+};
 struct WorldControlState {
+  // Copies retain values but get a fresh actual-instance identity. Assignment
+  // checks the destination lease before any following scalar member changes.
+  WorldControlSourceOwnership source_ownership;
+  std::weak_ptr<const void> source_lifetime() const noexcept {return source_ownership.lifetime();}
+  bool source_meter_active() const noexcept {return source_ownership.active();}
   std::uint16_t x_fraction{}, y_fraction{}, moved_this_tick{}, automatic_mode{};
   // Persistent ground under the party; InteractionState::surface_flags is
   // the distinct shared temporary query result and can change during refresh.
@@ -95,7 +117,10 @@ public:
                const WorldCollision &, const WorldMapArea &);
   WorldControl(const WorldControl &) = delete;
   WorldControl &operator=(const WorldControl &) = delete;
+  WorldControl(WorldControl&&)=delete;
+  WorldControl& operator=(WorldControl&&)=delete;
   std::unique_ptr<Operation> begin();
+  std::weak_ptr<const void> source_lifetime() const noexcept {return lifetime_;}
   bool failed() const { return failed_; }
   bool busy() const { return active_ != nullptr; }
   bool uses(const ActorWorld &, const dialogue::PromptState &,
@@ -122,6 +147,7 @@ private:
   story::TickState &clock_;
   const WorldCollision &collision_;
   const WorldMapArea &area_;
+  std::shared_ptr<const void> lifetime_=std::make_shared<const unsigned>(0);
   Operation *active_{};
   bool failed_{};
 };

@@ -1,4 +1,5 @@
 #include "eb/native/world_enemy_behavior.hpp"
+#include "eb/native/entities/graphics/lifecycle.hpp"
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -238,6 +239,35 @@ std::uint16_t WorldEnemyBehavior::set_moving_direction(ActorId id,
     failed_ = true;
     throw;
   }
+}
+std::optional<std::uint16_t> WorldEnemyBehavior::follow_variable_angle(ActorId id,bool discard_result) {
+  return variable_angle(id,discard_result,nullptr);
+}
+std::optional<std::uint16_t> WorldEnemyBehavior::follow_variable_angle(ActorId id,const entities::graphics::Lifecycle &graphics) {
+  return variable_angle(id,false,&graphics);
+}
+std::optional<std::uint16_t> WorldEnemyBehavior::variable_angle(ActorId id,bool discard_result,const entities::graphics::Lifecycle *graphics) {
+  check();auto &actor=actors_.actor(id);const unsigned old_direction=actor.behavior.direction;
+  if(old_direction>=8)throw std::logic_error("Variable-angle direction exceeds its authored eight-way table");
+  constexpr std::array<std::uint16_t,8> directions{2,3,4,5,6,7,7,1};
+  const auto angle=actor.action().variables[0];const auto direction=directions[wrap(unsigned(angle)+0x1000)/0x2000];
+  const auto old_class=std::uint16_t(four_direction_pose(old_direction,0)),next_class=std::uint16_t(four_direction_pose(direction,0));
+  const bool refresh=old_class!=next_class;
+  if(refresh&&graphics) {
+    if(!graphics->uses(actors_)||graphics->busy()||graphics->failed()||!actor.authored_role())
+      throw std::logic_error("Variable-angle refresh requires its actual healthy graphics owner");
+    const auto &record=graphics->role(*actor.authored_role());
+    if(!record.allocated||record.geometry_sprite!=actor.appearance.geometry_sprite())
+      throw std::logic_error("Variable-angle refresh lacks its actual retained creation allocation");
+  }
+  if(refresh&&!discard_result&&!graphics)throw std::logic_error("Variable-angle live graphics result requires its actual raw upload owner");
+  if(refresh&&(!actor.has_appearance()||!actor.appearance.available()))throw std::logic_error("Variable-angle refresh lacks actual sprite appearance");
+  auto appearance=actor.appearance;
+  if(refresh)appearance.select_four(direction,actor.action().animation,actor.behavior.surface_flags);
+  const auto velocity=movement_.velocity(angle,actor.behavior.movement_speed,peripherals_);
+  actor.action().velocity[0]=velocity[0];actor.action().velocity[1]=velocity[1];actor.behavior.direction=direction;
+  if(refresh)actor.appearance=std::move(appearance);
+  return refresh?std::nullopt:std::optional<std::uint16_t>(old_class);
 }
 std::uint16_t WorldEnemyBehavior::distance_sleep(ActorId id,
                                                  std::uint16_t distance) {

@@ -49,6 +49,29 @@ bool npc_within_retention_area(std::uint16_t x, std::uint16_t y,
 // than skipping a placement or overwriting another actor.
 class WorldActivation {
   public:
+    class RawOperation {
+      public:
+        ~RawOperation();
+        RawOperation(const RawOperation &)=delete;
+        bool advance(unsigned work_budget=256);
+        bool needs_publication() const noexcept;
+        void respond_publication();
+        std::span<const NpcActivation> created() const noexcept {return created_;}
+      private:
+        friend class WorldActivation;
+        RawOperation(WorldActivation &,ActorWorld &,RawActorCreation &,
+                     NpcActivationState,NpcStripAdmission);
+        WorldActivation &owner_;
+        ActorWorld &world_;
+        RawActorCreation &graphics_;
+        NpcActivationState state_;
+        std::vector<NpcPlacement> placements_;
+        std::vector<NpcActivation> created_;
+        std::unique_ptr<RawActorCreation::Operation> creation_;
+        std::optional<NpcCandidate> candidate_;
+        unsigned next_{};
+        bool done_{},executing_{};
+    };
     WorldActivation(std::shared_ptr<const NpcCatalog> npcs,
                     std::shared_ptr<SpriteResources> sprites,
                     std::shared_ptr<const ActionScriptData> scripts,
@@ -73,6 +96,8 @@ class WorldActivation {
     CameraPosition target_camera() const { return camera_; }
     std::vector<NpcActivation> activate_next(ActorWorld &world, const NpcActivationState &state,
                                              NpcStripAdmission admission);
+    std::unique_ptr<RawOperation> begin_next(ActorWorld &,const NpcActivationState &,
+                                           NpcStripAdmission,RawActorCreation &);
     // Only acknowledge after the authoritative enemy owner finishes this exact
     // request. An unhandled enemy request blocks the remaining NPC traversal.
     void complete_enemy_request();
@@ -86,6 +111,8 @@ class WorldActivation {
                                               NpcStripAdmission admission) const;
 
   private:
+    std::optional<WorldActorSpec> prepare_candidate(ActorWorld &,const NpcPlacement &,
+                                                  const NpcActivationState &) const;
     void begin(CameraRefreshPlan plan, CameraPosition camera);
     void complete_request();
     std::shared_ptr<const NpcCatalog> npcs_;
@@ -97,5 +124,7 @@ class WorldActivation {
     CameraRefreshPlan plan_;
     std::size_t next_{};
     std::optional<CameraRefreshIntent> request_;
+    RawOperation *active_{};
+    bool failed_{};
 };
 } // namespace eb::native

@@ -7,6 +7,7 @@
 #include "eb/native/battle/action_state.hpp"
 #include "eb/native/world_display_fade.hpp"
 #include "eb/native/dialogue/window_graphics.hpp"
+#include "eb/native/dialogue/menu_model.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include <algorithm>
 #include <cmath>
@@ -152,9 +153,10 @@ struct Fixture {
     WorldMapArea area=make_area();
     AreaPalettes palettes=make_palettes();
     std::unique_ptr<story::Scene> scene;
-    explicit Fixture(eb::GameVersion region,bool meter_art=false):version(region),party(region),output(assets(region).fonts,text),
+    explicit Fixture(eb::GameVersion region,bool meter_art=false,
+                     std::shared_ptr<const ActionScriptData> scripts=make_scripts()):version(region),party(region),output(assets(region).fonts,text),
         windows(assets(region).input.import(),text,output),meters(windows,party,assets(region).meters),
-        actors(make_sprites(),make_scripts(),region) {
+        actors(make_sprites(),std::move(scripts),region) {
         party.controlled_count=1;party.controlled_order[0]=0;party.party_order[0]=1;
         clock.frame_counter=255;
         if (meter_art) {
@@ -207,6 +209,48 @@ void finish(story::Scene::Operation& op) {
 }
 unsigned object_quads(const eb::DirectSceneFrame& frame) {
     return std::count_if(frame.quads.begin(),frame.quads.end(),[](const auto& q){return q.object;});
+}
+void selection_world_wait(eb::GameVersion version) {
+    Fixture f(version);const auto id=f.actors.create(actor());f.start();
+    auto scripts=program(version,{0x1a,9,0x02});
+    auto resources=dialogue::MenuResources::import(assets(version).input.image,version);
+    dialogue::MenuHost menus(scripts,f.windows,resources);
+    dialogue::MenuModel model(f.windows,*assets(version).fonts);
+    const std::array<std::uint8_t,1> label{0x71};
+    model.append_at(label,std::nullopt,0,0);
+    dialogue::Conversation conversation(scripts,menus);conversation.start(dialogue::EntryId{0});
+    auto operation=f.scene->begin(conversation);
+    unsigned menu_polls{};
+    for(unsigned work=0;work<1000;++work) {
+        const auto progress=next(*operation);
+        if(progress==dialogue::Progress::Finished)break;
+        check(progress==dialogue::Progress::Suspended,"Selection world fixture did not suspend");
+        if(operation->service()==story::SceneService::Frame) {
+            const auto &event=conversation.event();
+            const auto *menu=event?std::get_if<dialogue::MenuEffect>(&*event):nullptr;
+            const bool selection=menu&&menu->kind==dialogue::MenuEffectKind::Input;
+            if(selection) {
+                ++menu_polls;
+                const auto ticks=f.actors.ticks(),polls=f.clock.input_polls;
+                const auto value=f.actors.actor(id).action().variables[0];
+                for(unsigned repeat=0;repeat<3;++repeat)
+                    check(operation->advance()==dialogue::Progress::Suspended&&
+                        f.actors.ticks()==ticks&&f.clock.input_polls==polls&&
+                        f.actors.actor(id).action().variables[0]==value,
+                        "Suspended selection repeated actors or read the same input synchronously");
+                check(value==ticks,"Menu input omitted the actual world actor traversal");
+            }
+            operation->complete_frame({std::uint16_t(selection&&menu_polls==3?0x80:0),0});
+        }else if(operation->service()==story::SceneService::Dialogue) {
+            const auto *menu=std::get_if<dialogue::MenuEffect>(&*operation->dialogue_event());
+            check(menu&&menu->kind==dialogue::MenuEffectKind::Sound,
+                "Selection fixture reached an unexpected unowned dialogue effect");
+            operation->respond_dialogue({});
+        }else throw std::runtime_error("Selection fixture reached an unexpected world service");
+    }
+    check(operation->complete()&&conversation.finished()&&menu_polls==3&&
+        f.actors.ticks()>=3&&f.clock.input_polls>=3&&f.text.window().active.working==1,
+        "Actual dialogue selection failed to poll new input and resume its caller");
 }
 void actor_frames_and_sampling(eb::GameVersion version) {
     Fixture f(version);const auto id=f.actors.create(actor());f.start();
@@ -441,6 +485,82 @@ void nested_actor_callbacks(eb::GameVersion version) {
           "Erased engine request failed to continue remaining actors exactly once");
     parent->complete_frame({0,0});finish(*parent);
     check(f.scene->completed_frames()==2 && object_quads(*f.scene->frame())>0,"Parent did not recover a complete actor scene after nesting");
+}
+
+void actor_graphics_publication(eb::GameVersion version) {
+    for(const auto helper:std::array<std::array<unsigned,3>,12>{{
+        {0xc0a4bf,0xc0a49e,0},{0xc0a480,0xc0a45f,0},
+        {0xc0a4a8,0xc0a487,0},{0xc0a4b2,0xc0a491,0},
+        {0xc0a443,0xc0a422,0},{0xc0a6e3,0xc0a6c2,0},
+        {0xc0a8e7,0xc0a8c6,0},{0xc0a99f,0xc0a97e,4},
+        {0xc03daa,0xc04009,0},{0xc0aa6e,0xc0aa4d,2},
+        {0xc0a98b,0xc0a96a,4},{0xc0aaac,0xc0aa8b,0}}}) {
+        const unsigned target=helper[version==eb::GameVersion::JP?1:0];
+        std::vector<std::uint8_t> bytes{0x42,std::uint8_t(target),std::uint8_t(target>>8),std::uint8_t(target>>16)};
+        for(unsigned i=0;i<helper[2];++i)bytes.push_back(0);
+        // The upload return is live. This fixture keeps the actual engine
+        // request suspended; it never acknowledges a substitute result.
+        bytes.insert(bytes.end(),{0x1f,1,0x06,1,0x09});
+        const auto later_entry=bytes.size();
+        bytes.insert(bytes.end(),{0x14,0,2,1,0,0x06,1,0x09});
+        auto scripts=std::make_shared<ActionScriptData>(bytes,0,
+            std::vector<std::uint32_t>{0,std::uint32_t(later_entry)});
+        Fixture f(version,false,scripts);
+        const auto blocked=f.actors.create(actor()),later=f.actors.create(actor(1));f.start();
+        auto parent=f.scene->begin(story::TickKind::WorldFrame);
+        service(*parent,story::SceneService::ActorEngine);
+        const auto pending=*parent->actor_request();
+        check(pending.actor==blocked&&pending.origin==WorldActionOrigin::Script&&
+              pending.diagnostic.authored_identifier==target,
+              "Graphics fixture did not suspend at its actual authored helper");
+        const auto before=f.actors.actor(blocked).action();
+        const auto random=f.random;const auto input=f.input;
+        const auto polls=f.clock.input_polls;
+        auto child=f.scene->begin_nested_publication(*parent);
+        service(*child,story::SceneService::Publication);
+        for(unsigned i=0;i<3;++i)
+            check(child->advance()==dialogue::Progress::Suspended&&f.actors.ticks()==0&&
+                  f.actors.actor(later).action().variables[0]==0,
+                  "Suspended raw graphics publication repeated actors");
+        rejects([&]{parent->advance();},"Parent advanced while graphics publication owned the Scene");
+        child->complete_publication();finish(*child);child.reset();
+        check(parent->service()==story::SceneService::ActorEngine&&
+              parent->actor_request()->actor==pending.actor&&
+              parent->actor_request()->action.identifier==pending.action.identifier&&
+              parent->actor_request()->action.task==pending.action.task&&
+              parent->actor_request()->action.temporary==pending.action.temporary&&
+              f.actors.actor(blocked).action().position==before.position&&
+              f.actors.actor(blocked).action().velocity==before.velocity&&
+              f.actors.actor(blocked).action().variables==before.variables&&
+              f.actors.actor(blocked).action().animation==before.animation&&
+              f.actors.actor(blocked).action().priority==before.priority&&
+              f.actors.actor(blocked).action().alive==before.alive&&f.clock.publications==1&&
+              f.clock.input_polls==polls&&f.input==input&&f.random==random&&f.actors.ticks()==0,
+              "Graphics publication changed its pending request, actor, RNG or input");
+        // A real retirement releases the suspended actor traversal. No raw
+        // allocation/upload return is fabricated to finish this ownership test.
+        check(f.actors.erase(blocked),"Graphics fixture could not retire its actual blocked actor");
+        service(*parent,story::SceneService::Frame);
+        check(f.actors.actor(later).action().variables[0]==1&&f.actors.ticks()==1&&
+              parent->frame_requirement()==story::FrameRequirement::InputOnly,
+              "Raw publication lost its pending NMI or repeated the remaining traversal");
+        parent->complete_frame({0,0});finish(*parent);
+        check(f.clock.publications==1&&f.clock.input_polls==polls+1,
+              "Raw graphics child invented a second publication/input boundary");
+    }
+    Fixture rejected(version);rejected.actors.create(actor(1));rejected.start();
+    auto parent=rejected.scene->begin(story::TickKind::WorldFrame);
+    service(*parent,story::SceneService::ActorEngine);
+    const auto before=rejected.clock;
+    rejects([&]{rejected.scene->begin_nested_publication(*parent);},
+            "Unknown engine helper acquired graphics publication admission");
+    check(rejected.clock.publications==before.publications&&
+          rejected.clock.input_polls==before.input_polls&&
+          rejected.clock.new_frame_started==before.new_frame_started&&
+          rejected.clock.frame_counter==before.frame_counter&&
+          rejected.clock.action_scripts_disabled==before.action_scripts_disabled&&
+          !rejected.scene->failed(),
+          "Rejected graphics child changed or poisoned its actual parent");
 }
 
 void camera_and_battle(eb::GameVersion version) {
@@ -1024,7 +1144,8 @@ void rejection_and_poison(eb::GameVersion version) {
 int main() {
     try {
         for(auto region:{eb::GameVersion::US,eb::GameVersion::JP}) {
-            actor_frames_and_sampling(region);conversations(region);nested_actor_callbacks(region);
+            actor_frames_and_sampling(region);conversations(region);nested_actor_callbacks(region);actor_graphics_publication(region);
+            selection_world_wait(region);
             authored_meters_and_party_query(region);
             camera_and_battle(region);signed_camera(region);rejection_and_poison(region);
             battle_publication(region,2);battle_publication(region,4);

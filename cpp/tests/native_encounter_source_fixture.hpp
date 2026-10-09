@@ -5,6 +5,7 @@
 #include "eb/snes_audio_dsp.hpp"
 #include "eb/snes_bus.hpp"
 #include "eb/spc700_audio_cpu.hpp"
+#include "native_original_object_instructions.hpp"
 #include <functional>
 #include <array>
 #include <iostream>
@@ -22,6 +23,10 @@ public:
   bool jp;
   unsigned nmis{}, polls{}, glyphs{}, music{};
   std::optional<std::uint16_t> fixed_buttons;
+  // Opt in only for the original object-drawing oracles. Other existing
+  // fixtures retain the inherited translated presentation policy.
+  bool original_object_anchor_comparisons{};
+  eb::native_reference::OriginalObjectInstructions::Reaches original_object_instruction_reaches{};
   std::function<void(Source&)> observer;
   std::vector<unsigned> music_requests, sound_requests;
   std::vector<std::array<std::uint16_t,2>> raw_inputs;
@@ -58,7 +63,9 @@ public:
     if (cpu.program_counter == (jp ? 0xc111ecu : 0xc10cb6u))
       ++glyphs;
     bus->set_buttons(fixed_buttons.value_or((bus->completed_frames & 2) ? 0x80 : 0));
-    cpu.step_instruction();
+    if(original_object_anchor_comparisons)
+      eb::native_reference::OriginalObjectInstructions::step(cpu,*bus,jp,original_object_instruction_reaches);
+    else cpu.step_instruction();
     if ((cpu.instruction_count & 0xffff) == 0)
       dsp.take_stereo_samples();
   }

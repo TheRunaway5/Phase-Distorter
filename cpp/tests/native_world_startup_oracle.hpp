@@ -66,6 +66,7 @@ struct Oracle {
         get(l.delta?0x993b:0x9643)==f.windows.prompt_state().battle_mode,"Independent restored/preserved movement and battle fields differ");
   check(get(l.pajamas)==f.following.pajamas&&get(l.mushroom)==f.movement.mushroomized&&get(l.mushroom_timer)==f.movement.timer&&get(l.mushroom_modifier)==f.movement.modifier,"Actual movement/pajamas tails differ");
   check(!get(l.battle)&&!get(l.input)&&get(l.npcs)==1&&get(l.enemies)==0xffff&&get(l.maximum)==f.enemies.population().maximum&&!get(l.swirl)&&!get(l.pending)&&get(l.auto_music)==f.maintenance.auto_sector_music&&get(l.phone)==f.phone.timer&&!get(l.teleport_style)&&!get(l.teleport_destination)&&get(l.fade)==0xffff,"World prefix flags differ");
+  check(get(l.enemies)==f.spawn.enemies,"Retained enemy-enable word differs");
   for(unsigned i=0;i<256;++i){auto c=f.scene_colors[i];check(get(0x200+i*2)==(unsigned(c.red)|unsigned(c.green)<<5|unsigned(c.blue)<<10),"Scene palette publication differs");}
   for(unsigned role=0;role<30;++role){const auto b=f.actors.authored_behavior(role);
    check(b.movement_speed==get((l.delta?0x2f30:0x2b32)+role*2)&&

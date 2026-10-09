@@ -7,6 +7,7 @@
 #include "eb/native/world_actor_movement.hpp"
 #include "eb/native/world_enemy_behavior.hpp"
 #include "eb/native/world_enemy_movement.hpp"
+#include "eb/native/peripheral_state.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
 #include "native_world_enemy_contact_fixture.hpp"
@@ -533,6 +534,68 @@ void imported_flags(Assets &assets) {
   }
   check(rows == 8, "Insufficient imported nonzero run-away flags tested");
 }
+void variable_angle(Assets &assets) {
+  auto owner=assets.fixture();auto &f=*owner;
+  const auto id=*f.actors.actor_for_role(24);auto &actor=f.actors.actor(id);
+  EnemyMovementData movement(assets.a.image,assets.a.version);
+  GeneratedInputData angles(assets.a.image,assets.a.version);
+  WorldEnemyBehavior behavior(movement,angles,f.actors,f.enemies,f.party,f.leader);
+  PeripheralState peripherals;behavior.bind_peripherals(peripherals);
+  Oracle o(assets.a);o.bus->write_byte(0x4200,0);o.bus->write_byte(0x2100,0x80);
+  const unsigned offset=48,delta=o.jp?0x3fe:0,animation=o.jp?0x10e8:0x10f2;
+  const auto &definition=assets.sprites->definition(actor.appearance.sprite());
+  const auto table=assets.sprites->frame_table_identity(actor.appearance.sprite());
+  unsigned unchanged{},refreshed{},rejections{};
+  // The complete original helper receives real imported sprite metadata and
+  // the retained creation geometry. Forced blank makes its actual row copies
+  // immediate. This proves velocity, direction, retained phase and selected
+  // artwork; the native ActorWorld still has no bound raw upload-return owner.
+  for(unsigned old=0;old<8;++old)
+    for(unsigned theta:{0u,0xfffu,0x1000u,0x2fffu,0x3000u,0x7fffu,0x8000u,0xefffu,0xf000u,0xffffu})
+      for(unsigned phase:{0u,1u,0xffffu})for(unsigned speed:{0u,257u,0xffffu}) {
+        context=assets.a.title+" retained variable angle "+std::to_string(old)+","+
+          std::to_string(theta)+","+std::to_string(phase)+","+std::to_string(speed);
+        actor.behavior.direction=old;actor.behavior.movement_speed=speed;
+        actor.behavior.surface_flags=0;actor.action().variables[0]=theta;
+        actor.action().animation=phase;actor.action().velocity={0x12345678,0x76543210,0x87654321};
+        actor.appearance.select_four(old,std::uint16_t(phase));
+        seed_behavior(o,f,id);o.put(animation+offset,phase);
+        o.put(0x29ca+delta+offset,table&0xffff);o.put(0x2a06+delta+offset,table>>16);
+        o.put(0x2a42+delta+offset,assets.sprites->raw_header(actor.appearance.sprite())[8]);
+        o.put(0x2a7e + delta+offset,definition.width*4);o.put(0x2aba+delta+offset,definition.height/8);
+        o.put(0x298e + delta+offset,0x4000);o.put(0x2baa+delta+offset,0);
+        const unsigned reference=(o.jp?0x1ab8:0x341a)+offset;
+        o.put(reference,assets.sprites->raw_frame(actor.appearance.sprite(),actor.appearance.displayed()->pose,
+            SpriteFrameFormat::FourDirection).reference);
+        const unsigned original=o.run(o.jp?0xc0a8c6:0xc0a8e7);
+        const auto positions=actor.action().position,velocity=actor.action().velocity;
+        const auto displayed=actor.appearance.displayed();const auto image=actor.appearance.image();
+        const auto product=peripherals.product();bool rejected{};std::optional<std::uint16_t> result;
+        try{result=behavior.follow_variable_angle(id,false);}catch(const std::logic_error &){rejected=true;}
+        if(rejected){++rejections;check(!behavior.failed()&&actor.action().position==positions&&
+          actor.action().velocity==velocity&&actor.behavior.direction==old&&actor.action().animation==phase&&
+          actor.appearance.displayed()==displayed&&actor.appearance.image()==image&&peripherals.product()==product,
+          "Live incidental upload result admission partially mutated the actual owner");
+          result=behavior.follow_variable_angle(id,true);}
+        if(result){++unchanged;check(*result==original&&!rejected,"Unchanged variable-angle return differs");}
+        else{++refreshed;check(rejected,"Changed graphics return was acknowledged without the unused-result proof");}
+        check(actor.behavior.direction==o.get(o.direction+offset)&&actor.action().animation==o.get(animation+offset)&&
+          actor.action().position==positions&&actor.action().velocity[2]==velocity[2],
+          "Variable-angle direction, retained phase or unrelated geometry differs");
+        for(unsigned axis=0;axis<2;++axis)check(actor.action().velocity[axis]==
+          ((o.get(o.velocity+axis*60+offset)<<16)|o.get(o.velocity_fraction+axis*60+offset)),
+          "Variable-angle whole/fractional velocity differs");
+        const auto selected=*actor.appearance.displayed();
+        check(o.get(reference)==assets.sprites->raw_frame(selected.sprite,selected.pose,selected.format).reference,
+          "Variable-angle selected original sprite reference differs");
+        check(peripherals.product()==(o.bus->read_byte(0x4216)|unsigned(o.bus->read_byte(0x4217))<<8),
+          "Variable-angle actual multiplier result differs");
+      }
+  check(unchanged&&refreshed&&refreshed==rejections&&!f.actors.ticks()&&o.get(2)==0x45ab&&
+      o.get(0x24)==0x1234&&o.get(0x26)==0x9876,"Variable-angle coverage or time/RNG retention differs");
+  std::cout<<assets.a.title<<": variable-angle unchanged-return="<<unchanged<<" retained-refresh="<<refreshed
+    <<" live-upload-result-rejections="<<rejections<<" (raw changed upload return remains unbound)\n";
+}
 unsigned imported_behavior_tasks(const eb::GameAssets &original) {
   unsigned passes = 0;
   for (unsigned script : {19u, 24u, 28u}) {
@@ -851,6 +914,7 @@ int main(int argc, char **argv) {
       const auto before = checks, start = calls;
       Assets source(a);
       helpers(source);
+      variable_angle(source);
       imported_flags(source);
       const auto frames = imported_behavior_tasks(a);
       std::cout << a.title << ": " << calls - start << " whole original calls, "

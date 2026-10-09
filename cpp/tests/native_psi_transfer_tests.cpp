@@ -195,6 +195,113 @@ void wrapping_budget() {
   finish(*clear);
   display.publish_pending(scratch);
 }
+void cinematic_live_source() {
+  PsiScratch scratch;
+  PsiDisplayState display;
+  WorldDisplayFade fade(WorldDisplayFadeState{15});
+  std::array<std::uint8_t, 2048> text{};
+  text[17] = 0x31; text[18] = 0x52;
+  const PsiTransfer row{PsiTransferKind::Vram, 17, 2, 0x7fff, 0,
+                        text, 0x7e7dfe};
+  auto operation = display.begin_transfer(row, scratch, fade);
+  finish(*operation);
+  const auto before = display.vram();
+  auto preview = display.preview_vram(scratch);
+  require(preview[65534] == 0x31 && preview[65535] == 0x52 &&
+              display.vram() == before && display.pending().size() == 1,
+          "Cinematic preview consumed its actual live row publication");
+  text[17] = 0x67; text[18] = 0x89;
+  display.publish_pending(scratch);
+  require(display.vram_byte(65534) == 0x67 &&
+              display.vram_byte(65535) == 0x89 && display.pending().empty(),
+          "Cinematic NMI latched a stale snapshot of its row source");
+  require(preview[65534] == 0x31 && preview[65535] == 0x52,
+          "Cinematic NMI mutated a previously captured VRAM image");
+
+  fade.begin_out(16, 0); fade.commit_frame(fade.preview_next_frame());
+  text[0] = 0xaf;
+  auto clear = display.begin_transfer(
+      {PsiTransferKind::Vram, 0, 2048, 0x5800, 3, text, 0x7e7dfe},
+      scratch, fade);
+  finish(*clear);
+  require(display.pending().empty() && display.vram_byte(0xb000) == 0xaf &&
+              display.vram_byte(0xb7ff) == 0xaf,
+          "Forced-blank cinematic fixed-source DMA was deferred or incremented");
+  const auto parameters = display.copy_parameters();
+  const auto snapshot = display.vram();
+  rejects([&] {
+    display.begin_transfer(
+        {PsiTransferKind::Vram, 2047, 2, 0, 0, text, 0x7e7dfe}, scratch, fade);
+  }, "Cinematic DMA accepted an out-of-range live source");
+  rejects([&] {
+    display.begin_transfer(
+        {PsiTransferKind::Graphics, 0, 1, 0, 0, text, 0x7e7dfe}, scratch, fade);
+  }, "Ordinary PSI graphics accepted a foreign cinematic source");
+  require(display.vram() == snapshot && display.copy_parameters() == parameters &&
+              display.pending().empty() && !display.failed(),
+          "Rejected cinematic DMA changed its retained transport state");
+}
+void retained_descriptor_alias() {
+  PsiScratch scratch;
+  PsiDisplayState display;
+  WorldDisplayFade fade(WorldDisplayFadeState{15});
+  std::array<std::uint8_t,64> alias;
+  for(unsigned i=0;i<alias.size();++i) alias[i]=std::uint8_t(17+i*3);
+  display.write_descriptor_prefix(alias);
+  require(std::equal(alias.begin(),alias.end(),display.descriptor_bytes().begin()) &&
+      display.pending().empty() && display.pending_bytes()==0,
+      "Idle palette alias did not retain the physical descriptor prefix");
+  auto first=display.begin_transfer({PsiTransferKind::Vram,0x1234,0x56,0x789a,12},scratch,fade);
+  finish(*first);
+  const std::array<std::uint8_t,8> record{12,0x56,0,0x34,0x12,0x7f,0x9a,0x78};
+  require(std::equal(record.begin(),record.end(),display.descriptor_bytes().begin()),
+      "Published descriptor lost source bank, mode, raw size or word destination");
+  const auto retained=display.descriptor_bytes();
+  const std::vector<std::uint8_t> snapshot(retained.begin(),retained.end());
+  rejects([&]{display.write_descriptor_prefix(alias);},"Palette alias overwrote a pending descriptor");
+  require(std::equal(snapshot.begin(),snapshot.end(),display.descriptor_bytes().begin()),
+      "Rejected palette alias partially changed retained descriptors");
+  display.publish_pending(scratch);
+  // Place the full ring at1..31: its unpublished held record is slot0 and
+  // lies outside pending(). The prefix must protect that record as well.
+  for(unsigned i=0;i<31;++i) {
+    auto op=display.begin_transfer({PsiTransferKind::Graphics,0,1,0},scratch,fade);
+    finish(*op);
+  }
+  auto held=display.begin_transfer({PsiTransferKind::Graphics,0,1,2},scratch,fade);
+  require(!held->advance() && held->needs_publication(),"Held alias fixture did not fill actual ring");
+  rejects([&]{display.write_descriptor_prefix(std::span<const std::uint8_t>(alias).first(8));},
+      "Palette alias overwrote a credited unpublished descriptor");
+  display.publish_pending(scratch);held->respond();finish(*held);display.publish_pending(scratch);
+  display.write_descriptor_prefix(alias);
+  require(std::equal(alias.begin(),alias.end(),display.descriptor_bytes().begin()),
+      "Completed held descriptor retained a stale queue reservation");
+  std::array<std::uint8_t,257> too_long{};
+  rejects([&]{display.write_descriptor_prefix(too_long);},"Palette alias exceeded the actual queue");
+}
+void cinematic_source_bank() {
+  PsiScratch scratch;
+  PsiDisplayState display;
+  WorldDisplayFade fade(WorldDisplayFadeState{0x80});
+  PeripheralState peripherals;display.bind_peripherals(peripherals,eb::GameVersion::US);
+  std::array<std::uint8_t,65536> bank;
+  for(unsigned i=0;i<bank.size();++i)bank[i]=std::uint8_t(i*37+11);
+  auto copy=display.begin_transfer({PsiTransferKind::Vram,65530,32,0x4080,0,bank,0xc50000},scratch,fade);
+  finish(*copy);
+  for(unsigned i=0;i<32;++i)require(display.vram_byte(std::uint16_t(0x8100+i))==
+      bank[std::uint16_t(65530+i)],"Raw actor source increment crossed its actual bank");
+  const auto &registers=peripherals.dma(1);
+  require(registers[2]==26&&registers[3]==0&&registers[4]==0xc5,
+      "Raw actor source bank wrap lost its actual completed DMA identity");
+  const auto retained=display.vram();const auto parameters=display.copy_parameters();
+  rejects([&]{display.begin_transfer({PsiTransferKind::Vram,0,1,0,0,bank,0xc50001},scratch,fade);},
+      "Foreign actor bank admitted a nonaligned extent beyond its actual bank");
+  rejects([&]{display.begin_transfer({PsiTransferKind::Vram,0,32,0,0,
+      std::span<const std::uint8_t>(bank).first(32),0xc5fff0},scratch,fade);},
+      "Partial actor source silently exposed an adjacent bank");
+  require(display.vram()==retained&&display.copy_parameters()==parameters&&!display.failed(),
+      "Rejected raw actor source bank partially changed its retained display");
+}
 void animation_order() {
   BackgroundFixture input;
   BattleBackgroundScenes catalog(input.bytes, eb::GameVersion::US);
@@ -272,6 +379,9 @@ int main() {
     budget_and_live_parameters();
     destination_domain();
     wrapping_budget();
+    cinematic_live_source();
+    retained_descriptor_alias();
+    cinematic_source_bank();
     animation_order();
     std::cout << "Native PSI transfer tests passed: " << checks << " checks\n";
     return 0;

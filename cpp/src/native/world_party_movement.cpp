@@ -39,6 +39,12 @@ WorldPartyMovement::WorldPartyMovement(ActorWorld &actors, party::State &party,
     : actors_(actors), party_(party), state_(state), random_(random),
       data_(data) {}
 std::optional<std::uint16_t> WorldPartyMovement::startup(ActorId id) {
+  const auto result=prepare_startup(id);
+  if(result)finish_startup(id);
+  return result;
+}
+std::optional<std::uint16_t> WorldPartyMovement::prepare_startup(ActorId id) {
+  if(startup_actor_)throw std::logic_error("Party startup already owns its actual upload continuation");
   auto &actor = actors_.actor(id);
   const auto role = actor.authored_role();
   if (!role || !party_.party_count)
@@ -60,16 +66,26 @@ std::optional<std::uint16_t> WorldPartyMovement::startup(ActorId id) {
   action.variables[2] = story::next_random(random) & 15;
   appearance.select_eight(actor.behavior.direction, action.animation,
                           actor.behavior.surface_flags);
-  const WorldPartyState::CharacterStartup startup{
-      action.variables[0], std::uint16_t(*role), 0, 0xffff};
-  if (party_.character(record + 1).afflictions[0] == 1)
-    action.variables[3] = 16;
   actor.appearance = std::move(appearance);
   actor.action() = action;
   random_ = random;
-  state_.character_startup[record] = startup;
-  actors_.appearance_scene().footstep_role = state_.current_leader_role;
+  startup_actor_=id;
   return std::uint16_t(state_.current_leader_role * 2);
+}
+void WorldPartyMovement::finish_startup(ActorId id) {
+  if(startup_actor_!=id)throw std::logic_error("Party startup completion lost its actual upload owner");
+  auto &actor=actors_.actor(id);
+  const auto role=actor.authored_role();
+  const auto record=actor.action().variables[1];
+  if(!role||record>=6||state_.current_leader_role>=30)
+    throw std::logic_error("Party startup changed its owned role during upload");
+  const WorldPartyState::CharacterStartup startup{
+      actor.action().variables[0], std::uint16_t(*role), 0, 0xffff};
+  state_.character_startup[record] = startup;
+  if (party_.character(record + 1).afflictions[0] == 1)
+    actor.action().variables[3] = 16;
+  actors_.appearance_scene().footstep_role = state_.current_leader_role;
+  startup_actor_.reset();
 }
 void WorldPartyMovement::project(ActorId id) const {
   auto &actor = actors_.actor(id);

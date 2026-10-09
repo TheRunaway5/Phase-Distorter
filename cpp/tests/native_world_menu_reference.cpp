@@ -107,6 +107,7 @@ struct Script {
     }
 };
 void run(const eb::GameAssets &assets,unsigned mode) {
+    check(mode!=20||assets.version==eb::GameVersion::JP,"Actor-variable character selection is a JP source case");
     Rig r(assets);Source s(assets);s.initialize();
     auto snap=saved(r);
     if(mode>=3)snap.state.characters[0].values.items={0x5a,0x58,1};
@@ -130,6 +131,15 @@ void run(const eb::GameAssets &assets,unsigned mode) {
     seed(s,r,archive);near_call(s,s.jp?0xc0b652:0xc0b67f);r.drive(*startup);startup.reset();
     s.call(s.jp?0xc04230:0xc03fa9,0x456,0x678,2);
     auto placement=r.w.relocation->begin({0x456,0x678},2);while(!placement->complete())placement->advance(1);placement.reset();
+    if(mode==20) {
+        // Real JP native Status entry retains087e in BUFFER[-2] after map
+        // preparation. Whole CHAR_SELECT captures0f45..0f48 across var4.
+        s.put(0x18c24,0x087e);r.w.scratch.bytes[0x8c24]=0x7e;r.w.scratch.bytes[0x8c25]=0x08;
+        for(unsigned variable=0;variable<8;++variable)for(unsigned role=0;role<30;++role) {
+            const auto value=std::uint16_t(role*613+variable*1093+7);
+            s.put(0x0e54+variable*60+role*2,value);r.w.actors.set_authored_variable(role,variable,value);
+        }
+    }
     r.w.clock.action_scripts_disabled=1;s.put(s.jp?0xa56:0xa60,1);
     // Each script is actual joypad input at original polls, never a substituted
     // menu result. The delayed case exercises the real automatic money owner.
@@ -153,7 +163,7 @@ void run(const eb::GameAssets &assets,unsigned mode) {
     if(mode==11){script.choices={6,0};script.characters={0};}
     if(mode==12)script.choices={3,0,0};
     if(mode==13)script.choices={4,1,2,0,0};
-    if(mode==14){script.choices={6,2,0,0,0};script.characters={1,0};}
+    if(mode==14||mode==20){script.choices={6,2,0,0,0};script.characters={1,0};}
     if(mode==15)script.choices={3,23};
     if(mode==16)script.choices={3,51,0,0,0};
     if(mode==17)script.choices={3,51,0,0};
@@ -245,6 +255,9 @@ void run(const eb::GameAssets &assets,unsigned mode) {
     check(r.w.windows.draw_order().empty() && !r.w.meters.state().render,"World menu left visible window owners");
     compare_party(s,r);
     compare_message(s,r);
+    if(mode==20)for(unsigned variable=0;variable<8;++variable)for(unsigned role=0;role<30;++role)
+        check(r.w.actors.authored_variable(role,variable)==s.word(0x0e54+variable*60+role*2),
+              "Whole Status character selector changed another actual actor variable");
     if(mode>=16){check(s.word(s.jp?0xa141:0x9f3f)==r.w.actors.appearance_scene().teleport_destination,"World menu teleport destination differs");check(s.word(s.jp?0xa143:0x9f41)==r.w.session.teleport_style,"World menu teleport style differs");}
     if(std::getenv("EB_WORLD_MENU_REQUIRE_PHYSICAL_NMIS"))check(r.w.clock.publications-native_first_nmi==s.nmis-first_nmi,"World menu physical NMI count differs mode="+std::to_string(mode)+" source="+std::to_string(s.nmis-first_nmi)+" native="+std::to_string(r.w.clock.publications-native_first_nmi));
     std::cout<<"PASS complete original "<<(s.jp?"JP":"US")<<" world menu mode="<<mode
@@ -290,6 +303,6 @@ void random_targets(const eb::GameAssets &assets) {
 }
 int main(int argc,char **argv) {
     if(argc<2)return 77;
-    try {for(int i=1;i<argc;++i){const auto assets=eb::load_game_assets(argv[i],eb::asset_profiles());if(const auto *mode=std::getenv("EB_WORLD_MENU_MODE"))world_menu_reference::run(assets,unsigned(std::stoul(mode)));else {for(unsigned mode=0;mode<20;++mode)world_menu_reference::run(assets,mode);world_menu_reference::random_targets(assets);}}}
+    try {for(int i=1;i<argc;++i){const auto assets=eb::load_game_assets(argv[i],eb::asset_profiles());if(const auto *mode=std::getenv("EB_WORLD_MENU_MODE"))world_menu_reference::run(assets,unsigned(std::stoul(mode)));else {for(unsigned mode=0;mode<20;++mode)world_menu_reference::run(assets,mode);if(assets.version==eb::GameVersion::JP)world_menu_reference::run(assets,20);world_menu_reference::random_targets(assets);}}}
     catch(const std::exception &error){std::cerr<<error.what()<<'\n';return 1;}return 0;
 }

@@ -1,4 +1,5 @@
 #include "eb/native/world_party_relocation.hpp"
+#include "eb/native/entities/graphics/lifecycle.hpp"
 #include <stdexcept>
 namespace eb::native {
 namespace {
@@ -38,6 +39,36 @@ bool WorldPartyRelocation::Operation::advance(unsigned budget) {
   try {
     auto &o=owner_.owners_;auto &w=o.world;
     while(budget--) {
+      if(publication_) {
+        const auto progress=publication_->advance(1);
+        if(progress==dialogue::Progress::Suspended){executing_=false;return false;}
+        if(progress!=dialogue::Progress::Finished)continue;
+        publication_.reset();
+        if(creation_)creation_->respond_publication();
+        else {require(upload_&&upload_->needs_publication(),"Relocation lost its actual sprite upload");upload_->respond();}
+      }
+      if(creation_) {
+        if(!creation_->advance()) {
+          require(creation_->needs_publication(),"Relocation creation lost its actual DMA continuation");
+          publication_=parent_?w.runtime.begin_nested_publication(*parent_):w.runtime.begin_publication();
+          continue;
+        }
+        created_actor_=creation_->actor();creation_.reset();
+      }
+      if(upload_) {
+        if(!upload_->advance()) {
+          require(upload_->needs_publication(),"Relocation selection lost its actual DMA continuation");
+          publication_=parent_?w.runtime.begin_nested_publication(*parent_):w.runtime.begin_publication();
+          continue;
+        }
+        require(upload_->complete(),"Relocation sprite selection did not return");upload_.reset();
+      }
+      if(placement_) {
+        const auto progress=placement_->advance(1);
+        if(progress==dialogue::Progress::Suspended){executing_=false;return false;}
+        if(progress!=dialogue::Progress::Finished)continue;
+        placement_.reset();
+      }
       w.runtime.require_content_boundary(parent_);
       if(door_) {
         require(door_->advance(),"Relocation requires the actual bound door transition owner");
@@ -60,15 +91,20 @@ bool WorldPartyRelocation::Operation::advance(unsigned budget) {
         w.actors.appearance_scene().footstep_kind=w.area_character_style;
         w.actors.appearance_scene().footstep_override.reset();
         leader.walking_style=w.area_character_style==3 ? 10 : 0;
-        for(unsigned position=0;position<6;++position) {
-          const auto member=w.party.display_order[position]; if(!member) continue;
-          const auto role=w.formation.roles[position];
+        phase_=10;continue;
+      }
+      if(phase_==10) {
+          if(position_==6){phase_=20;continue;}
+          const unsigned position=position_;
+          const auto member=w.party.display_order[position]; if(!member){++position_;continue;}
+          auto &leader=w.interactions.state();
+          const auto role=w.formation.roles[position];role_=role;
           const auto old_id=w.actors.actor_for_role(role);
           require(bool(old_id), "Teleport party recreation lacks its authored role");
           const auto &old=w.actors.actor(*old_id);
-          const auto pause=w.actors.authored_pause(role);
-          const auto hidden=w.actors.authored_sprite_hidden(role);
-          const auto callback=old.behavior.tick;
+          pause_=w.actors.authored_pause(role);
+          hidden_=w.actors.authored_sprite_hidden(role);
+          callback_=old.behavior.tick;
           w.spawn.prepared.variables[0]=old.action().variables[0];
           w.spawn.prepared.variables[1]=old.action().variables[1];
           w.spawn.prepared.variables[5]=std::uint16_t(position*2);
@@ -97,18 +133,37 @@ bool WorldPartyRelocation::Operation::advance(unsigned budget) {
           auto prepared=w.spawn.prepared; prepared.x=leader.leader_x;prepared.y=leader.leader_y;prepared.direction=0;
           auto spec=w.actors.prepare_actor(sprite,w.party_data.initial(member).script,prepared);
           spec.appearance_context.overlay_flags=overlays;
+          sprite_=sprite;
+          auto *graphics=w.runtime.actor_graphics();
+          if(graphics)graphics->release(role);
           w.interactions.detach(*old_id);w.actors.erase(*old_id);
-          const auto id=w.actors.create_authored(spec,{unsigned(role),unsigned(role)+1});
-          require(bool(id), "Teleport party recreation failed its released role");
-          w.interactions.attach(*id,role,actor_creation_metadata(o.sprites,o.creation_data,sprite),0xffff);
-          w.actors.set_authored_pause(role,pause.scripts_and_physics_enabled,pause.tick_callback_enabled);
-          w.actors.set_authored_sprite_hidden(role,hidden);
-          auto &actor=w.actors.actor(*id);actor.behavior.tick=callback;actor.behavior.direction=direction_;actor.action().animation=0;
+          if(graphics)creation_=graphics->begin_create(spec,{unsigned(role),unsigned(role)+1});
+          else {
+            const auto id=w.actors.create_authored(spec,{unsigned(role),unsigned(role)+1});
+            require(bool(id), "Teleport party recreation failed its released role");created_actor_=*id;
+          }
+          phase_=11;continue;
+      }
+      if(phase_==11) {
+          auto &leader=w.interactions.state();
+          const auto role=role_;
+          w.interactions.attach(created_actor_,role,actor_creation_metadata(o.sprites,o.creation_data,sprite_),0xffff);
+          w.actors.set_authored_pause(role,pause_.scripts_and_physics_enabled,pause_.tick_callback_enabled);
+          w.actors.set_authored_sprite_hidden(role,hidden_);
+          auto &actor=w.actors.actor(created_actor_);actor.behavior.tick=callback_;actor.behavior.direction=direction_;actor.action().animation=0;
           actor.appearance.select_eight(direction_,0,actor.behavior.surface_flags);
           actor.behavior.projected_x=signed_word(std::uint16_t(leader.leader_x-w.actors.scene().camera_x));
           actor.behavior.projected_y=signed_word(std::uint16_t(leader.leader_y-w.actors.scene().camera_y));
-          if(role==w.formation.current_leader_role) leader.leader=*id;
-        }
+          if(role==w.formation.current_leader_role) leader.leader=created_actor_;
+          if(auto *graphics=w.runtime.actor_graphics()) {
+            require(actor.appearance.displayed().has_value(),"Relocation lost its actual Eight pose");
+            upload_=graphics->begin_selected_upload(created_actor_,*actor.appearance.displayed(),actor.behavior.surface_flags);
+          }
+          phase_=12;continue;
+      }
+      if(phase_==12) {++position_;phase_=10;continue;}
+      if(phase_==20) {
+        auto &leader=w.interactions.state();
         // Complete C05B7B with the caller's explicit down probe and pending=0.
         const auto probe=o.movement.resolve(o.collision,o.area,{{leader.leader_x,leader.leader_y},
             CollisionDirection::South,false,{0xffff,o.navigation.ladder_stairs.y},o.navigation.vertical_obstacles});
@@ -121,6 +176,7 @@ bool WorldPartyRelocation::Operation::advance(unsigned budget) {
         if(o.navigation.ladder_stairs.x!=0xffff) door_=o.doors.begin(o.navigation.ladder_stairs);
         phase_=1;continue;
       }
+      if(phase_==1) {
         auto &leader=w.interactions.state();
         w.trail.next_write=0;
         const PartyTrailPoint point{leader.leader_x,leader.leader_y,w.control.trodden_surface_flags,
@@ -139,7 +195,9 @@ bool WorldPartyRelocation::Operation::advance(unsigned budget) {
           w.actors.actor(*id).appearance.invalidate_animation_fingerprint();
         w.maintenance.possession_actor.reset();o.map_state.teleport_tile_x=o.map_state.teleport_tile_y=0;
         w.following.pajamas=w.windows.state().flag(o.bootstrap_data.pajamas_flag()) ? 1 : 0;
-        o.following.position_after_pause();
+        placement_=std::make_unique<world::PartyPlacement>(o.following,w.actors,w.runtime,parent_);
+        phase_=2;continue;
+      }
       done_=true;owner_.active_=nullptr;executing_=false;return true;
     }
     executing_=false;return false;

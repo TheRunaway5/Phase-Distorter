@@ -5,7 +5,7 @@
 namespace eb::native {
 OverlaySprites::OverlaySprites(std::span<const std::uint8_t> assets,
                                GameVersion version, SpriteResources &sprites)
-    : version_(version) {
+    : version_(version), sprites_(sprites) {
   const unsigned count = version == GameVersion::JP ? 0x40d7d : 0x40e31;
   constexpr std::array<unsigned, 18> starts{
       0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100};
@@ -26,6 +26,7 @@ OverlaySprites::OverlaySprites(std::span<const std::uint8_t> assets,
       const unsigned pose = assets[at + 2 + selection];
       if (pose == 0xff)
         continue;
+      selections_.push_back({group, pose, 0x4000 + tile_base * 16});
       const auto image = sprites.acquire(group, pose, SpriteSurface::Normal,
                                          SpriteFrameFormat::EightDirection,
                                          SpriteOrientation::Normal);
@@ -84,6 +85,8 @@ OverlaySprites::OverlaySprites(std::span<const std::uint8_t> assets,
     if (!complete)
       throw std::invalid_argument("Unterminated authored overlay frame");
     frames_.emplace(0xc00000 + maps + start, std::move(parts));
+    const auto count=frames_.at(0xc00000+maps+start).size()*5;
+    object_maps_.emplace(0xc00000+maps+start,std::vector<std::uint8_t>(assets.begin()+maps+start,assets.begin()+maps+start+count));
   }
   // Normalize the four finite authored animation loops to timed frames.
   // Source command pointers are content identities used only during import.
@@ -119,6 +122,23 @@ OverlaySprites::OverlaySprites(std::span<const std::uint8_t> assets,
       throw std::invalid_argument("Unterminated authored overlay clip");
   }
 }
+std::vector<OverlayPlanarRow> OverlaySprites::raw_uploads() const {
+  std::vector<OverlayPlanarRow> rows;
+  rows.reserve(selections_.size() * 2);
+  for (const auto &selection : selections_) {
+    const auto &header = sprites_.raw_header(selection.group);
+    const auto bank = sprites_.raw_bank(selection.group);
+    const auto frame = sprites_.raw_frame(selection.group, selection.pose,
+                                         SpriteFrameFormat::EightDirection);
+    const unsigned bytes = unsigned(header[1]) * 2;
+    const auto offset = std::uint16_t(frame.reference & 0xfffe);
+    for (unsigned row = 0; row < 2; ++row)
+      rows.push_back({bank, std::uint32_t(header[8]) << 16,
+                     std::uint16_t(offset + row * bytes), std::uint16_t(bytes),
+                     std::uint16_t(selection.destination + row * 256)});
+  }
+  return rows;
+}
 std::span<const OverlayClipStep> OverlaySprites::clip(OverlayKind kind) const {
   return clips_.at(static_cast<unsigned>(kind));
 }
@@ -128,5 +148,9 @@ OverlaySprites::frame(std::uint32_t authored_address) const {
   if (found == frames_.end())
     throw std::out_of_range("Unknown authored overlay frame");
   return found->second;
+}
+OverlayObjectMap OverlaySprites::object_map(std::uint32_t address) const {
+  const auto found=object_maps_.find(address);if(found==object_maps_.end())throw std::out_of_range("Unknown authored overlay object map");
+  return {address,found->second,0,lifetime_};
 }
 } // namespace eb::native

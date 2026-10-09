@@ -1,4 +1,11 @@
 #include "eb/native/world_runtime.hpp"
+#include "eb/native/entities/graphics/source_objects.hpp"
+#include "eb/native/entities/graphics/source_actor_draw.hpp"
+#include "eb/native/entities/graphics/source_global_draw.hpp"
+#include "eb/native/story/source_work.hpp"
+#include "eb/native/story/source_frame_input.hpp"
+#include "eb/native/world_player_area.hpp"
+#include "eb/native/world_palette_shift.hpp"
 #include "eb/native/world/collision_window.hpp"
 #include "eb/native/world_sprite_fade.hpp"
 #include "eb/native/story/battle_publication.hpp"
@@ -8,6 +15,7 @@
 #include "eb/native/world_enemy_movement.hpp"
 #include "eb/native/world_enemy_contact.hpp"
 #include "eb/native/world_enemy_behavior.hpp"
+#include "eb/native/entities/graphics/lifecycle.hpp"
 #include "eb/native/world_scene_presentation.hpp"
 #include "eb/native/world_door_transitions.hpp"
 #include "eb/native/world_input_playback.hpp"
@@ -45,10 +53,24 @@ bool enemy_behavior_service(NativeAction operation) {
   case NativeAction::DirectionFromLeader:
   case NativeAction::EnemyAngleVelocity:
   case NativeAction::EnemyAngleDirection:
+  case NativeAction::FollowVariableAngle:
   case NativeAction::EnemyDistanceSleep:
     return true;
   default:
     return false;
+  }
+}
+bool graphics_service(NativeAction operation) {
+  switch(operation) {
+  case NativeAction::SelectFourInitial:
+  case NativeAction::SelectFourAnimation:
+  case NativeAction::SelectFourFirst:
+  case NativeAction::SelectFourSecond:
+  case NativeAction::StepFourWalk:
+  case NativeAction::StepEightAnimation:
+  case NativeAction::SelectEightCurrent:
+  case NativeAction::InitializePartyActor:return true;
+  default:return false;
   }
 }
 std::optional<WorldSpriteFadeTask> fade_task(NativeAction action) {
@@ -120,6 +142,7 @@ struct EnemyLifetimeLease {
 
 struct WorldRuntime::State : story::FrameBoundaryService {
   dialogue::WindowHost &windows;
+  std::weak_ptr<const void> windows_lifetime;
   party::State &party;
   story::RandomState &random;
   story::InputState &input;
@@ -147,6 +170,8 @@ struct WorldRuntime::State : story::FrameBoundaryService {
   story::Scene scene;
   std::unique_ptr<WorldMaintenance> maintenance;
   const WorldControl *world_control{};
+  const WorldControlState *source_control_state{};
+  std::weak_ptr<const void> control_lifetime,control_state_lifetime;
   const WorldInteractionQueue *interaction_queue{};
   WorldMaintenanceState *maintenance_state{};
   const party::ItemTransformationState *item_state{};
@@ -159,7 +184,10 @@ struct WorldRuntime::State : story::FrameBoundaryService {
   WorldEnemyMovement *enemy_movement{};
   WorldEnemyContact *enemy_contact{};
   WorldEnemyBehavior *enemy_behavior{};
+  entities::graphics::Lifecycle *actor_graphics{};
   WorldScenePresentation *presentation{};
+  const std::uint16_t *map_palette_backup{};
+  battle::PsiDisplayState *map_palette_video{};
   WorldEncounterEffects *encounter_effects{};
   WorldPartyFollowing *following{};
   WorldDoorTransitions *transitions{};
@@ -174,23 +202,46 @@ struct WorldRuntime::State : story::FrameBoundaryService {
     return walking && walking->doors().transitions() != transitions;
   }
 
+  enum class InterruptMode { World, Default, Custom };
+  InterruptMode interrupt_mode = InterruptMode::World;
+  story::InterruptCallback *interrupt_callback{};
+  bool in_interrupt_callback{};
+  bool has_frame_boundary() const noexcept {
+    return transitions || interrupt_mode != InterruptMode::World;
+  }
   void validate_publication() const override {
-    require(transitions && !transitions->failed(),
-            "Native frame requires healthy transition/scheduler owners");
+    if (interrupt_mode == InterruptMode::Custom) {
+      require(interrupt_callback, "Native interrupt callback lost its actual owner");
+      if (!in_interrupt_callback) interrupt_callback->validate_publication();
+    } else if (interrupt_mode == InterruptMode::World) {
+      require(transitions && !transitions->failed(),
+              "Native frame requires healthy transition/scheduler owners");
+    }
   }
   void after_publication() override {
-    // An interrupt inside the live scheduled callback still publishes its
-    // frame; the source IN_IRQ_CALLBACK guard suppresses only recursion.
-    // process_frame reports that valid suppression as false, not an error.
-    (void)transitions->scheduler().process_frame();
+    if (in_interrupt_callback) return;
+    in_interrupt_callback = true;
+    try {
+      if (interrupt_mode == InterruptMode::Custom) interrupt_callback->after_publication();
+      else if (interrupt_mode == InterruptMode::World)
+        (void)transitions->scheduler().process_frame();
+      in_interrupt_callback = false;
+    } catch (...) { in_interrupt_callback = false; throw; }
+  }
+  bool changes_display_registers() const noexcept override {
+    return interrupt_mode == InterruptMode::Custom && interrupt_callback &&
+           interrupt_callback->changes_display_registers();
   }
   void validate_input() const override {
-    validate_publication();
-    require(!transitions->playback().recording_required(),
-            "Native frame recording requires its real recording service");
+    if (transitions) {
+      require(!transitions->failed(), "Native input lost its actual transition owner");
+      require(!transitions->playback().recording_required(),
+              "Native frame recording requires its real recording service");
+    }
   }
   std::array<std::uint16_t, 2>
   read_input(std::array<std::uint16_t, 2> host) override {
+    if (!transitions) return host;
     transitions->playback().read(host);
     return transitions->playback().state().raw;
   }
@@ -204,7 +255,7 @@ struct WorldRuntime::State : story::FrameBoundaryService {
         const WorldPalettes &palettes, const WorldPaletteAnimations &animations,
         WorldSpawnControls &spawn, NpcStripAdmission policy,
         ActorRetentionReader reader, story::SceneView view)
-      : windows(w), party(party), random(random), input(input), clock(clock),
+      : windows(w), windows_lifetime(w.source_lifetime()), party(party), random(random), input(input), clock(clock),
         collision(collision), actors(a), enemies(e), activation(activation), area(map),
         palettes(colors), map_content(maps), palette_content(palettes),
         animation_content(animations), controls(spawn), admission(policy),
@@ -213,10 +264,13 @@ struct WorldRuntime::State : story::FrameBoundaryService {
         movement_lease(a, movement), enemy_lifetime_lease(a, e),
         streaming(a, activation, e, collision, map, random, spawn),
         scene(w, party, random, meters, clock, input, a, map, colors, view) {
+    actors.bind_drawing_input(input);
     movement_lease.commit();
   }
   ~State() {
-    if (presentation) windows.clear_palette_publication(*presentation);
+    actors.clear_drawing_input(input);
+    if (presentation && !windows_lifetime.expired())
+      windows.clear_palette_publication(*presentation);
     if (following)
       actors.clear_party_following(*following);
   }
@@ -245,14 +299,21 @@ WorldRuntime::WorldRuntime(dialogue::WindowHost &w, party::State &p,
       w, p, r, m, clock, input, a, activation, e, collision, area, palettes,
       maps, colors, animations, spawn, admission, std::move(reader), view);
 }
-WorldRuntime::~WorldRuntime() = default;
+WorldRuntime::~WorldRuntime() {
+  if(state_->actor_graphics)
+    state_->streaming.clear_actor_graphics(*state_->actor_graphics);
+}
 void WorldRuntime::check() const {
   auto &s = *state_;
   if (s.failure)
     std::rethrow_exception(s.failure);
   require(!s.abandoned,
           "An abandoned operation invalidated the native world runtime");
+  require(!s.windows_lifetime.expired(),
+          "Native world runtime lost its actual window host");
   require(!s.scene.failed(), "Native scene continuation has failed");
+  require(!s.world_control || (!s.control_lifetime.expired()&&!s.control_state_lifetime.expired()),
+          "Native runtime lost its actual world controller instance");
   require(!s.transition_owner_changed(),
           "Native door producers and frame services have different owners");
   require(!s.maintenance || !s.maintenance->failed(),
@@ -273,6 +334,10 @@ void WorldRuntime::check() const {
           "Native enemy contact has failed");
   require(!s.enemy_behavior || !s.enemy_behavior->failed(),
           "Native enemy behavior has failed");
+  require(!s.actor_graphics || !s.actor_graphics->failed(),
+          "Native actor graphics continuation has failed");
+  require(!s.following || !s.following->failed(),
+          "Native party following continuation has failed");
   require(!s.encounter_effects || !s.encounter_effects->failed(),
           "Native encounter effects have failed");
   // WorldStreaming owns the original terminal exception and never resumes
@@ -317,6 +382,12 @@ void WorldRuntime::require_content_boundary(Operation *parent) const {
 bool WorldRuntime::uses(const party::Inventory &inventory) const noexcept {
   return state_->inventory == &inventory;
 }
+bool WorldRuntime::uses(const ActorWorld &actors) const noexcept {
+  return &state_->actors == &actors;
+}
+bool WorldRuntime::uses(const story::TickState &clock) const noexcept {
+  return &state_->clock == &clock;
+}
 bool WorldRuntime::uses(const npcs::Interactions &interactions) const noexcept {
   return state_->interactions == &interactions;
 }
@@ -344,7 +415,10 @@ bool WorldRuntime::uses(const dialogue::WindowHost &windows,
 }
 void WorldRuntime::check_response(const Operation &operation) const {
   check_operation(operation);
-  require(!state_->streaming.busy(),
+  require(!state_->streaming.busy() ||
+          ((operation.streaming_publication_ ||
+            (operation.graphics_streaming_publication_&&operation.graphics_publication_)) &&
+           state_->streaming.needs_graphics_publication()),
           "Native streaming must finish before a scene response");
 }
 
@@ -376,6 +450,83 @@ WorldRuntime::begin(story::TickKind kind) {
           "before publication");
   return wrap(state_->scene.begin(kind), refresh);
 }
+bool WorldRuntime::permits_source_meter_control(const WorldControlState &control) const noexcept {
+  return !state_->world_control||(!state_->control_lifetime.expired()&&!state_->control_state_lifetime.expired()&&state_->source_control_state==&control);
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_meter_status_window_tick_impl(
+    story::SourceWorkService &work,
+    std::function<void(story::TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&)> validator,
+    std::function<void()> guard,const void *control,const void *counter,const void *palette) {
+  check_idle();require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source meter status requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_meter_status_window_tick_impl(work,std::move(validator),std::move(guard),control,counter,palette));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_meter_tiles_window_tick_impl(
+    story::SourceWorkService &work,
+    std::function<void(story::TickState&,const battle::FrameDisplay&,party::State&,party::MeterWindows&,dialogue::WindowHost&)> validator,
+    std::function<void()> guard,const void *control,const void *scratch) {
+  check_idle();require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source meter tiles requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_meter_tiles_window_tick_impl(work,std::move(validator),std::move(guard),control,scratch));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_meter_window_tick_impl(
+    story::SourceWorkService &work,std::function<void(story::TickState&,const battle::FrameDisplay&,party::State&,dialogue::WindowHost&)> validator) {
+  check_idle();
+  require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source meter roller requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_meter_window_tick_impl(work,std::move(validator)));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_random_window_tick_impl(
+    story::SourceWorkService &work,std::function<void(story::TickState&,const battle::FrameDisplay&,story::RandomState&)> validator) {
+  check_idle();
+  require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source RAND requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_random_window_tick_impl(work,std::move(validator)));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_window_tick_impl(
+    story::SourceWorkService &work,std::function<void(story::TickState&,const battle::FrameDisplay&,dialogue::WindowHost&,const WorldDisplayFade&)> validator) {
+  check_idle();
+  require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source window requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_window_tick_impl(work,std::move(validator)));
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_source_world_frame_impl(
+    story::SourceWorkService &work,std::function<void(story::TickState&,const battle::FrameDisplay&)> validator) {
+  check_idle();
+  require(!state_->capture_dirty&&!state_->streaming.busy(),
+      "Source foreground requires its completed actual world capture");
+  return wrap(state_->scene.begin_source_world_frame_impl(work,std::move(validator)));
+}
+void WorldRuntime::set_interrupt_callback(story::InterruptCallback &callback, Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->in_interrupt_callback, "Cannot replace a running interrupt callback");
+  callback.validate_publication();
+  state_->interrupt_callback = &callback;
+  state_->interrupt_mode = State::InterruptMode::Custom;
+}
+void WorldRuntime::reset_interrupt_callback(Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->in_interrupt_callback, "Cannot reset a running interrupt callback");
+  state_->interrupt_callback = nullptr;
+  state_->interrupt_mode = State::InterruptMode::Default;
+}
+void WorldRuntime::restore_world_interrupt_callback(Operation *parent) {
+  require_content_boundary(parent);
+  require(!state_->in_interrupt_callback && state_->transitions && !state_->transitions->failed(),
+          "World interrupt restoration requires its healthy actual scheduler");
+  state_->interrupt_callback = nullptr;
+  state_->interrupt_mode = State::InterruptMode::World;
+}
+bool WorldRuntime::uses_interrupt_callback(const story::InterruptCallback &callback) const noexcept {
+  return state_->interrupt_mode == State::InterruptMode::Custom && state_->interrupt_callback == &callback;
+}
+void WorldRuntime::abandon_interrupt_callback(const story::InterruptCallback &callback) noexcept {
+  if (uses_interrupt_callback(callback)) {
+    state_->interrupt_callback = nullptr;
+    state_->interrupt_mode = State::InterruptMode::Default;
+    state_->abandoned = true;
+  }
+}
 std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_publication() {
   check_idle();
   require(!state_->capture_dirty,
@@ -390,6 +541,21 @@ std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_retained_publicatio
   // wait cannot activate actors, capture new scenery or consume input.
   return wrap(parent ? state_->scene.begin_nested_publication(*parent->scene_) :
                        state_->scene.begin_publication());
+}
+bool WorldRuntime::streaming_needs_publication() const noexcept {
+  return state_->streaming.needs_graphics_publication();
+}
+void WorldRuntime::respond_streaming_publication() {
+  check();state_->streaming.respond_graphics_publication();
+}
+std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_streaming_publication(Operation *parent) {
+  check();
+  require(state_->streaming.needs_graphics_publication(),
+      "Streaming publication requires its actual pending raw NPC creation");
+  if(parent)check_operation(*parent);
+  else require(state_->stack.empty(),"An actor callback owns this streaming publication");
+  auto operation=wrap(parent?state_->scene.begin_actor_publication(*parent->scene_):state_->scene.begin_publication());
+  operation->streaming_publication_=true;return operation;
 }
 std::unique_ptr<WorldRuntime::Operation> WorldRuntime::begin_nested_publication(Operation &parent) {
   require_content_boundary(&parent);
@@ -505,6 +671,8 @@ void WorldRuntime::bind_maintenance(WorldControl &control,
       s.palette_animation, s.controls.prepared);
   if (s.presentation) s.maintenance->bind_presentation(*s.presentation);
   s.world_control = &control;
+  s.source_control_state = &control.state();s.control_lifetime = control.source_lifetime();
+  s.control_state_lifetime = control.state().source_lifetime();
   s.interaction_queue = &queue;
   s.maintenance_state = &state;
   s.item_state = &items;
@@ -555,6 +723,7 @@ void WorldRuntime::bind_door_transitions(WorldDoorTransitions &transitions) {
           "Native transitions require this frame's input, clock, phone and "
           "gate owners");
   s.walking->bind_transitions(transitions);
+  s.scene.bind_source_input(transitions.playback());
   s.transitions = &transitions;
 }
 void WorldRuntime::bind_escalator(WorldEscalator &escalator) {
@@ -696,6 +865,16 @@ void WorldRuntime::bind_presentation(WorldScenePresentation &presentation) {
   s.presentation = &presentation;
   s.capture_dirty = true;
 }
+void WorldRuntime::bind_map_palette_backup(std::span<const std::uint16_t,256> backup,
+                                           battle::PsiDisplayState &video) {
+  check_idle();
+  auto &s=*state_;
+  require(s.presentation && s.presentation->uses_video_transport(video) &&
+      (!s.map_palette_backup || s.map_palette_backup==backup.data()) &&
+      (!s.map_palette_video || s.map_palette_video==&video),
+      "Map palette shift must borrow the runtime's actual retained backup and display");
+  s.map_palette_backup=backup.data();s.map_palette_video=&video;
+}
 void WorldRuntime::bind_encounter_effects(WorldEncounterEffects &effects) {
   check_idle();
   auto &s = *state_;
@@ -746,6 +925,15 @@ void WorldRuntime::bind_enemy_contact(WorldEnemyContact &contact) {
           "Native enemy contact must use this runtime's actual world owners");
   s.enemy_contact = &contact;
 }
+void WorldRuntime::bind_actor_graphics(entities::graphics::Lifecycle &graphics) {
+  check_idle();auto &s=*state_;
+  require(!s.actor_graphics&&!graphics.busy()&&!graphics.failed()&&graphics.uses(s.actors),
+      "Raw actor graphics must use this runtime's actual healthy actor owner");
+  if(!s.actors.uses(graphics))s.actors.bind_raw_graphics(graphics);
+  s.actor_graphics=&graphics;
+  s.streaming.bind_actor_graphics(graphics);
+}
+entities::graphics::Lifecycle *WorldRuntime::actor_graphics() const noexcept {return state_->actor_graphics;}
 dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
   if (done_)
     return dialogue::Progress::Finished;
@@ -753,9 +941,42 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
   auto &s = *runtime_.state_;
   try {
     while (budget--) {
-      if (s.streaming.busy()) {
-        if (!s.streaming.advance(1))
+      if(graphics_publication_) {
+        const auto progress=graphics_publication_->advance(1);
+        if(progress==dialogue::Progress::Suspended)return progress;
+        if(progress!=dialogue::Progress::Finished)continue;
+        graphics_publication_.reset();
+        if(graphics_streaming_publication_) {
+          s.streaming.respond_graphics_publication();graphics_streaming_publication_=false;
+        } else if(graphics_creation_)graphics_creation_->respond_publication();else graphics_upload_->respond();
+      }
+      if(graphics_creation_) {
+        if(!graphics_creation_->advance()) {
+          if(graphics_creation_->needs_publication())graphics_publication_=s.scene.begin_nested_publication(*scene_);
           continue;
+        }
+        const auto actor=graphics_creation_->actor();graphics_creation_.reset();
+        const auto role=s.actors.actor(actor).authored_role();
+        require(role.has_value(),"Raw scripted creation lost its actual authored role");
+        scene_->respond_actor(std::uint16_t(*role),graphics_parameters_);continue;
+      }
+      if(graphics_upload_) {
+        if(!graphics_upload_->advance(1)) {
+          if(graphics_upload_->needs_publication())graphics_publication_=s.scene.begin_nested_publication(*scene_);
+          continue;
+        }
+        const auto result=graphics_value_.value_or(graphics_upload_->result());
+        graphics_upload_.reset();graphics_value_.reset();
+        scene_->respond_actor(result,graphics_parameters_);continue;
+      }
+      if (!streaming_publication_ && s.streaming.busy()) {
+        if (!s.streaming.advance(1)) {
+          if(s.streaming.needs_graphics_publication()) {
+            graphics_publication_=s.scene.begin_actor_publication(*scene_);
+            graphics_streaming_publication_=true;
+          }
+          continue;
+        }
       }
       // A zero-strip refresh still owes one control response. Conversely a
       // budget yield while refreshing must retain the same pending callback.
@@ -840,6 +1061,11 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         continue;
       switch (*scene_->service()) {
       case story::SceneService::Publication:
+      case story::SceneService::ScreenUpdate:
+      case story::SceneService::ForegroundPrefix:
+      case story::SceneService::SuppressedActors:
+      case story::SceneService::ForegroundReturn:
+      case story::SceneService::WindowPublication:
         return dialogue::Progress::Suspended;
       case story::SceneService::Frame:
         if (main_effect_pending_) {
@@ -860,6 +1086,29 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         break;
       case story::SceneService::ActorEngine: {
         const auto &request = scene_->actor_request();
+        if(s.actor_graphics&&request&&s.actor_graphics->owns(request->actor)&&
+            request->origin==WorldActionOrigin::Script&&request->binding.operation==NativeAction::CreateActor) {
+          const auto &actor=s.actors.actor(request->actor);
+          const auto operands=std::get<CreateActorOperands>(request->binding.payload);
+          auto prepared=s.controls.prepared;
+          prepared.x=std::uint16_t(actor.action().position[0]>>16);
+          prepared.y=std::uint16_t(actor.action().position[1]>>16);prepared.direction=0;
+          graphics_creation_=s.actor_graphics->begin_create(s.actors.prepare_actor(operands.sprite,operands.script,prepared),{0,22});
+          graphics_parameters_=request->binding.parameter_bytes;break;
+        }
+        if(s.actor_graphics&&request&&s.actor_graphics->owns(request->actor)&&request->origin==WorldActionOrigin::Script&&graphics_service(request->binding.operation)) {
+          const auto result=s.actors.prepare_raw_appearance();
+          require(result.handled,"Actual raw graphics request has no appearance owner");
+          if(!result.refreshed) {
+            require(result.script_value.has_value()||request->binding.discard_result,
+                "Unrefreshed appearance result lacks its actual scalar owner");
+            scene_->respond_actor(result.script_value.value_or(0),request->binding.parameter_bytes);break;
+          }
+          const auto &actor=s.actors.actor(request->actor);
+          require(actor.appearance.displayed().has_value(),"Actual graphics refresh lost its selected pose");
+          graphics_upload_=s.actor_graphics->begin_selected_upload(request->actor,*actor.appearance.displayed(),actor.behavior.surface_flags);
+          graphics_value_=result.script_value;graphics_parameters_=request->binding.parameter_bytes;break;
+        }
         if (request && request->origin == WorldActionOrigin::Script) {
           if (const auto task = fade_task(request->binding.operation)) {
             require(s.sprite_fade, "Actor fade task requires its actual fade owner");
@@ -879,6 +1128,42 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
             scene_->respond_actor(value.value_or(0), request->binding.parameter_bytes);
             break;
           }
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::ReadPendingDmaBytes) {
+          require(s.map_palette_video && s.presentation &&
+              s.presentation->uses_video_transport(*s.map_palette_video),
+              "Actor DMA wait requires its actual shared transfer counter");
+          scene_->respond_actor(s.map_palette_video->pending_bytes(),request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::ShiftMapPalette) {
+          require(s.presentation && s.map_palette_backup && s.map_palette_video &&
+              s.presentation->uses_video_transport(*s.map_palette_video),
+              "Map palette shift requires its actual retained backup and DMA queue");
+          const auto colors=shift_map_palette(
+              std::span<const std::uint16_t,256>(s.map_palette_backup,256),
+              s.actors.actor(request->actor).action().variables[0]);
+          std::array<std::uint8_t,64> alias;
+          for(unsigned i=0;i<32;++i) {
+            alias[i*2]=std::uint8_t(colors[224+i]);
+            alias[i*2+1]=std::uint8_t(colors[224+i]>>8);
+          }
+          s.map_palette_video->write_descriptor_prefix(alias);
+          s.presentation->publish_scene_palette_range(32,
+              std::span<const std::uint16_t>(colors).first(224),24);
+          scene_->respond_actor(24,request->binding.parameter_bytes);
+          break;
+        }
+        if (request && request->origin == WorldActionOrigin::Script &&
+            request->binding.operation == NativeAction::TestPlayerInArea) {
+          require(s.interaction_state, "Area trigger requires the actual leader state");
+          const auto value=test_player_in_area(s.actors.actor(request->actor).action(),
+              s.interaction_state->leader_x,s.interaction_state->leader_y,
+              s.actors.appearance_scene().teleport_destination);
+          scene_->respond_actor(value,request->binding.parameter_bytes);
+          break;
         }
         if (request && request->origin == WorldActionOrigin::Script &&
             request->binding.operation == NativeAction::CopySpritePosition) {
@@ -947,11 +1232,16 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         }
         if (request && request->origin == WorldActionOrigin::Script &&
             request->binding.operation == NativeAction::SetDirectionFrame &&
-            request->binding.discard_result) {
+            (request->binding.discard_result || (s.actor_graphics&&s.actor_graphics->owns(request->actor)))) {
           auto& actor = s.actors.actor(request->actor);
           select_scripted_pose(actor.action(), actor.behavior, actor.appearance,
                                std::uint8_t(request->binding.operand),
                                std::uint8_t(request->binding.operand >> 8));
+          if(s.actor_graphics&&s.actor_graphics->owns(request->actor)) {
+            require(actor.appearance.displayed().has_value(),"Scripted direction/frame lost its actual selected pose");
+            graphics_upload_=s.actor_graphics->begin_selected_upload(request->actor,*actor.appearance.displayed(),actor.behavior.surface_flags);
+            graphics_value_.reset();graphics_parameters_=request->binding.parameter_bytes;break;
+          }
           scene_->respond_actor({}, request->binding.parameter_bytes);
           break;
         }
@@ -1027,12 +1317,25 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
             result = behavior.set_velocity(request->actor, request->action.temporary); break;
           case NativeAction::EnemyAngleDirection:
             result = behavior.set_moving_direction(request->actor, request->action.temporary); break;
+          case NativeAction::FollowVariableAngle: {
+            const bool raw=s.actor_graphics&&s.actor_graphics->owns(request->actor);
+            const auto value=raw?behavior.follow_variable_angle(request->actor,*s.actor_graphics):
+                behavior.follow_variable_angle(request->actor,request->binding.discard_result);
+            if(!value&&raw) {
+              const auto &actor=s.actors.actor(request->actor);
+              require(actor.appearance.displayed().has_value(),"Variable-angle refresh lost its selected pose");
+              graphics_upload_=s.actor_graphics->begin_selected_upload(request->actor,*actor.appearance.displayed(),actor.behavior.surface_flags);
+              graphics_value_.reset();graphics_parameters_=request->binding.parameter_bytes;break;
+            }
+            require(value.has_value()||request->binding.discard_result,"Variable-angle graphics result lost its actual compiled proof");
+            result=value.value_or(0);break;
+          }
           case NativeAction::EnemyDistanceSleep:
             result = behavior.distance_sleep(request->actor, request->binding.operand);
             sleep = result; break;
           default: throw std::logic_error("Invalid native enemy behavior service");
           }
-          scene_->respond_actor(result, request->binding.parameter_bytes, sleep);
+          if(!graphics_upload_)scene_->respond_actor(result, request->binding.parameter_bytes, sleep);
           break;
         }
         if (s.enemy_contact && request &&
@@ -1109,6 +1412,11 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
         }
         const auto area =
             s.retention ? s.retention() : std::optional<ActorRetentionArea>{};
+        // UNKNOWN_C020F1 releases the raw tag before it clears the actual
+        // sprite/NPC owners, and keeps the actor alive until EVENT_END.
+        if(s.actor_graphics&&request&&request->binding.operation==NativeAction::ReleaseAppearance&&
+            request->origin==WorldActionOrigin::Script&&s.actor_graphics->owns(request->actor)&&!s.enemies.busy())
+          s.actor_graphics->release(*s.actors.actor(request->actor).authored_role());
         if (!fulfill_actor_lifecycle(s.actors, s.enemies,
                                      area ? &*area : nullptr,
                                      &s.controls.prepared))
@@ -1129,16 +1437,17 @@ dialogue::Progress WorldRuntime::Operation::advance(unsigned budget) {
 }
 const std::optional<story::SceneService> &
 WorldRuntime::Operation::service() const {
-  return scene_->service();
+  return graphics_publication_?graphics_publication_->service():scene_->service();
 }
 const std::optional<WorldActionRequest> &
 WorldRuntime::Operation::actor_request() const {
-  return scene_->actor_request();
+  static const std::optional<WorldActionRequest> none;
+  return graphics_publication_ ? none : scene_->actor_request();
 }
 const std::optional<WorldMaintenanceRequest> &
 WorldRuntime::Operation::maintenance_request() const {
   static const std::optional<WorldMaintenanceRequest> none;
-  return maintenance_ ? maintenance_->request() : none;
+  return maintenance_ && !graphics_publication_ ? maintenance_->request() : none;
 }
 const std::optional<WorldDoorTransitionRequest> &
 WorldRuntime::Operation::door_request() const {
@@ -1184,29 +1493,137 @@ story::FrameRequirement WorldRuntime::Operation::frame_requirement() const {
 void WorldRuntime::interrupt_publication() {
   auto &s=*state_;
   require(!s.abandoned && !s.failure,"Peripheral publication requires a healthy runtime");
-  try {s.scene.interrupt_publication(s.transitions?state_.get():nullptr);}
+  try {s.scene.interrupt_publication(s.has_frame_boundary()?state_.get():nullptr);}
   catch(...) {s.failure=std::current_exception();throw;}
 }
+WorldRuntime::SourceInterrupt::SourceInterrupt(std::unique_ptr<story::Scene::SourceInterrupt> scene)
+    :scene_(std::move(scene)) {}
+WorldRuntime::SourceInterrupt::~SourceInterrupt()=default;
+void WorldRuntime::SourceInterrupt::increment_pending(){scene_->increment_pending();}
+void WorldRuntime::SourceInterrupt::increment_counter(){scene_->increment_counter();}
+void WorldRuntime::SourceInterrupt::publish(){scene_->publish();}
+void WorldRuntime::SourceInterrupt::callback(){scene_->callback();}
+void WorldRuntime::SourceInterrupt::rotate_heap(){scene_->rotate_heap();}
+void WorldRuntime::SourceInterrupt::complete(){scene_->complete();}
+std::unique_ptr<WorldRuntime::SourceInterrupt> WorldRuntime::begin_source_interrupt() {
+  auto &s=*state_;
+  require(!s.abandoned && !s.failure,"Source NMI requires healthy actual runtime");
+  return std::unique_ptr<SourceInterrupt>(new SourceInterrupt(
+      s.scene.begin_source_interrupt(s.has_frame_boundary()?state_.get():nullptr)));
+}
+void WorldRuntime::bind_source_work(story::SourceWorkService &work,const battle::PsiDisplayState &video) {
+  auto &s=*state_;require(!failed() && s.stack.empty() && s.presentation &&
+      s.presentation->uses_video_transport(video) && work.uses(s.actors,video),
+      "Source work requires idle actual runtime transports");
+  s.scene.bind_source_work(work,video);
+}
+void WorldRuntime::clear_source_work(const story::SourceWorkService &work) noexcept {
+  state_->scene.clear_source_work(work);
+}
+bool WorldRuntime::uses_default_interrupt_callback() const noexcept {
+  return state_->interrupt_mode==State::InterruptMode::Default;
+}
+bool WorldRuntime::uses_world_interrupt_callback(const WorldScheduler &scheduler) const noexcept {
+  return state_->interrupt_mode==State::InterruptMode::World && state_->transitions &&
+      &state_->transitions->scheduler()==&scheduler;
+}
+bool WorldRuntime::interrupt_callback_active() const noexcept {return state_->in_interrupt_callback;}
 void WorldRuntime::Operation::complete_publication() {
   runtime_.check_response(*this);
   const auto completed = runtime_.state_->scene.completed_frames();
+  auto *publishing=graphics_publication_?graphics_publication_.get():scene_;
   try {
-    if (runtime_.state_->transitions)
-      scene_->complete_publication(*runtime_.state_);
+    if (runtime_.state_->has_frame_boundary())
+      publishing->complete_publication(*runtime_.state_);
     else
-      scene_->complete_publication();
+      publishing->complete_publication();
   } catch (...) {
     if (runtime_.state_->scene.failed() || runtime_.state_->scene.completed_frames() != completed)
       runtime_.state_->failure = std::current_exception();
     throw;
   }
 }
+void WorldRuntime::Operation::respond_source_publication() {
+  runtime_.check_response(*this);
+  auto *publishing=graphics_publication_?graphics_publication_.get():scene_;
+  try{publishing->respond_source_publication();}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+story::Scene::Operation &WorldRuntime::Operation::source_frame_owner(WorldInputPlayback &raw) {
+  require(!main_effect_pending_,"Main frame must execute encounter effects before source WAIT");
+  runtime_.check_response(*this);auto &s=*runtime_.state_;
+  require(s.transitions && !s.transitions->failed() && &s.transitions->playback()==&raw,
+          "Source WAIT requires this Runtime's actual input transition owner");
+  s.validate_input();return *scene_;
+}
+story::Scene::Operation &WorldRuntime::Operation::source_screen_owner() {
+  runtime_.check_response(*this);return *scene_;
+}
+story::Scene::Operation &WorldRuntime::Operation::source_foreground_owner() {
+  runtime_.check_response(*this);return *scene_;
+}
+void WorldRuntime::Operation::respond_source_meter_status(story::SourceMeterStatus &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_meter_status(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_meter_tiles(story::SourceMeterTiles &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_meter_tiles(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_meter_roller(story::SourceMeterRoller &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_meter_roller(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_random(story::SourceRandom &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_random(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_window_publication(story::SourceWindowPublication &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_window_publication(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_foreground(story::SourceForegroundWork &work) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_foreground(work);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_objects(story::SourceObjectPreparation &objects) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_objects(objects);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_actor_draw(story::SourceActorDraw &draw) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_actor_draw(draw);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_global_draw(story::SourceGlobalDraw &draw) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_global_draw(draw);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_screen(story::SourceScreenUpdate &screen) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_screen(screen);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+}
+void WorldRuntime::Operation::respond_source_frame(story::SourceFrameInput &input) {
+  runtime_.check_response(*this);
+  try{scene_->respond_source_frame(input);}
+  catch(...) {if(runtime_.state_->scene.failed())runtime_.state_->failure=std::current_exception();throw;}
+  if(refresh_) {runtime_.state_->capture_dirty=false;refresh_=false;}
+}
 void WorldRuntime::Operation::complete_frame(std::array<std::uint16_t, 2> raw) {
   require(!main_effect_pending_, "Main frame must execute encounter effects before publication");
   runtime_.check_response(*this);
   const auto completed = runtime_.state_->scene.completed_frames();
   try {
-    if (runtime_.state_->transitions)
+    if (runtime_.state_->has_frame_boundary())
       scene_->complete_frame(raw, *runtime_.state_);
     else
       scene_->complete_frame(raw);
@@ -1230,6 +1647,9 @@ void WorldRuntime::Operation::respond_actor(std::uint16_t value,
       !maintenance_,
       "Native maintenance must complete before actor callback acknowledgment");
   const auto &request = scene_->actor_request();
+  require(!graphics_upload_&&!graphics_creation_&&!graphics_publication_&&(!runtime_.state_->actor_graphics||!request||
+      !runtime_.state_->actor_graphics->owns(request->actor)||(!graphics_service(request->binding.operation)&&
+      request->binding.operation!=NativeAction::SetDirectionFrame&&request->binding.operation!=NativeAction::CreateActor)),"Bound raw actor graphics must finish before acknowledgment");
   require(!request || request->binding.operation != NativeAction::PlaySound,
           "Actor PLAY_SOUND requires its actual typed audio command before acknowledgment");
   require(!runtime_.state_->enemy_movement || !request ||
@@ -1331,6 +1751,22 @@ void WorldRuntime::clear_world_capture(Operation *parent) {
   state_->scene.clear_world_capture(parent?parent->scene_:nullptr);
   state_->capture_dirty = true;
 }
+void WorldRuntime::prepare_photograph_area(CameraPosition destination, bool preserve_artwork,
+    std::span<const std::uint16_t,96> scenery, std::span<const std::uint16_t,16> frame_palette,
+    std::span<const std::uint16_t> sprite_override, Operation *parent) {
+  require_content_boundary(parent);
+  auto &s=*state_;
+  require(!s.streaming.busy() && s.controls.photograph && !s.controls.enemies &&
+          !s.windows.prompt_state().debug,
+          "Photograph preparation requires its actual isolated map-loading mode");
+  const auto &sector=s.map_content.sector(destination.x/256,destination.y/128);
+  auto area=s.area.prepare_photograph(sector.combination,s.windows.state().event_flags,preserve_artwork);
+  auto palettes=s.palette_content.resolve_photograph(
+      s.palette_content.area_at(destination.x,destination.y),scenery,frame_palette,sprite_override);
+  palettes.animation_id=s.palettes.animation_id;
+  s.area=std::move(area);s.palettes=std::move(palettes);
+  s.capture_dirty=true;
+}
 void WorldRuntime::refresh_world_capture(Operation *parent) {
   require_content_boundary(parent);
   require(!state_->streaming.busy(),"Capture refresh cannot interrupt streaming");
@@ -1390,7 +1826,8 @@ bool WorldRuntime::advance_streaming(unsigned budget, Operation *parent) {
 }
 bool WorldRuntime::streaming() const { return state_->streaming.busy(); }
 bool WorldRuntime::failed() const {
-  return bool(state_->failure) || state_->abandoned || state_->scene.failed() ||
+  return (state_->world_control && (state_->control_lifetime.expired()||state_->control_state_lifetime.expired())) ||
+         bool(state_->failure) || state_->abandoned || state_->scene.failed() ||
          state_->transition_owner_changed() || state_->streaming.failed() ||
          (state_->maintenance && state_->maintenance->failed()) ||
          (state_->walking && state_->walking->failed()) ||
@@ -1401,6 +1838,8 @@ bool WorldRuntime::failed() const {
          (state_->enemy_movement && state_->enemy_movement->failed()) ||
          (state_->enemy_contact && state_->enemy_contact->failed()) ||
          (state_->enemy_behavior && state_->enemy_behavior->failed()) ||
+         (state_->actor_graphics && state_->actor_graphics->failed()) ||
+         (state_->following && state_->following->failed()) ||
          (state_->encounter_effects && state_->encounter_effects->failed());
 }
 const WorldStreamingWork &WorldRuntime::streaming_work() const {

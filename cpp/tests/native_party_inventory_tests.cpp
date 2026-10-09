@@ -351,9 +351,26 @@ void rescans(GameVersion version) {
   rejects([&] { f.inventory->rescan_transformations(); });
   check(f.inventory->failed(), "Rescan resumed an abandoned owner");
 }
+void cast_timer_count() {
+  Fixture f(GameVersion::US);
+  f.timers.records={{{7,8,9,10},{11,12,13,14},{15,16,17,18},{19,20,21,22}}};
+  f.timers.loaded_count=4;f.timers.next_check=0xcd;
+  auto expected=f.timers;expected.loaded_count=0;const auto random=f.random;
+  f.inventory->reset_loaded_transformations();
+  check(f.timers==expected && f.random==random,"Cast reset changed retained timer records, deadline or RNG");
+  auto operation=f.inventory->begin_give(1,1);
+  rejects([&]{f.inventory->reset_loaded_transformations();});
+  check(f.timers==expected && !f.inventory->failed(),"Rejected active cast reset changed inventory");
+  operation.reset();
+  rejects([&]{f.inventory->reset_loaded_transformations();});
+  Fixture jp(GameVersion::JP);jp.timers.loaded_count=4;
+  rejects([&]{jp.inventory->reset_loaded_transformations();});
+  check(jp.timers.loaded_count==4,"Japanese cast performed the US-only timer reset");
+}
 } // namespace
 int main() {
   try {
+    cast_timer_count();
     for (auto version : {GameVersion::US, GameVersion::JP}) {
       resources(version);
       queries_and_receipts(version);

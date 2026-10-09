@@ -21,6 +21,22 @@ struct WorldPartyFollowingState {
 // role/formation remains unresolved before any visible mutation.
 class WorldPartyFollowing {
 public:
+  class Placement {
+  public:
+    ~Placement();
+    bool advance();
+    const std::optional<ActorId> &selected_actor() const noexcept {return selected_actor_;}
+    void respond_upload();
+  private:
+    friend class WorldPartyFollowing;
+    explicit Placement(WorldPartyFollowing &);
+    WorldPartyFollowing &owner_;
+    std::optional<ActorId> selected_actor_;
+    std::optional<SpriteFrameSelection> selection_;
+    std::uint16_t surface_{}, first_cursor_{};
+    unsigned role_=24;
+    bool done_{};
+  };
   WorldPartyFollowing(ActorWorld &, party::State &, WorldPartyState &,
                       PartyTrail &, WorldControlState &,
                       const npcs::InteractionState &,
@@ -57,10 +73,15 @@ public:
   // This preserves fractions and source single-member facing. No actor pass,
   // frame, footstep, input or trail cursor is consumed.
   void position_after_pause();
+  // The actual raw owner uploads one selected role before C07B52 proceeds
+  // to its next member. Publication/transport belong to the caller.
+  std::unique_ptr<Placement> begin_position_after_pause();
+  bool failed() const noexcept {return placement_failed_;}
 
 private:
   bool update(ActorId, bool movement, std::uint16_t &result,
               const PartyTrailPoint *positioning = nullptr);
+  std::optional<ActorId> position_role(unsigned,std::uint16_t first_cursor);
   ActorWorld &actors_;
   party::State &party_;
   WorldPartyState &formation_;
@@ -72,5 +93,7 @@ private:
   const std::uint16_t &area_style_;
   const WorldPartyFollowingState &state_;
   const WorldPartyFollowingData &data_;
+  Placement *placement_{};
+  bool placement_failed_{};
 };
 } // namespace eb::native

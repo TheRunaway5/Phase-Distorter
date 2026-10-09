@@ -62,9 +62,19 @@ bool NativeSession::State::pump(std::uint16_t buttons) {
                 special_event.reset();
                 special_parent->respond_dialogue(response); special_parent=nullptr;
             } else if(progress==n::dialogue::Progress::Suspended) {
-                if(auto *child=special_event->scene())
+                if(auto *child=special_event->runtime_operation())return service(*child,buttons);
+                else if(auto *child=special_event->scene())
                     special_runtime=world.runtime->service_child(*child,*special_parent);
-                else if(auto *map=special_event->town_map()) {
+                else if(auto *cinematic=special_event->cinematic()) {
+                    if(cinematic->bicycle_dismount_pending()) {
+                        dismount=bicycle.begin();
+                        finish_dismount=[cinematic]{cinematic->respond_bicycle_dismount();};
+                        return false;
+                    }
+                    auto *child=cinematic->runtime_operation();
+                    if(!child)throw std::logic_error("Native cinematic lost its actual runtime child");
+                    return service(*child,buttons);
+                } else if(auto *map=special_event->town_map()) {
                     auto *child=map->runtime_operation();
                     if(!child)throw std::logic_error("Native cinematic town map lost its actual runtime child");
                     return service(*child,buttons);
@@ -107,7 +117,8 @@ bool NativeSession::State::pump(std::uint16_t buttons) {
                 if(using_ability) {using_ability=false;world_menu->respond_ability_use(1);}
                 else {++item_uses_completed;world_menu->respond_item_use(1);}
             } else if(progress==n::dialogue::Progress::Suspended) {
-                if(auto *child=using_item->scene()) drive_scene(child);
+                if(auto *child=using_item->runtime_operation())return service(*child,buttons);
+                else if(auto *child=using_item->scene()) drive_scene(child);
                 else if(auto *party=using_item->party_update()) {
                     dismount=bicycle.begin(); finish_dismount=[party]{party->respond_bicycle_dismount();};
                 } else if(auto *teddy=using_item->teddy_update()) {

@@ -1,11 +1,11 @@
 Phase Distorter @VERSION@ - Linux x86-64
 EarthBound / Mother 2 PC port
 
-This update fixes NPCs and props disappearing at the original viewport edges,
-expands widescreen cutscenes and prayer apertures, corrects Giygas prayer-return
-stalls, and replaces automatic dimming with console brightness and PSI/Giygas
-feedback. PATCH-NOTES.md lists all changes since v0.2. Existing supported
-imports, normal saves and older snapshots remain usable.
+This update fixes Teleport alpha arrivals and missing widescreen room NPCs,
+keeps enemies/text clear through photosensitivity filtering, improves 16:10,
+fullscreen and widescreen scene/menu presentation, and adds an experimental
+native Continue route. PATCH-NOTES.md lists all changes since v0.2.1.
+Existing supported imports, normal saves and older snapshots remain usable.
 
 Extract this entire ZIP, then open its Phase-Distorter-@VERSION@-linux-x86_64
 folder and run the native Phase Distorter executable directly. Do not run it
@@ -46,15 +46,25 @@ and stick deadzone. Settings opens a floating window with Display, Controller, A
 and the default-off Photosensitivity filter. Escape closes Settings or exits.
 The game continues while Settings captures physical game input. The initial
 ROM import view has no gameplay bar.
-Fixed intro artwork uses a centered 4:3 view. Animated Giygas static fills the
-selected wide view while the original intro card stays centered.
+The complete War Against Giygas intro card, including animated static, holds
+and flashes, uses its original centered 4:3 view. Coffee/tea backgrounds extend
+across the selected width while their captions remain centered.
+Use the 16:10 (Steam Deck) preset for 1280x800, and --fullscreen to start in
+desktop fullscreen mode.
 The Mother 2 logo screen extends its background into widescreen margins while
 keeping the original logo and copyright centered.
 The optional filter uses the SNES Classic EarthBound brightness ramp (about
 80% brightness) with temporal feedback for PSI effects and Giygas. It advances
-once per completed game frame and includes widescreen margins. Full console
-scene parity and medical safety are unverified. Enable it before play with:
+once per completed game frame and includes widescreen margins. Visible battle
+enemies and text windows retain their original colors and brightness. Full
+console scene parity is unverified. Enable it before play with:
   "./Phase Distorter" --reduce-flashing
+
+The optional --native-session N continues battery-save slot 1, 2 or 3 using
+the experimental native engine. It requires an existing regional save and
+does not support machine snapshots/debug controls or complete native new-game,
+save-writing, defeat/restart and whole-game acceptance. Regular launch remains
+the default gameplay runtime.
 
 Settings -> Debug offers infinite health and PSI/PP at 999/999, noclip, and
 Enemies ignore you (overworld pursuit/contact only; story battles still work).

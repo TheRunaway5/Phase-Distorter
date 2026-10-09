@@ -110,6 +110,8 @@ Travel::Operation::~Operation() {
   }
 }
 WorldRuntime::Operation *Travel::Operation::runtime_operation() noexcept {
+  if(state_->relocation)return state_->relocation->runtime_operation();
+  if(state_->map)return state_->map->runtime_operation();
   return state_->runtime.get();
 }
 bool Travel::Operation::complete() const noexcept { return state_->done; }
@@ -139,13 +141,17 @@ dialogue::Progress Travel::Operation::advance(unsigned budget) {
         s.runtime.reset();
       }
       if (s.map) {
-        if (!s.map->advance(1))
+        if (!s.map->advance(1)) {
+          if(s.map->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
           continue;
+        }
         s.map.reset();
       }
       if (s.relocation) {
-        if (!s.relocation->advance(1))
+        if (!s.relocation->advance(1)) {
+          if(s.relocation->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
           continue;
+        }
         s.relocation.reset();
       }
       switch (s.phase) {

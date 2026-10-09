@@ -32,6 +32,14 @@ enum class SpriteSurface { Normal, Shallow, Deep };
 // The authored four/eight-direction loaders interpret frame low bits
 // differently. Keep that content interpretation with the latched image.
 enum class SpriteFrameFormat { FourDirection, EightDirection };
+// Immutable planar content for the source row uploader. Reference low bits
+// retain the authored mirror/surface metadata; identity names imported ROM
+// bytes only and is never an executable callback or mutable allocation.
+struct SpriteRawFrame {
+    std::span<const std::uint8_t> bytes;
+    std::uint32_t source_identity{};
+    std::uint16_t reference{};
+};
 // Artwork can update while an older draw descriptor remains visible. Its
 // geometry/orientation must therefore be independent of the newly loaded pose.
 enum class SpriteOrientation { Authored, Normal, Mirrored };
@@ -75,6 +83,7 @@ class SpriteResources {
   public:
     // Imports only declared sprite content. After construction no borrowed
     // storage, processor, bus, VRAM, DMA queue or source allocator is needed.
+    // Planar frame bytes remain immutable content for the separate row uploader.
     SpriteResources(std::span<const std::uint8_t> assets, SpriteCatalogLayout layout);
     ~SpriteResources();
     SpriteResources(SpriteResources &&) noexcept;
@@ -84,6 +93,17 @@ class SpriteResources {
 
     unsigned size() const;
     const SpriteDefinition &definition(unsigned group) const;
+    const std::array<std::uint8_t,9> &raw_header(unsigned group) const;
+    // Complete imported normal/mirrored5-byte spritemap records. These are
+    // separate from serialized logical image layouts and their snapshot ABI.
+    std::span<const std::uint8_t> raw_shape(unsigned group) const;
+    std::uint32_t frame_table_identity(unsigned group) const;
+    // Retained creation geometry may read beyond a newly requested pose.
+    // The actual authored sprite bank is imported once and never padded.
+    // Bounded imports without the full bank explicitly reject this accessor.
+    std::span<const std::uint8_t,65536> raw_bank(unsigned group) const;
+    SpriteRawFrame raw_frame(unsigned group,unsigned pose,SpriteFrameFormat format) const;
+
     // Union of imported normal/mirrored piece offsets, before the renderer's
     // baseline adjustment. Querying this never acquires artwork or actors.
     PixelBounds artwork_bounds() const;

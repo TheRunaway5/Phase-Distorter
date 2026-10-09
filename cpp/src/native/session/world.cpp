@@ -118,6 +118,30 @@ World::World(const Content &c, NativeAudio &a, unsigned view_width)
     interaction_calls=std::make_unique<story::InteractionCalls>(c.program,interactions,menus,
         runtime->coordinator_scene(),[this]{return sprite_fade.controller().has_value();});
 }
+void World::bind_actor_graphics(std::span<const std::uint8_t> image) {
+    runtime->require_idle();
+    if(actor_graphics || actor_graphics_transport || actor_object_maps ||
+       actor_object_display || !startup)
+        throw std::logic_error("Session actor graphics require its healthy unbound startup owner");
+    auto transport=std::make_unique<entities::graphics::Transport>(image,content.version,
+        actor_graphics_state,*content.sprites,display,scratch,fade);
+    auto lifecycle=std::make_unique<entities::graphics::Lifecycle>(actor_lifecycle_state,
+        actors,*content.sprites,*transport);
+    auto maps=std::make_unique<entities::graphics::ObjectMaps>(image,content.version,
+        actor_object_map_state,*content.sprites);
+    lifecycle->bind_object_maps(*maps);
+    auto objects=std::make_unique<entities::graphics::ObjectDisplay>(actor_object_display_state,
+        actors,*lifecycle,*maps);
+    runtime->bind_actor_graphics(*lifecycle);
+    startup->bind_actor_graphics(*lifecycle);
+    if(map_load->uses_display_transport(scratch,display,fade))
+        startup->bind_window_transport(scratch,display,fade);
+    frame_display.bind_object_source(*objects);
+    actor_graphics_transport=std::move(transport);
+    actor_object_maps=std::move(maps);
+    actor_graphics=std::move(lifecycle);
+    actor_object_display=std::move(objects);
+}
 World::~World() {
     // Runtime's admitted leases refer to later compositors. Release them while
     // every borrowed owner is still alive, before member destruction begins.
@@ -127,5 +151,10 @@ World::~World() {
     relocation.reset();
     map_load.reset();
     runtime.reset();
+    if(actor_object_display)frame_display.clear_object_source(*actor_object_display);
+    actor_object_display.reset();
+    actor_graphics.reset();
+    actor_object_maps.reset();
+    actor_graphics_transport.reset();
 }
 } // namespace eb::native::session

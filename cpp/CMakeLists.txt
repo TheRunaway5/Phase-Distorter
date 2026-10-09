@@ -157,6 +157,7 @@ target_include_directories(eb_assets PUBLIC include)
 # content-import registry separate so asset probes need not link eb_core either.
 add_library(eb_native_engine STATIC
     src/overworld_sprite_allocation.cpp
+    src/native/entities/graphics/objects.cpp
     src/native/sprite_resources.cpp src/native/sprite_effects.cpp src/native/overlay_sprites.cpp src/native/world_overlay_playback.cpp src/native/custom_sprites.cpp
     src/native/sprite_actors.cpp src/native/action_scripts.cpp src/native/actor_draw_order.cpp src/native/map_strip.cpp
     src/native/frame_fade.cpp
@@ -171,6 +172,8 @@ add_library(eb_native_engine STATIC
     src/native/world_actor_movement.cpp src/native/world_party.cpp
     src/native/world_party_movement.cpp src/native/world_party_creation.cpp
     src/native/world_party_following.cpp
+    src/native/world/npcs/activation.cpp
+    src/native/dialogue/ambient/actor_variables.cpp
     src/native/visible_character_growth.cpp
     src/native/battle_background.cpp src/native/battle_background_scene.cpp src/native/battle_combatants.cpp
     src/native/battle_formation.cpp
@@ -639,7 +642,7 @@ if(EB_BUILD_TESTS)
     target_link_libraries(widescreen_tests PRIVATE eb_core)
     add_test(NAME widescreen_tests COMMAND widescreen_tests)
     add_executable(widescreen_story_effects_tests tests/widescreen_story_effects_tests.cpp)
-    target_link_libraries(widescreen_story_effects_tests PRIVATE eb_core)
+    target_link_libraries(widescreen_story_effects_tests PRIVATE eb_core eb_assets)
     add_test(NAME widescreen_story_effects_tests COMMAND widescreen_story_effects_tests)
     add_executable(widescreen_camera_path_tests tests/widescreen_camera_path_tests.cpp)
     target_link_libraries(widescreen_camera_path_tests PRIVATE eb_core)
@@ -668,10 +671,17 @@ if(EB_BUILD_TESTS)
 endif()
 
 include(cmake/native_story.cmake)
+if(EB_BUILD_TESTS)
+  target_link_libraries(native_dialogue_ambient_tests PRIVATE eb_native_engine)
+endif()
 
 # Orchestration consumes the existing story scene and native engine without
 # introducing an engine -> scene -> engine library cycle.
-add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp
+add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp src/native/world_player_area.cpp src/native/world_palette_shift.cpp
+    src/native/entities/graphics/transport.cpp
+    src/native/entities/graphics/lifecycle.cpp
+    src/native/entities/graphics/object_maps.cpp
+    src/native/entities/graphics/object_display.cpp
     src/native/world_control.cpp src/native/world_maintenance.cpp
     src/native/world_walking.cpp src/native/world_doors.cpp
     src/native/world_integrity.cpp
@@ -683,6 +693,7 @@ add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp
     src/native/world/townmap/resources.cpp src/native/world/townmap/scene.cpp
     src/native/world/teleport/movement.cpp
     src/native/world_hotspots.cpp src/native/world_generated_input.cpp
+    src/native/world/music/transition.cpp
     src/native/world_input_playback.cpp src/native/world_scheduler.cpp src/native/world_food_status.cpp
     src/native/world_door_transitions.cpp src/native/world_escalator.cpp
     src/native/world_npc_collision.cpp src/native/world_bicycle.cpp
@@ -693,6 +704,7 @@ add_library(eb_native_world_runtime STATIC src/native/world_runtime.cpp
     src/native/world_startup.cpp src/native/world_enemy_behavior.cpp
     src/native/world_scene_presentation.cpp
     src/native/world_map_load.cpp src/native/world_party_relocation.cpp src/native/world_fade_out.cpp
+    src/native/world/party/placement.cpp
     src/native/world_character_visibility.cpp src/native/world_sprite_fade.cpp
     src/native/world_teleport_resources.cpp src/native/world_screen_transition.cpp
     src/native/world_interaction_queue.cpp
@@ -703,8 +715,34 @@ target_link_libraries(eb_native_world_runtime PUBLIC eb_native_engine eb_native_
 # Executable battle coordinators require real world lifecycle and audio services.
 add_library(eb_native_battle_session STATIC
     src/native/story/special_events.cpp
+    src/native/cutscenes/display.cpp src/native/cutscenes/services.cpp
+    src/native/cutscenes/coffee/resources.cpp src/native/cutscenes/coffee/text.cpp src/native/cutscenes/coffee/scene.cpp
+    src/native/cutscenes/sound_stone/resources.cpp src/native/cutscenes/sound_stone/playback.cpp
+    src/native/cutscenes/sound_stone/render.cpp src/native/cutscenes/sound_stone/scene.cpp
+    src/native/cutscenes/ending/resources.cpp src/native/cutscenes/ending/render.cpp
+    src/native/cutscenes/ending/scene.cpp src/native/cutscenes/ending/photograph.cpp
+    src/native/cutscenes/ending/palette.cpp src/native/cutscenes/ending/photos.cpp
+    src/native/cutscenes/ending/asset_work.cpp
+    src/native/cutscenes/ending/credits_work.cpp
+    src/native/cutscenes/ending/initializer_work.cpp
+    src/native/cutscenes/cast/resources.cpp src/native/cutscenes/cast/text.cpp
+    src/native/cutscenes/cast/render.cpp src/native/cutscenes/cast/scene.cpp
     src/native/world/menu/item_action.cpp
-    src/native/story/battle_encounter.cpp src/native/session/world_music.cpp src/native/session/audio_clock.cpp
+    src/native/story/battle_encounter.cpp src/native/session/world_music.cpp src/native/session/audio_clock.cpp src/native/story/work_clock.cpp
+    src/native/story/source_nmi.cpp src/native/story/source_world_callback.cpp src/native/story/source_frame_input.cpp src/native/story/source_screen.cpp src/native/story/source_foreground.cpp src/native/story/source_window_publication.cpp src/native/story/source_random.cpp
+  src/native/story/source_meter_roller.cpp
+  src/native/story/source_meter_tiles.cpp
+  src/native/story/meter_tiles/execution.cpp
+  src/native/story/meter_tiles/main.cpp
+  src/native/story/meter_tiles/digits.cpp
+  src/native/story/meter_tiles/division.cpp
+  src/native/story/source_meter_status.cpp
+  src/native/story/meter_status/execution.cpp
+  src/native/story/meter_status/status.cpp
+  src/native/story/meter_status/palette.cpp
+    src/native/entities/graphics/source_objects.cpp src/native/entities/graphics/source_emitter.cpp
+    src/native/entities/graphics/source_insertion.cpp src/native/entities/graphics/source_actor_draw.cpp
+    src/native/entities/graphics/source_actor_kernel.cpp src/native/entities/graphics/source_global_draw.cpp
     src/native/world_bicycle_lifecycle.cpp src/native/world_battle_return.cpp src/native/world_script_teleport.cpp
     src/native/world/teleport/travel.cpp
     src/native/battle/actions/actor.cpp
@@ -736,6 +774,25 @@ add_library(eb_native_session STATIC
 target_include_directories(eb_native_session PUBLIC include)
 target_link_libraries(eb_native_session PUBLIC eb_native_battle_session)
 if(EB_BUILD_TESTS)
+    foreach(cinematic_reference native_source_meter_status_reference native_source_meter_tiles_reference native_source_meter_roller_reference native_source_random_reference native_source_window_publication_reference native_source_global_draw_reference native_source_actor_draw_reference native_source_objects_reference native_source_foreground_reference native_source_screen_reference native_source_wait_reference native_source_credits_reference native_ending_initializer_work_reference native_source_blank_reference native_source_scroll_reference native_source_nmi_reference native_source_scheduler_reference native_ending_asset_work_reference native_actor_allocation_work_reference native_source_work_reference native_coffee_text_reference native_sound_stone_reference native_coffee_reference native_sound_stone_scene_reference native_ending_scene_reference native_ending_resources_reference native_ending_photograph_reference native_ending_palette_reference native_player_area_reference native_map_palette_reference native_transient_memory_reference native_world_display_reference native_cast_text_reference native_cast_scene_reference native_sector_music_reference native_actor_objects_reference native_actor_graphics_reference native_actor_graphics_lifecycle_reference native_actor_graphics_placement_reference native_actor_graphics_npc_reference native_actor_graphics_enemy_reference native_actor_graphics_streaming_reference native_overlay_upload_reference)
+      add_executable(${cinematic_reference} tests/${cinematic_reference}.cpp)
+      target_include_directories(${cinematic_reference} PRIVATE src/native/session)
+      target_link_libraries(${cinematic_reference} PRIVATE eb_native_session eb_assets eb_core eb_dsp eb_native_asset_profiles)
+      add_test(NAME ${cinematic_reference} COMMAND ${cinematic_reference})
+      set_tests_properties(${cinematic_reference} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+    add_executable(native_ending_text_reference tests/native_ending_text_reference.cpp)
+    target_link_libraries(native_ending_text_reference PRIVATE eb_native_story eb_core eb_assets)
+    add_test(NAME native_ending_text_reference COMMAND native_ending_text_reference)
+    set_tests_properties(native_ending_text_reference PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(native_cinematic_interrupt_tests tests/native_cinematic_interrupt_tests.cpp)
+    target_link_libraries(native_cinematic_interrupt_tests PRIVATE eb_native_world_runtime)
+    add_test(NAME native_cinematic_interrupt_tests COMMAND native_cinematic_interrupt_tests)
+    foreach(cinematic_unit native_source_work_tests native_ending_photos_tests)
+      add_executable(${cinematic_unit} tests/${cinematic_unit}.cpp)
+      target_link_libraries(${cinematic_unit} PRIVATE eb_native_battle_session)
+      add_test(NAME ${cinematic_unit} COMMAND ${cinematic_unit})
+    endforeach()
     add_executable(native_audio_clock_tests tests/native_audio_clock_tests.cpp)
     target_link_libraries(native_audio_clock_tests PRIVATE eb_native_battle_session)
     add_test(NAME native_audio_clock_tests COMMAND native_audio_clock_tests)
@@ -817,6 +874,10 @@ if(EB_BUILD_TESTS)
     target_link_libraries(native_session_travel_tests PRIVATE eb_native_session eb_assets eb_native_asset_profiles)
     add_test(NAME native_session_travel_tests COMMAND native_session_travel_tests)
     set_tests_properties(native_session_travel_tests PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(native_session_coffee_tests tests/native_session_coffee_tests.cpp)
+    target_link_libraries(native_session_coffee_tests PRIVATE eb_native_session eb_assets eb_native_asset_profiles)
+    add_test(NAME native_session_coffee_tests COMMAND native_session_coffee_tests)
+    set_tests_properties(native_session_coffee_tests PROPERTIES SKIP_RETURN_CODE 77)
     target_link_libraries(native_session_townmap_tests PRIVATE eb_native_session eb_assets eb_native_asset_profiles)
     add_test(NAME native_session_townmap_tests COMMAND native_session_townmap_tests)
     set_tests_properties(native_session_townmap_tests PROPERTIES SKIP_RETURN_CODE 77)

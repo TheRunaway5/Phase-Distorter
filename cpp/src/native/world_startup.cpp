@@ -1,5 +1,6 @@
 #include "eb/native/world_startup.hpp"
 #include "eb/native/party/condition.hpp"
+#include "eb/native/dialogue/window_buffer.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -72,9 +73,12 @@ struct WorldStartup::Operation::State {
   std::unique_ptr<WorldPartyCreation::Operation> creation;
   std::unique_ptr<WorldMapLoad::Operation> map;
   std::unique_ptr<dialogue::WindowGraphics::Operation> graphics;
+  std::unique_ptr<battle::PsiDisplayState::TransferOperation> window_transfer;
   std::unique_ptr<story::PartyFormation::TailOperation> tail;
   std::vector<WorldPartyCreatedActor> created;
   bool executing{};
+  bool creation_publication{};
+  bool window_publication{};
   State(WorldStartup &o, saves::ContinueSnapshot s)
       : owner(o), restored(std::move(s)) {}
   void restore() {
@@ -113,6 +117,7 @@ struct WorldStartup::Operation::State {
     }
     o.clock.flavor = g.text_flavour;
     o.session.elapsed_timer = g.elapsed_timer;
+    o.session.photos = g.photos;
     o.session.teleport_box_destination = g.reserved_c3;
     // FILE_MENU_LOOP's actual Continue arm follows LOAD_GAME_SLOT.
     o.queue.reset_after_restore();
@@ -149,6 +154,8 @@ WorldStartup::WorldStartup(const saves::ContinueResources &resources,
                               o.actors.appearance_scene(), o.queue),
           "Startup must borrow its real runtime, party, flags and service owners");
   preflight();
+  owners_.windows.bind_ambient_party_trail(owners_.trail);
+  owners_.windows.bind_ambient_actor_variables(owners_.actors);
 }
 void WorldStartup::bind_map_load(WorldMapLoad &map,
     const WorldStartupData &data, dialogue::WindowGraphics &graphics) {
@@ -164,6 +171,18 @@ void WorldStartup::bind_map_load(WorldMapLoad &map,
   map_load_ = &map;
   startup_data_ = &data;
   graphics_ = &graphics;
+}
+void WorldStartup::bind_actor_graphics(RawActorCreation &graphics) {
+  preflight();require(!actor_graphics_&&graphics.uses(owners_.actors),
+      "Startup raw graphics must use its actual actor owner");actor_graphics_=&graphics;
+}
+void WorldStartup::bind_window_transport(battle::PsiScratch &scratch,
+    battle::PsiDisplayState &video,WorldDisplayFade &fade) {
+  preflight();
+  require(!scratch_&&!video_&&!fade_&&!video.failed()&&map_load_&&
+      map_load_->uses_display_transport(scratch,video,fade),
+      "Startup window transport must use its actual idle display fade");
+  scratch_=&scratch;video_=&video;fade_=&fade;
 }
 void WorldStartup::preflight() const {
   const auto &o = owners_;
@@ -228,6 +247,8 @@ WorldStartupStage WorldStartup::Operation::stage() const noexcept {
 const std::optional<WorldStartupService> &
 WorldStartup::Operation::service() const noexcept { return state_->pending; }
 WorldRuntime::Operation *WorldStartup::Operation::runtime_operation() noexcept {
+  if (state_->map)
+    if (auto *child = state_->map->runtime_operation()) return child;
   return state_->runtime.get();
 }
 void WorldStartup::Operation::respond_bicycle_dismount() {
@@ -258,6 +279,14 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
         s.pending.reset();
         if (p != dialogue::Progress::Finished) continue;
         s.runtime.reset();
+        if(s.creation_publication) {
+          s.creation->respond_graphics_publication();s.creation_publication=false;
+        }
+        if(s.window_publication) {
+          require(s.window_transfer&&s.window_transfer->needs_publication(),
+              "Startup lost its waiting window copy");
+          s.window_transfer->respond();s.window_publication=false;
+        }
         if (s.windows) s.windows->respond();
         else if (s.conversation) {
           s.conversation.reset();
@@ -267,13 +296,27 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
         }
         continue;
       }
+      if(s.window_transfer) {
+        if(!s.window_transfer->advance()) {
+          s.runtime=o.runtime.begin_publication();s.window_publication=true;
+        } else {
+          s.window_transfer.reset();s.graphics->respond(dialogue::ArtworkDisposition::Published);
+        }
+        continue;
+      }
       if (s.map) {
-        if (s.map->advance(1)) {
+        const bool complete = s.map->advance(1);
+        s.pending.reset();
+        if (complete) {
           s.map.reset();
           s.stage = WorldStartupStage::BuzzBuzzDialogue;
           s.conversation = std::make_unique<dialogue::Conversation>(s.owner.program_, o.windows);
           s.conversation->start(*s.owner.program_->resolve(s.owner.resources_.dialogue().buzz_buzz));
           s.runtime = o.runtime.begin(*s.conversation);
+        } else if (s.map->runtime_operation()) {
+          s.pending = WorldStartupService::Runtime;
+          s.executing = false;
+          return dialogue::Progress::Suspended;
         }
         continue;
       }
@@ -317,12 +360,13 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
         const auto old = o.actors.actors();
         for (const auto id : old) o.interactions.detach(id);
         o.actors.reset_scripts();
+        if(s.owner.actor_graphics_)s.owner.actor_graphics_->reset_allocations();
         o.actors.initialize_scene_objects();
         o.clock.action_scripts_disabled = 0;
         o.control.encounter.mode = 0;
         o.session.input_disable_frames = 0;
         o.spawn.npcs = NpcSpawnMode::Initial;
-        o.spawn.enemies = true;
+        o.spawn.enemies = 0xffff;
         o.enemies.set_maximum(10);
         o.actors.appearance_scene().battle_swirl_ticks = 0;
         o.queue.initialize_world();
@@ -335,7 +379,7 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
       }
       case WorldStartupStage::CreateController:
         o.bootstrap.create_controller_and_initialize(o.spawn.prepared);
-        s.creation = o.creation.begin_rebuild();
+        s.creation = s.owner.actor_graphics_?o.creation.begin_rebuild(*s.owner.actor_graphics_):o.creation.begin_rebuild();
         s.stage = WorldStartupStage::RebuildParty;
         break;
       case WorldStartupStage::RebuildParty:
@@ -354,6 +398,9 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
           s.stage = WorldStartupStage::ResetPalettes;
         } else {
           const auto kind = s.creation->service()->kind;
+          if(kind==WorldPartyCreationServiceKind::GraphicsPublication) {
+            s.runtime=o.runtime.begin_publication();s.creation_publication=true;break;
+          }
           require(kind != WorldPartyCreationServiceKind::CompareInsertionMember,
                   "Startup cannot invent a party insertion comparison");
           s.tail = o.refresh.begin_tail(
@@ -409,7 +456,9 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
           }
           names.names[i] = runs[i];
         }
-        s.owner.graphics_->prepare(names, o.clock.flavor);
+        if(s.owner.scratch_)
+          dialogue::prepare_window_buffer(*s.owner.graphics_,s.owner.scratch_->bytes,names,o.clock.flavor);
+        else s.owner.graphics_->prepare(names, o.clock.flavor);
         s.graphics = s.owner.graphics_->begin_publication(
             o.party.version() == GameVersion::JP ? dialogue::ArtworkPublication::All
                                                 : dialogue::ArtworkPublication::GeneratedThenCommon);
@@ -423,9 +472,16 @@ dialogue::Progress WorldStartup::Operation::advance(unsigned budget) {
         } else if (s.graphics->effect()) {
           require(s.graphics->effect()->delivery == dialogue::ArtworkDelivery::Copy,
                   "Startup window artwork unexpectedly requires synchronized transfer");
-          // This response performs the actual atlas copy and updates subscribed
-          // window cells. It is not an acknowledgment of external work.
-          s.graphics->respond(dialogue::ArtworkDisposition::Published);
+          if(s.owner.video_) {
+            const auto effect=*s.graphics->effect();
+            s.window_transfer=s.owner.video_->begin_transfer({battle::PsiTransferKind::Vram,
+                std::uint16_t(effect.first_cell*16),std::uint16_t(effect.cell_count*16),
+                std::uint16_t(0x6000+effect.first_cell*8),0},*s.owner.scratch_,*s.owner.fade_);
+          } else {
+            // This response performs the actual indexed atlas copy for callers
+            // which have not bound a physical display transport.
+            s.graphics->respond(dialogue::ArtworkDisposition::Published);
+          }
         }
         break;
       case WorldStartupStage::PositionParty:

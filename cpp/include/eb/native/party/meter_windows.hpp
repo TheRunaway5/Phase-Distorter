@@ -4,6 +4,7 @@
 #include "eb/native/party/meter_window_resources.hpp"
 #include "eb/native/party/state.hpp"
 
+namespace eb::native::story {class SourceMeterTiles;}
 namespace eb::native::party {
 struct MeterWindowState {
     std::uint8_t render{};
@@ -37,6 +38,7 @@ class MeterWindows {
     ~MeterWindows();
     MeterWindows(const MeterWindows&) = delete;
     MeterWindows& operator=(const MeterWindows&) = delete;
+    std::weak_ptr<const void> source_lifetime() const noexcept { return source_lifetime_; }
     bool bound_to(const dialogue::WindowHost&, const State&) const noexcept;
     MeterWindowState& state();
     const MeterWindowState& state() const;
@@ -51,10 +53,22 @@ class MeterWindows {
     // controlled count is read at the actual post-wait row-clear operation.
     std::unique_ptr<Operation> begin_select(unsigned phase);
     std::span<const dialogue::ArtworkCellReference, 12> digit_cells(unsigned phase) const;
+    std::array<std::uint16_t,48> source_digit_words() const;
+    std::span<const std::uint8_t,3> source_decimal_digits() const;
+    void set_source_digit_words(std::span<const std::uint16_t,48>);
+    void set_source_decimal_digits(std::span<const std::uint8_t,3>);
+    bool source_tiles_active() const noexcept;
 
   private:
+    friend class story::SourceMeterTiles;
+    void validate_source_tiles(const void*) const;
+    void claim_source_tiles(const void*);
+    void release_source_tiles(const void*) noexcept;
+    std::uint8_t read_source_digit_byte(unsigned) const;
+    void store_source_digit_byte(unsigned,std::uint8_t);
     struct Execution;
     std::unique_ptr<Execution> execution_;
+    std::shared_ptr<const void> source_lifetime_=std::make_shared<const unsigned>(0);
     enum class Action { Show, Hide, ClearSelection, Select };
     std::unique_ptr<Operation> begin(Action, bool battle = false, unsigned phase = 0);
     void require_live() const;

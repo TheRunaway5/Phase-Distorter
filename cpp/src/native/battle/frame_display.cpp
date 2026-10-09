@@ -3,20 +3,51 @@
 #include <utility>
 
 namespace eb::native::battle {
+const FrameDisplay::Screen &FrameDisplay::source_buffer(std::uint8_t buffer) const {
+  if(buffer<1||buffer>2)throw std::out_of_range("Source screen buffer exceeds its actual two latches");
+  return buffers_[buffer-1];
+}
+void FrameDisplay::source_scroll_word(std::uint8_t buffer,unsigned word,std::uint16_t value) {
+  (void)source_buffer(buffer);
+  if(word>=8)throw std::out_of_range("Source screen scroll word exceeds its four planes");
+  auto &scroll=buffers_[buffer-1].scroll[word/2];
+  if(word&1)scroll.y=value;else scroll.x=value;
+}
+void FrameDisplay::source_object_snapshot(std::uint8_t buffer,
+    std::shared_ptr<const entities::graphics::ObjectFrame> raw,std::shared_ptr<const DirectSceneFrame> world) {
+  (void)source_buffer(buffer);
+  if(!raw)throw std::invalid_argument("Source selection requires its actual immutable OAM descriptor");
+  auto &screen=buffers_[buffer-1];screen.objects.reset();screen.raw_objects=std::move(raw);
+  screen.world_objects=std::move(world);screen.display_id=buffer;
+}
+void FrameDisplay::source_display_id(std::uint8_t value) {
+  if(value<1||value>2)throw std::out_of_range("Source display selection exceeds its actual two buffers");
+  display_request_=std::uint16_t((display_request_&0xff00)|value);
+}
+void FrameDisplay::source_next_buffer_id(std::uint8_t value) {
+  if(value<1||value>2)throw std::out_of_range("Source drawing selection exceeds its actual two buffers");
+  next_buffer_=value;
+}
 void FrameDisplay::update_screen(const BattleCombatantFrame &objects) {
   Screen next{objects, display_.staged_scroll, next_buffer_};
   buffers_[next_buffer_-1] = std::move(next);
   display_request_ = next_buffer_;
   next_buffer_ ^= 3;
 }
-void FrameDisplay::update_world_screen() {
-  Screen next{std::nullopt, display_.staged_scroll, next_buffer_};
+void FrameDisplay::update_world_screen(std::shared_ptr<const DirectSceneFrame> objects) {
+  Screen next{std::nullopt, display_.staged_scroll, next_buffer_,std::move(objects)};
+  if(object_source_)next.raw_objects=object_source_->capture_objects(next_buffer_);
   buffers_[next_buffer_-1] = std::move(next);
   display_request_ = next_buffer_;
   next_buffer_ ^= 3;
 }
+void FrameDisplay::bind_object_source(entities::graphics::ObjectSource &source) {
+  if(object_source_||pending())throw std::logic_error("Object source requires its idle unbound screen owner");
+  object_source_=&source;
+}
+void FrameDisplay::clear_object_source(const entities::graphics::ObjectSource &source) noexcept {if(object_source_==&source)object_source_=nullptr;}
 FrameDisplay::Screen FrameDisplay::screen() const {
-  return {objects_, display_.scroll, 0};
+  return {objects_, display_.scroll, displayed_buffer_,world_objects_,raw_objects_};
 }
 FrameDisplay::Screen FrameDisplay::preview_screen() const {
   if (!pending()) return screen();
@@ -27,10 +58,13 @@ FrameDisplay::Screen FrameDisplay::preview_screen() const {
 void FrameDisplay::commit_publication(bool disable_hdma, bool forced_blank) noexcept {
   if (pending()) {
     const auto &next = buffers_[pending_display_id() == 1 ? 0 : 1];
+    displayed_buffer_ = pending_display_id();
     objects_ = next.objects;
-    display_.scroll = next.scroll;
+    world_objects_ = next.world_objects;
+    raw_objects_ = next.raw_objects;
+    display_.publish_source_scroll(next.scroll);
   }
-  display_request_ = 0;
+  display_request_ &= 0xff00;
   publish_hdma(disable_hdma, forced_blank);
 }
 void FrameDisplay::publish_hdma(bool disable_hdma, bool forced_blank) noexcept {

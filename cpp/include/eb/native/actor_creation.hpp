@@ -3,6 +3,7 @@
 #include "eb/native/actor_world.hpp"
 
 namespace eb::native {
+namespace story {class SourceWorkService;}
 
 // Explicit input to native actor creation, replacing ambient prepared globals.
 // Coordinates/variables retain the authored 16-bit domain; phase_id is only an
@@ -35,6 +36,39 @@ struct ActorCreationMetadata {
     SpriteDefinition sprite;
     std::uint16_t collision_profile{};
     unsigned lower_parts{};
+};
+
+// Optional authored raw-graphics creation continuation. The engine owns the
+// semantic actor, while a deeper display service supplies actual allocation
+// and COPY_TO_VRAM publication waits before INIT_ENTITY. It never uploads a
+// frame merely because an actor was created.
+class RawActorCreation {
+  public:
+    class Operation {
+      public:
+        virtual ~Operation() = default;
+        virtual bool advance() = 0;
+        virtual bool needs_publication() const noexcept = 0;
+        virtual void respond_publication() = 0;
+        virtual ActorId actor() const = 0;
+    };
+    virtual ~RawActorCreation() = default;
+    virtual bool uses(const ActorWorld &) const noexcept = 0;
+    virtual bool owns(ActorId) const noexcept = 0;
+    virtual std::unique_ptr<Operation> begin_create(const WorldActorSpec &,
+                                                   AuthoredActorRoles) = 0;
+    struct SourceCall {
+        std::uint8_t direct_page_low{};
+        bool bank_zero_code{};
+    };
+    // A proved caller may retire the complete allocation-tag helpers through
+    // its real work clock. This does not imply timing for INIT/entity programs.
+    virtual std::unique_ptr<Operation> begin_create_with_source_work(const WorldActorSpec &,
+        AuthoredActorRoles,story::SourceWorkService &,SourceCall) {
+        throw std::logic_error("Raw creation has no source tag-work owner");
+    }
+    virtual void reset_allocations() = 0;
+    virtual void release(unsigned role) = 0;
 };
 // Resource/collision facts initialized by CREATE_ENTITY but not yet owned by
 // ActorWorld's movement solver. Returning them explicitly avoids a hidden

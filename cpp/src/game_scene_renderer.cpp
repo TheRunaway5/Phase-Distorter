@@ -4,6 +4,7 @@
 #include "eb/render_distance.hpp"
 #include "eb/native/overlay_sprites.hpp"
 #include "eb/native/custom_sprites.hpp"
+#include "eb/native/battle_background.hpp"
 #include "generated_profile.hpp"
 
 #include <algorithm>
@@ -51,6 +52,41 @@ bool GameSceneRenderer::presentation_window_contains(const SceneReadView &view, 
 }
 
 namespace {
+bool coffee_tea_backgrounds(const SceneReadView &view) {
+    // COFFEETEA_SCENE configures BG3, then LOAD_BACKGROUND_ANIMATION loads
+    // the two four-bit layers without setting BATTLE_MODE_FLAG. Identify the
+    // live pair from its retained original palettes and animation definitions.
+    const auto &regs = view.ppu_registers;
+    if (regs[5] != 9 || regs[7] != 0x58 || regs[8] != 0x5c || regs[9] != 0x7c ||
+        regs[11] != 0x10 || (regs[12] & 15) != 6)
+        return false;
+    const auto layout = native::battle_background_layout(view.game_version);
+    const auto rom = view.cartridge_rom;
+    const auto matches = [&](unsigned record, unsigned id, unsigned target) {
+        const unsigned definition = layout.configurations + id * 17;
+        if (definition + 17 > rom.size() || view.work_ram[record] != target ||
+            view.work_ram[record + 1] != 4)
+            return false;
+        const unsigned pointer = layout.palettes + rom[definition + 1] * 4;
+        if (pointer + 4 > rom.size()) return false;
+        const unsigned address = unsigned(rom[pointer]) | unsigned(rom[pointer + 1]) << 8 |
+                                 unsigned(rom[pointer + 2]) << 16;
+        if (address < 0xc00000 || address - 0xc00000 + 32 > rom.size()) return false;
+        if (!std::equal(rom.begin() + address - 0xc00000,
+                        rom.begin() + address - 0xc00000 + 32,
+                        view.work_ram.begin() + record + 44)) return false;
+        return std::equal(rom.begin() + definition + 9, rom.begin() + definition + 13,
+                          view.work_ram.begin() + record + 78) &&
+               std::equal(rom.begin() + definition + 13, rom.begin() + definition + 17,
+                          view.work_ram.begin() + record + 97);
+    };
+    for (unsigned first : {231u, 233u})
+        if (matches(view.source_profile.wram_battle_backgrounds.layer1, first, 2) &&
+            matches(view.source_profile.wram_battle_backgrounds.layer2, first + 1, 1))
+            return true;
+    return false;
+}
+
 bool scripted_world_camera(const SceneReadView &view) {
     // UNKNOWN_C46698/C466A8 direct the camera at a scripted entity and set
     // GAME_STATE::unknownB0 to 2. C466B8 restores ordinary control. Other
@@ -678,6 +714,8 @@ void GameSceneRenderer::prepare_presentation_scene(const SceneReadView &view) {
             presentation_layer_mask_ |= presentation_psi_display_layer_;
         }
     }
+    if (!presentation_battle_scene_ && coffee_tea_backgrounds(view))
+        presentation_layer_mask_ = 0x13; // Animated BG1/BG2; centered BG3 captions; existing OBJ policy.
 
     presentation_world_map_ = false;
     if ((view.ppu_registers[5] & 0x37) == 1 && view.ppu_registers[7] == 0x39 &&

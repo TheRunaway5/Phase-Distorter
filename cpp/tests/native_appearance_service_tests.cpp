@@ -43,7 +43,8 @@ void check_service() {
     data.footstep_sounds[4] = 0x15;
     data.footstep_sounds[5] = 0x0f;
     const auto run = [&](NativeAction operation) {
-        return apply_appearance_action({operation}, actor, action, context, scene, data, appearance);
+        BoundAction binding;binding.operation=operation;
+        return apply_appearance_action(binding, actor, action, context, scene, data, appearance);
     };
     require(!run(NativeAction::Unsupported).handled && !appearance.displayed(),
             "Unsupported service mutated appearance");
@@ -114,6 +115,16 @@ void check_service() {
     actor.animation = 2;
     actor.variables[2] = 1;
     scene.footstep_override = 10;
+    const auto current_actor=actor;
+    const auto current_fingerprint=appearance.fingerprint();
+    const bool current_flashing=appearance.flashing_hidden();
+    result=run(NativeAction::SelectEightCurrent);
+    require(result.handled&&result.refreshed&&!result.script_value&&!result.sound&&
+        appearance.displayed()->format==SpriteFrameFormat::EightDirection&&
+        appearance.fingerprint()==current_fingerprint&&appearance.flashing_hidden()==current_flashing&&
+        actor.animation==current_actor.animation&&actor.variables==current_actor.variables&&
+        actor.position==current_actor.position&&actor.velocity==current_actor.velocity,
+        "Current Eight upload advanced animation/timers/fingerprint/flash or invented a result/sound");
     const auto selection = appearance.displayed();
     rejects([&] { run(NativeAction::StepEightAnimation); });
     require(actor.animation == 2 && actor.variables[2] == 1 && appearance.displayed() == selection,

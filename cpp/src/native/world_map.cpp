@@ -77,6 +77,7 @@ WorldMap::WorldMap(std::span<const std::uint8_t> assets, WorldMapLayout layout) 
         // The compressed stream includes one extra byte after its 896 tiles;
         // that byte is not part of the authored map graphic payload.
         set.graphics = decode_graphics(std::span(art).first(0x7000));
+        set.graphics_bytes = art;
         const auto raw = decompress_content(content.bytes, content.pointer(layout.arrangements + id * 4), 960 * 32);
         if (raw.empty() || raw.size() % 32)
             throw std::runtime_error("Invalid map arrangement payload");
@@ -84,8 +85,10 @@ WorldMap::WorldMap(std::span<const std::uint8_t> assets, WorldMapLayout layout) 
         set.blocks.resize(raw.size() / 32);
         const unsigned collisions = content.pointer(layout.collision_pointers + id * 4);
         content.slice(collisions, 960 * 2);
+        for(unsigned index=0;index<set.collision_offsets.size();++index)
+            set.collision_offsets[index]=content.word(collisions+index*2);
         for (unsigned block = 0; block < set.blocks.size(); ++block) {
-            const unsigned collision = content.word(collisions + block * 2);
+            const unsigned collision = set.collision_offsets[block];
             if (collision > collision_patterns.size() || 16 > collision_patterns.size() - collision)
                 throw std::runtime_error("Invalid map collision pattern");
             std::copy_n(collision_patterns.begin() + collision, 16, set.blocks[block].collision.begin());
@@ -181,7 +184,8 @@ WorldMapArea WorldMap::prepare(unsigned combination, std::span<const std::uint8_
 }
 WorldMapArea::WorldMapArea(std::shared_ptr<const WorldMap::State> data, unsigned combination,
                          std::span<const std::uint8_t> flags)
-    : data_(std::move(data)), combination_(combination), tileset_(data_->mappings.at(combination)) {
+    : data_(std::move(data)), combination_(combination), tileset_(data_->mappings.at(combination)),
+      animation_tileset_(tileset_) {
     const auto &set = data_->tilesets[tileset_];
     graphics_ = set.graphics;
     reprepare_events(flags);
@@ -191,11 +195,15 @@ WorldMapArea::WorldMapArea(std::shared_ptr<const WorldMap::State> data, unsigned
 void WorldMapArea::reprepare_events(std::span<const std::uint8_t> flags) {
     const auto &set = data_->tilesets[tileset_];
     auto blocks = set.blocks;
+    auto offsets = set.collision_offsets;
     for (const auto &replacement : set.replacements)
         if (flag(flags, replacement.event_flag) == replacement.when_set)
-            for (const auto &[to, from] : replacement.blocks)
+            for (const auto &[to, from] : replacement.blocks) {
                 blocks[to] = blocks[from];
+                offsets[to] = offsets[from];
+            }
     blocks_.swap(blocks);
+    collision_offsets_=offsets;
 }
 unsigned WorldMapArea::block_at(int x, int y) const {
     if (x < 0 || x >= 1024 || y < 0 || y >= 1280 ||
@@ -225,7 +233,7 @@ MapPixel WorldMapArea::pixel(int x, int y, MapLayer layer) const {
 }
 bool WorldMapArea::advance_animation() {
     bool changed = false;
-    const auto &animations = data_->tilesets[tileset_].animations;
+    const auto &animations = data_->tilesets[animation_tileset_].animations;
     for (unsigned i = 0; i < animations.size(); ++i) {
         auto &clock = clocks_[i];
         if (--clock.remaining)
@@ -241,8 +249,20 @@ bool WorldMapArea::advance_animation() {
     return changed;
 }
 void WorldMapArea::reset_animation() noexcept {
-    const auto &animations = data_->tilesets[tileset_].animations;
+    const auto &animations = data_->tilesets[animation_tileset_].animations;
     for (unsigned i = 0; i < animations.size(); ++i)
         clocks_[i] = {animations[i].frame_delay, 0};
+}
+WorldMapArea WorldMapArea::prepare_photograph(unsigned combination,
+    std::span<const std::uint8_t> flags, bool preserve_artwork) const {
+    if(preserve_artwork && combination!=combination_)
+        throw std::invalid_argument("Retained photograph artwork has another combination");
+    auto result=WorldMapArea(data_,combination,flags);
+    if(preserve_artwork)result.graphics_=graphics_;
+    // Photo LOAD_MAP_AT_SECTOR omits LOAD_TILESET_ANIM. Its previously loaded
+    // animation sequence remains retained even when the scenery changes.
+    result.animation_tileset_=animation_tileset_;
+    result.clocks_=clocks_;
+    return result;
 }
 } // namespace eb::native

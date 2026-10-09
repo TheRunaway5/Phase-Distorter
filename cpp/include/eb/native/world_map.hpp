@@ -56,7 +56,13 @@ struct MapEventReplacement {
 };
 struct MapTileset {
     std::vector<MapGraphic> graphics;
+    // Exact decompressed prefix, including the authored extra byte. Map
+    // loaders overwrite only this prefix of their shared BUFFER.
+    std::vector<std::uint8_t> graphics_bytes;
     std::vector<MapBlock> blocks;
+    // LOAD_TILE_COLLISION retains all 960 source selectors, including those
+    // beyond a shorter arrangement payload. Events copy them in block order.
+    std::array<std::uint16_t, 960> collision_offsets{};
     std::vector<MapEventReplacement> replacements;
     std::vector<MapAnimation> animations;
     // Exact LOAD_TILESET_ANIM decompression result. This includes bytes not
@@ -99,6 +105,7 @@ class WorldMapArea {
     unsigned tileset_id() const { return tileset_; }
     const std::vector<MapGraphic> &graphics() const { return graphics_; }
     const std::vector<MapBlock> &blocks() const { return blocks_; }
+    const auto &collision_offsets() const noexcept { return collision_offsets_; }
     // Tile/collision coordinates are 8-pixel cells; pixel coordinates are world pixels.
     MapTile tile(int tile_x, int tile_y, MapLayer layer = MapLayer::Base) const;
     std::uint8_t collision(int tile_x, int tile_y) const;
@@ -116,6 +123,8 @@ class WorldMapArea {
     // same-combination map load keeps the last displayed animation frame until
     // the newly reset delay expires. Event-resolved blocks also remain intact.
     void reset_animation() noexcept;
+    WorldMapArea prepare_photograph(unsigned combination,
+        std::span<const std::uint8_t> event_flags, bool preserve_artwork) const;
     bool animation_active() const { return !clocks_.empty(); }
 
   private:
@@ -126,7 +135,9 @@ class WorldMapArea {
     unsigned block_at(int tile_x, int tile_y) const;
     std::shared_ptr<const WorldMap::State> data_;
     unsigned combination_{}, tileset_{};
+    unsigned animation_tileset_{};
     std::vector<MapBlock> blocks_;
+    std::array<std::uint16_t, 960> collision_offsets_{};
     std::vector<MapGraphic> graphics_;
     std::vector<Clock> clocks_;
 };

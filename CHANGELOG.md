@@ -1,3 +1,23 @@
+# Phase Distorter 0.3 — 2026-10-09
+
+Complete changes since the actual packaged v0.2.1 source snapshot are in
+[the v0.3 GitHub release draft](releases/Phase-Distorter-0.3-patch-notes.md).
+
+- Fix Teleport α arrival with sparse party actor roles and missing NPCs/props
+  during widescreen initial-map and vertical-row loading.
+- Add `--fullscreen`, label 16:10 for Steam Deck, move supported world menus to
+  the wider left edge, center the Giygas intro card and extend coffee/tea scenery.
+- Preserve visible enemies and text through photosensitivity filtering; fix
+  desktop metadata setup and retain intro feedback through holds and flashes.
+- Save snapshot format 9 while retaining loading support for formats 1–8.
+- Add the optional `--native-session N` Continue route with integrated native
+  world menus, field actions, encounters/battles, doors, town maps and PSI travel.
+- Expand native cinematic, graphics, dialogue, retained-state and source-work
+  implementations and regional source comparisons. Whole-engine and physical
+  cutscene acceptance remain open; the regular session remains the default.
+- Rebuild Linux and Windows launchers and supply separate and combined v0.3
+  bundles, manifests, checksums and a build record for manual GitHub upload.
+
 # Phase Distorter 0.2.1 — 2026-10-04
 
 Complete changes since the packaged v0.2 build are in

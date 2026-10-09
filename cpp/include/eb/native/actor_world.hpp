@@ -6,14 +6,18 @@
 #include "eb/native/sprite_appearance.hpp"
 #include <optional>
 
+namespace eb::native::story { struct InputState; }
 namespace eb::native {
+class RawActorCreation;
 class WorldOverlayPlayback;
+struct OverlayObjectMap;
 struct PreparedActorState;
 class WorldActorMovement;
 class WorldPartyMovement;
 class WorldPartyFollowing;
 class WorldEnemies;
 class ActorWorld;
+struct WorldObjectDraw {ActorId actor{};std::uint16_t priority{};};
 // Dedicated source-scene callbacks run at the actual post-script tick phase.
 // The stable borrowed service cannot start another actor traversal or frame.
 class ActorTickService {
@@ -157,6 +161,15 @@ public:
   void clear_party_following(const WorldPartyFollowing &) noexcept;
   void bind_tick_service(ActorTickService &);
   void clear_tick_service(const ActorTickService &) noexcept;
+  // C0DB0F reads only the retained second controller word to choose C0DA31.
+  // This borrow neither polls input nor advances a drawing capture.
+  void bind_drawing_input(const story::InputState &);
+  void clear_drawing_input(const story::InputState &) noexcept;
+  bool uses_drawing_input(const story::InputState &) const noexcept;
+  // Literal source offset views of the real live links, not a sorted snapshot.
+  // Untagged host identities cannot supply an authored WRAM table row.
+  std::uint16_t source_first_entity_offset() const;
+  std::uint16_t source_next_entity_offset(unsigned role) const;
   // Stable borrowed lifetime owner, installed/cleared by WorldRuntime.
   // Script retirement snapshots enemy selectors through this real owner.
   void bind_enemies(WorldEnemies &);
@@ -282,6 +295,16 @@ public:
   std::vector<WorldSoundEvent> take_sound_events();
   std::uint64_t ticks() const;
   GameVersion version() const;
+  bool uses(const SpriteResources &) const noexcept;
+  // A bound real raw owner leaves frame-refresh calls suspended for the
+  // runtime's typed transport. Borrowed ownership must remain stable.
+  void bind_raw_graphics(const RawActorCreation &);
+  void clear_raw_graphics(const RawActorCreation &) noexcept;
+  bool uses(const RawActorCreation &) const noexcept;
+  bool raw_graphics_owns(ActorId) const noexcept;
+  // Applies the actual gated appearance call once without replying to its
+  // script. Repeated preparation returns the same result and queues no sound.
+  AppearanceServiceResult prepare_raw_appearance();
   bool in_tick() const;
 
   // Scripts and tick callbacks run in authored creation order for all actors,
@@ -309,6 +332,10 @@ public:
                                                const SpritePalettes &palettes,
                                                std::uint64_t scene_identity,
                                                unsigned overscan = 64);
+  // Completed source drawing traversal, including anchor admission and the
+  // priority1 world-Y order. This cannot advance overlays or clear priorities.
+  std::span<const WorldObjectDraw> object_draws() const noexcept;
+  std::span<const OverlayObjectMap> object_overlays(ActorId) const;
 
 private:
   friend class WorldEnemies;

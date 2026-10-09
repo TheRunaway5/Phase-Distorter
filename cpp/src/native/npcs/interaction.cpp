@@ -12,7 +12,7 @@ entities::CollisionShape shape(const InteractionBody& body, const WorldActor& ac
 }
 }
 struct Interactions::Execution {
-    struct Participant { std::uint64_t precedence; InteractionBody body; };
+    struct Participant { std::uint64_t precedence; InteractionBody body; bool derived{}; };
     std::shared_ptr<const InteractionResources> resources;
     std::shared_ptr<const MapTextResources> maps;
     std::shared_ptr<const dialogue::Program> program;
@@ -32,9 +32,45 @@ struct Interactions::Execution {
         require(resources->version()==windows.version() && maps->version()==windows.version() &&
                 program->version()==windows.version(),"Talk content and window regions differ");
     }
+    void discard_retired_observations() {
+        const auto live=actors.actors();
+        std::erase_if(participants,[&](const auto& entry) {
+            return entry.second.derived && std::find(live.begin(),live.end(),entry.first)==live.end();
+        });
+    }
     InteractionBody& body(ActorId id) {
-        (void)actors.actor(id); // A stale handle never returns surviving metadata.
-        return participants.at(id).body;
+        const auto& actor=actors.actor(id); // A stale handle never returns surviving metadata.
+        auto found=participants.find(id);
+        if(found==participants.end()) {
+            // Ordinary startup, streamed NPCs and bare INIT_ENTITY already
+            // retain their physical role, NPC selector and creation hitbox in
+            // ActorWorld. Observe those owners at the actual finder call; no
+            // parallel lifecycle registration or default geometry is needed.
+            const auto role=actor.authored_role();
+            require(role.has_value() && actor.hitbox.has_value(),
+                    "Live Talk actor lacks creation collision metadata");
+            discard_retired_observations();
+            for(const auto& [other,p]:participants) {
+                (void)other;require(p.precedence!=*role,"Talk precedence must be unique");
+            }
+            found=participants.emplace(id,Participant{*role,{},true}).first;
+        }
+        if(actor.authored_role() && actor.hitbox) {
+            require(found->second.precedence==*actor.authored_role(),
+                    "Authored Talk precedence differs from its actual role");
+            found->second.derived=true;
+        }
+        if(found->second.derived) {
+            const auto role=actor.authored_role();
+            require(role.has_value() && actor.hitbox.has_value(),
+                    "Authored Talk actor lost its collision owner");
+            const auto& box=*actor.hitbox;
+            found->second.precedence=*role;
+            found->second.body={actors.authored_npc_selector(*role),box.enabled,
+                {box.lateral.half_width,box.lateral.height},
+                {box.vertical.half_width,box.vertical.height}};
+        }
+        return found->second.body;
     }
     void collide(CollisionPoint proposed) {
         const auto& leader=actors.actor(state.leader);
@@ -43,7 +79,13 @@ struct Interactions::Execution {
         // These are synchronous observations, not another mutable actor owner.
         // The source helper contains no callbacks between candidate reads.
         auto live=actors.actors();
-        for(auto id:live) require(participants.contains(id),"Live Talk actor lacks creation collision metadata");
+        for(auto id:live) (void)body(id);
+        // The source tests physical NPC roles0..22; reserved party/bicycle
+        // roles supply the moving hitbox but are not collision candidates.
+        // Untagged callers keep their explicit, unbounded observation list.
+        std::erase_if(live,[&](auto id) {
+            const auto role=actors.actor(id).authored_role();return role && *role>=23;
+        });
         std::sort(live.begin(),live.end(),[&](auto a,auto b){
             return participants.at(a).precedence < participants.at(b).precedence;
         });
@@ -199,15 +241,17 @@ void Interactions::attach(ActorId id,std::uint64_t precedence,const ActorCreatio
     auto& e=*execution_;require(!e.active && !e.poisoned,"Talk lifecycle is not idle");
     const auto& actor=e.actors.actor(id);
     require(metadata.sprite.shape==actor.appearance_context.shape,"Talk metadata differs from actor creation shape");
-    require(!e.participants.contains(id),"Talk actor already has collision metadata");
+    e.discard_retired_observations();
+    const auto found=e.participants.find(id);
+    require(found==e.participants.end() || found->second.derived,"Talk actor already has collision metadata");
     for(const auto& [other,p]:e.participants) {
-        (void)other;require(p.precedence!=precedence,"Talk precedence must be unique");
+        if(other!=id) require(p.precedence!=precedence,"Talk precedence must be unique");
     }
     for(auto named:e.actors.active_npcs())
         if(e.actors.actor_for_npc(named)==id) require(named==npc,"Talk NPC identity differs from its actual world owner");
     const auto& box=metadata.sprite.hitbox;
-    e.participants.emplace(id,Execution::Participant{precedence,{npc,metadata.collision_profile,
-                                                               {box[2],box[3]},{box[0],box[1]}}});
+    e.participants.insert_or_assign(id,Execution::Participant{precedence,{npc,metadata.collision_profile,
+                                                               {box[2],box[3]},{box[0],box[1]}},false});
 }
 void Interactions::detach(ActorId id) {
     require(!execution_->active && !execution_->poisoned,"Talk lifecycle is not idle");

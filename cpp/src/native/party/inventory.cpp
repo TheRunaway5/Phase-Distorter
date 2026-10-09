@@ -282,6 +282,12 @@ bool Inventory::bound_to(const State &state,
 GameVersion Inventory::version() const { return execution_->party.version(); }
 bool Inventory::busy() const noexcept { return execution_->active; }
 bool Inventory::failed() const noexcept { return execution_->poisoned; }
+void Inventory::reset_loaded_transformations() {
+  auto &e=*execution_;
+  require(version()==GameVersion::US && !e.active && !e.poisoned,
+      "Cast timer-count reset requires idle healthy US inventory");
+  e.timers.loaded_count=0;
+}
 void Inventory::rescan_transformations() {
   auto &e = *execution_;
   require(!e.active && !e.poisoned,

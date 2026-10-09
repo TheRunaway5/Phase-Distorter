@@ -69,30 +69,32 @@ std::uint16_t WorldActivation::initial_direction(const ActorWorld &world, ActorI
 
 std::vector<NpcActivation> WorldActivation::activate_cell(ActorWorld &world, unsigned cell_x,
     unsigned cell_y, const NpcActivationState &state) const {
+    if(active_||failed_)throw std::logic_error("NPC activation has unfinished or failed raw creation");
     validate(state);
     std::vector<NpcActivation> result;
     if (state.mode == NpcSpawnMode::Disabled || cell_x >= 32 || cell_y >= 40) return result;
     for (const auto &placement : npcs_->cell(cell_x, cell_y)) {
         // Imported NPC identity is checked at consumption time, after all prior
         // placements have committed. Readiness queries cannot do this for us.
-        if (world.actor_for_npc(placement.npc)) continue;
-        const auto &definition = npcs_->definition(placement.npc);
-        if (!eligible(placement, definition, state)) continue;
-        auto prepared = state.prepared;
-        prepared.x = placement.x;
-        prepared.y = placement.y;
-        prepared.direction = definition.direction;
-        unsigned script = state.photograph ? photograph_script_ : definition.script;
-        if (!state.photograph && state.debug.enabled && state.debug.mode == 1)
-            script = std::min(script, 10u);
-        const NpcCandidate candidate{placement, script};
-        const auto actor = world.create_authored(make_actor_spec(definition.sprite, script, prepared,
-                                                        *sprites_, *scripts_, placement.npc));
+        const auto spec=prepare_candidate(world,placement,state);
+        if(!spec)continue;
+        const auto actor = world.create_authored(*spec);
         if (!actor)
             throw std::runtime_error("Native NPC activation exhausted its authored logical role range");
-        result.push_back({*actor, candidate, definition.sprite, definition.direction});
+        result.push_back({*actor, {placement,spec->script},spec->sprite,spec->behavior.direction});
     }
     return result;
+}
+std::optional<WorldActorSpec> WorldActivation::prepare_candidate(ActorWorld &world,
+    const NpcPlacement &placement,const NpcActivationState &state) const {
+    if(world.actor_for_npc(placement.npc))return {};
+    const auto &definition=npcs_->definition(placement.npc);
+    if(!eligible(placement,definition,state))return {};
+    auto prepared=state.prepared;
+    prepared.x=placement.x;prepared.y=placement.y;prepared.direction=definition.direction;
+    unsigned script=state.photograph?photograph_script_:definition.script;
+    if(!state.photograph&&state.debug.enabled&&state.debug.mode==1)script=std::min(script,10u);
+    return make_actor_spec(definition.sprite,script,prepared,*sprites_,*scripts_,placement.npc);
 }
 
 std::vector<NpcActivation> WorldActivation::activate_strip(ActorWorld &world,
@@ -123,6 +125,7 @@ std::vector<NpcActivation> WorldActivation::activate_strip(ActorWorld &world,
 }
 
 void WorldActivation::begin(CameraRefreshPlan plan, CameraPosition camera) {
+    if(active_||failed_)throw std::logic_error("NPC activation has unfinished or failed raw creation");
     if (request_) throw std::logic_error("Native activation traversal is already pending");
     plan_ = std::move(plan);
     camera_ = camera;

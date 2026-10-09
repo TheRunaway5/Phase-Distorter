@@ -1,3 +1,76 @@
+# Phase Distorter — version 0.3 release bundle
+
+Prepared 2026-10-09 from the current source checkout, including uncommitted
+native-engine work. The [GitHub release draft](releases/Phase-Distorter-0.3-patch-notes.md)
+covers changes since the **actual packaged v0.2.1** source index, whose digest
+is recorded in the v0.2.1 build record. The Git tag alone predates that package.
+
+| Artifact | Layout |
+| --- | --- |
+| [Linux x86-64 ZIP](releases/Phase-Distorter-0.3-linux-x86_64.zip) | Native application with bundled SDL2/GCC runtimes |
+| [Windows x86-64 ZIP](releases/Phase-Distorter-0.3-windows-x86_64.zip) | Native application with SDL2.dll |
+| [Combined launcher ZIP](releases/Phase-Distorter-0.3-launchers-x86_64.zip) | Both platforms in the repository-style layout |
+| [Versioned launcher folder](releases/Phase-Distorter-0.3-launchers-x86_64/README.txt) | The same combined layout, already expanded |
+
+Bundles contain `VERSION`, `PATCH-NOTES.md`, instructions, dependencies,
+licenses, a payload manifest and checksums. Canonical Linux and Windows
+`launchers/` binaries are refreshed from the Release builds. Supported ROM
+imports, normal battery saves and snapshot formats 1–8 remain usable in the
+regular session; new machine snapshots use format 9.
+
+The regular desktop path still uses `GameSession`. The optional
+`--native-session N` Continue path has native world/battle/menu/cinematic owners
+and its own documented acceptance limits. It does not provide complete native
+title/new-game, save-writing, defeat/restart or whole-game parity. Machine debug
+controls and snapshots are unavailable in native sessions.
+
+Rebuild and package with:
+
+```sh
+cmake --build build --target refresh_launchers
+cmake --build build-windows --target refresh_launchers
+python3 cpp/tools/package_release.py --version 0.3 \
+  --patch-notes releases/Phase-Distorter-0.3-patch-notes.md --include-launchers
+```
+
+The [build record](releases/Phase-Distorter-0.3-build-info.json) records source
+identity, binaries, archive hashes and verification. See
+[releases/SHA256SUMS](releases/SHA256SUMS) for all retained archive hashes.
+Local logs and extracted-package checks are in `build/verification/release-0.3/`.
+
+Linux requires glibc 2.43 or newer and desktop OpenGL. Windows execution checks
+use Wine. Tests and replays do not establish a complete game playthrough,
+physical Steam Deck/controller/VRR/audio acceptance or native Windows hardware
+validation. Native cutscene physical timing and full-scene parity remain open.
+No ROMs, imported packs, saves, snapshots or personal preferences are bundled.
+
+This is a local release bundle and a draft for manual GitHub upload. No GitHub
+release has been created or published.
+
+## v0.3 validation
+
+Both Release builds pass their registered suites: **261 passed, 103 optional
+asset-dependent tests skipped, zero failures per platform**. Five packager
+regression tests pass. Ten selected asset-backed programs pass for both regions,
+covering room entry, source NPC scans, filter foregrounds, intro/cinematic
+presentation, teleport party roles and native menus/travel/encounters/coffee/tea.
+
+All three archives pass CRC, payload/manifest/checksum and executable-mode
+audits; their binaries match the builds and canonical launchers. The combined
+folder equals its ZIP. Repeated packaging reproduces all three archives byte
+for byte, and older release ZIP hashes remain unchanged.
+
+All **28 regular extracted-package/launcher runs** pass for both games, with
+Linux/Wine state, native/presentation pictures, generated PCM and corresponding
+OpenGL readbacks matching across the tested native/CRT/high-rate/VRR modes.
+All **eight extracted native Continue runs** pass with zero gameplay CPU
+instructions and matching canonical pictures/PCM. Fullscreen 16:10 CRT
+readbacks match in a private KWin-backed 1280×800 virtual display. Disposable
+synthetic saves remain unchanged. These results retain the acceptance limits
+above and in the machine-readable build record.
+
+## Historical v0.2.1 release
+
 # Phase Distorter — version 0.2.1 release bundle
 
 Prepared 2026-10-04 from the source checkout with all fixes since the actual

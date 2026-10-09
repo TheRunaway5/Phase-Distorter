@@ -31,6 +31,20 @@ extents and rounds to the source loader's 64-pixel grid. Source activation and
 retention remain unchanged at native width; vertical bounds are unchanged.
 Increasing width mid-scene affects subsequent source queries.
 
+Initial map loading and vertical scrolling complete the original NPC row before
+an additional wider row. The original return registers remain authoritative.
+The additional row keeps one horizontal extension from start to finish, even
+if a hardware window/fade gate or the selected viewport changes during loading.
+Previously the row's left edge and loop bound independently consulted the
+current scene gate. A transition could shift the left edge but leave the native
+loop length, skipping the room's NPCs and props entirely. The source-backed
+regression reproduces the missing phone and mother in Ness's home at widescreen
+widths and verifies native-width behavior, US and JP under both source runtimes,
+camera positions, and complete initial-map scans. Snapshot format 9 preserves
+pending rows; earlier snapshot formats remain loadable. An older snapshot
+captured inside a widened row completes that row with matching bounds before
+returning to canonical scans.
+
 Horizontal scrolling preserves the original NPC column scan and then visits
 its wider counterpart. The source call finishes normally; a bounded continuation
 runs the second source call with its original inputs and restores the canonical

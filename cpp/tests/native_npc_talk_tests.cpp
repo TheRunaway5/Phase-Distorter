@@ -222,6 +222,16 @@ struct Fixture {
         talk.state().leader=id;talk.state().leader_x=100;talk.state().leader_y=100;
         talk.state().leader_direction=std::uint16_t(direction);return id;
     }
+    ActorId authored(unsigned npc,unsigned role,unsigned x=100,unsigned y=84) {
+        PreparedActorState prepared;prepared.x=std::uint16_t(x);prepared.y=std::uint16_t(y);
+        auto spec=make_actor_spec(0,0,prepared,*sprites,*scripts,std::optional<NpcId>(npc));
+        const auto& box=metadata.sprite.hitbox;
+        spec.hitbox=ActorHitbox{metadata.collision_profile,{box[0],box[1]},{box[2],box[3]}};
+        const auto id=actors.create_authored(spec,{role,role+1});
+        check(id.has_value(),"Authored Talk fixture could not acquire its actual role");
+        actors.actor(*id).appearance.select_four(0,0,0);
+        return *id;
+    }
     void start() {
         scene=std::make_unique<story::Scene>(windows,party,random,meters,clock,input,actors,area,palettes,
                                             story::SceneView{320,64,714,0xff000000,true});
@@ -380,6 +390,51 @@ void live_actor_observations(eb::GameVersion version) {
     f.actors.actor(first).behavior.direction=0;choose(second);
     f.actors.actor(first).behavior.direction=2;choose(first);
 }
+void authored_metadata_lifecycle(eb::GameVersion version) {
+    Fixture f(version);
+    const auto leader=f.authored(0xffff,23,100,100);
+    f.talk.state().leader=leader;f.talk.state().leader_x=100;f.talk.state().leader_y=100;
+    const auto second=f.authored(2,4),first=f.authored(1,1);
+    const auto reserved=f.authored(3,24);
+    f.start();
+    const auto choose=[&](ActorId expected,unsigned npc) {
+        auto operation=f.talk.begin();f.finish(*operation);
+        if(f.talk.state().interacting_actor!=expected || f.talk.state().interacting_npc!=npc)
+            std::cerr<<"Authored Talk expected actor="<<expected<<" npc="<<npc<<" actual actor="
+                     <<f.talk.state().interacting_actor.value_or(0)<<" npc="<<f.talk.state().interacting_npc<<'\n';
+        check(f.talk.state().interacting_actor==expected && f.talk.state().interacting_npc==npc,
+              "Authored Talk did not observe its current role/NPC/hitbox owners");
+    };
+    choose(first,1);
+    check(f.actors.ticks()==0,"Deriving Talk metadata introduced a gameplay tick");
+    f.actors.actor(first).hitbox->enabled=0;choose(second,2);
+    f.actors.actor(second).hitbox->enabled=0;
+    auto miss=f.talk.begin();f.finish(*miss);
+    check(!f.talk.state().interacting_actor,"Reserved party role became an authored NPC collision candidate");
+    f.actors.actor(second).hitbox->enabled=1;
+    f.actors.actor(first).hitbox->enabled=1;
+    f.actors.actor(first).hitbox->lateral={32,8};
+    f.actors.actor(first).action().position[0]=120u<<16;
+    f.actors.actor(first).behavior.direction=0;choose(second,2);
+    f.actors.actor(first).behavior.direction=2;choose(first,1);
+    f.actors.actor(first).action().position[0]=100u<<16;
+    check(f.actors.retire(first),"Authored Talk target did not retire");
+    check(f.actors.authored_npc_selector(1)==1,"Retirement did not retain the actual NPC selector");
+    rejects([&]{f.talk.body(first);},"Retired authored target exposed a surviving Talk observation");
+    PreparedActorState prepared;prepared.x=100;prepared.y=84;
+    const auto inherited=f.actors.create_authored_script(0,prepared,{1,2});
+    check(inherited.has_value() && f.actors.actor(*inherited).script_only(),
+          "Bare INIT_ENTITY did not reuse its actual retained role");
+    check(f.actors.authored_npc_selector(1)==1,"Bare INIT_ENTITY did not retain its actual NPC selector");
+    choose(*inherited,1);
+    check(f.talk.body(*inherited).lateral.half_width==32,
+          "Role reuse replaced the retained authoritative hitbox with displayed artwork geometry");
+    // Explicit lifecycle callers retain their attachment API, while bound
+    // authored actors continue reading the actual mutable geometry owner.
+    f.talk.attach(*inherited,1,f.metadata,1);
+    f.actors.actor(*inherited).hitbox->enabled=0;choose(second,2);
+    check(f.actors.actor(reserved).action().alive,"Ignoring reserved collision roles retired a real actor");
+}
 void map_and_budget(eb::GameVersion version) {
     Fixture map(version,true);map.leader();map.start();auto operation=map.talk.begin();map.finish(*operation);
     check(map.talk.state().interacting_npc==0xfffe && !map.talk.state().interacting_actor &&
@@ -460,6 +515,7 @@ int main() {
     try {
         for(auto version:{eb::GameVersion::US,eb::GameVersion::JP}) {
             ordered_search_and_dialogue(version);facing_and_type(version);population_lifecycle(version);live_actor_observations(version);
+            authored_metadata_lifecycle(version);
             map_and_budget(version);invalid_and_abandon(version);standalone_window_effects(version);
         }
         std::cout<<"PASS native NPC Talk integration: "<<checks<<" checks\n";

@@ -16,10 +16,30 @@ void PeripheralState::elapsed(unsigned clocks) noexcept {
     if (clocks >= auto_clocks_) { auto_clocks_ = 0; auto_buttons_ = buttons_; }
     else auto_clocks_ -= clocks;
 }
-void PeripheralState::multiply_byte(std::uint8_t a, std::uint8_t b) noexcept { product_ = a * b; }
+void PeripheralState::multiply_byte(std::uint8_t a, std::uint8_t b) noexcept {
+    operand_a_=a;operand_b_=b;product_=pending_product_=std::uint16_t(a*b);
+    math_remaining_cpu_cycles_=0;pending_divide_=false;
+}
+void PeripheralState::begin_source_multiply(std::uint16_t value) noexcept {
+    // Actual M16 STA004202: low-byte latch, then the high-byte trigger.
+    operand_a_=std::uint8_t(value);operand_b_=std::uint8_t(value>>8);
+    pending_product_=std::uint16_t(unsigned(operand_a_)*operand_b_);
+    math_remaining_cpu_cycles_=8;pending_divide_=false;
+}
+void PeripheralState::retire_source_math(unsigned clocks) noexcept {
+    if(!math_remaining_cpu_cycles_)return;
+    const auto cycles=clocks/6;
+    if(cycles>=math_remaining_cpu_cycles_) {
+        product_=pending_product_;
+        if(pending_divide_)quotient_=pending_quotient_;
+        math_remaining_cpu_cycles_=0;
+    } else math_remaining_cpu_cycles_-=cycles;
+}
 void PeripheralState::divide_word(std::uint16_t a, std::uint8_t b) noexcept {
     quotient_ = b ? std::uint16_t(a / b) : 0xffff;
     product_ = b ? std::uint16_t(a % b) : a;
+    pending_product_=product_;pending_quotient_=quotient_;
+    math_remaining_cpu_cycles_=0;pending_divide_=true;
 }
 void PeripheralState::multiply_word(std::uint16_t a, std::uint16_t b) noexcept {
     multiply_byte(std::uint8_t(b), std::uint8_t(a));

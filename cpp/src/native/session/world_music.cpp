@@ -13,6 +13,7 @@ WorldMusic::WorldMusic(const WorldMusicData &data, WorldMusicState &state,
         throw std::invalid_argument("World music needs matching audio and actual authored flags");
 }
 void WorldMusic::select(std::uint16_t x, std::uint16_t y) {
+    if(state_.continuation_abandoned)throw std::logic_error("An abandoned sector music continuation invalidated music work");
     if (state_.disable_changes) return;
     const auto group = data_.group(x, y);
     const auto row = data_.select(group, flags_);
@@ -22,6 +23,7 @@ void WorldMusic::select(std::uint16_t x, std::uint16_t y) {
     if (!state_.do_map_fade && state_.next_track != state_.current_map_track) audio_.driver_effect(2);
 }
 void WorldMusic::apply_sector() {
+    if(state_.continuation_abandoned)throw std::logic_error("An abandoned sector music continuation invalidated music work");
     if (state_.disable_changes || state_.next_track == state_.current_map_track) return;
     if (!state_.selected) throw std::logic_error("World music lacks its actual selected entry");
     const auto selected = *state_.selected;
@@ -31,16 +33,19 @@ void WorldMusic::apply_sector() {
     audio_.driver_effect(entry.effect);
 }
 void WorldMusic::restore_sector() {
+    if(state_.continuation_abandoned)throw std::logic_error("An abandoned sector music continuation invalidated music work");
     select(leader_.leader_x, leader_.leader_y);
     audio_.change_music(state_.next_track, clock_.disabled_transitions);
 }
 void WorldMusic::reload() {
+    if(state_.continuation_abandoned)throw std::logic_error("An abandoned sector music continuation invalidated music work");
     state_.current_map_track = 0xffff;
     select(leader_.leader_x, leader_.leader_y);
     if (leader_.walking_style == 3) audio_.change_music(82, clock_.disabled_transitions);
     else apply_sector();
 }
 void WorldMusic::script_music(const dialogue::ScriptMusicRequest &request) {
+    if(state_.continuation_abandoned)throw std::logic_error("An abandoned sector music continuation invalidated music work");
     switch(request.kind) {
     case dialogue::ScriptMusicKind::Change:
         audio_.change_music(request.value,clock_.disabled_transitions);

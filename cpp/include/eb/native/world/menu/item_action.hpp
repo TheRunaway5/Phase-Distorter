@@ -39,6 +39,7 @@ public:
         ~Operation();
         dialogue::Progress advance(unsigned budget=4096);
         story::Scene::Operation *scene() noexcept;
+        WorldRuntime::Operation *runtime_operation() noexcept;
         story::PartyFormation::Operation *party_update() noexcept;
         story::TeddyParty::Operation *teddy_update() noexcept;
         story::PartyMembership::Operation *membership_update() noexcept;

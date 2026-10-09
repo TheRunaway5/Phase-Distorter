@@ -87,6 +87,28 @@ void startup() {
   require(!f.movement.startup(bad) && f.random == saved,
           "Missing formation leader fabricated startup state");
 }
+void startup_upload_boundary() {
+  Fixture f;const auto id=f.create(24);
+  f.party.party_count=1;f.state.current_leader_role=24;
+  auto &actor=f.actors.actor(id);actor.action().variables[0]=3;actor.action().variables[1]=2;
+  f.party.character(3).afflictions[0]=1;
+  f.state.character_startup[2]={0x1234,0x5678,0x9abc,0xdef0};
+  f.actors.appearance_scene().footstep_role=9;
+  const auto retained=f.state.character_startup[2];auto expected=f.random;
+  const auto byte=story::next_random(expected);
+  require(f.movement.prepare_startup(id)==48&&f.random==expected&&
+      actor.action().variables[2]==(byte&15)&&actor.action().variables[3]==8&&
+      actor.appearance.displayed().has_value(),"Party startup did not prepare its actual pre-upload state");
+  require(f.state.character_startup[2]==retained&&f.actors.appearance_scene().footstep_role==9,
+      "Party startup committed character fields before the actual upload returned");
+  rejects([&]{f.movement.prepare_startup(id);},"A pending party upload consumed a second startup/RNG call");
+  require(f.random==expected,"Duplicate party startup advanced shared RNG");
+  f.movement.finish_startup(id);
+  require(f.state.character_startup[2]==WorldPartyState::CharacterStartup{3,24,0,0xffff}&&
+      f.actors.appearance_scene().footstep_role==24&&actor.action().variables[3]==16,
+      "Party startup did not finish its actual post-upload state");
+  rejects([&]{f.movement.finish_startup(id);},"Party startup accepted a duplicate upload completion");
+}
 void projection() {
   Fixture f;
   const auto leader = f.create(24), follower = f.create(25, 2);
@@ -256,6 +278,7 @@ void maintenance_boundary() {
 int main() {
   try {
     startup();
+    startup_upload_boundary();
     projection(); retained_projection_cache();
     paused_follower();
     maintenance_boundary();

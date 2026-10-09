@@ -15,7 +15,7 @@ enum class TickKind {
     // battle branch, but retains the live recursive-actor guard.
     ActorFrame
 };
-enum class TickService { ClearObjects, RunActors, UpdateScreen, FrameBoundary, BattleHelper };
+enum class TickService { ClearObjects, RunActors, UpdateScreen, FrameBoundary, BattleHelper, ForegroundPrefix, SuppressedActors, ForegroundReturn, WindowPublication, SourceRandom, SourceMeterRoller, SourceMeterTiles, SourceMeterStatus };
 enum class TickCheckpoint {
     Random, EarlyReturn, InstantReturn, DrawWindows, RollMeters,
     MeterAreaPublication, UpdateMeters, StatusPalette, WindowPublication,
@@ -69,6 +69,24 @@ class Ticks {
         bool complete() const;
       private:
         friend class Ticks;
+        friend class Scene;
+        void enable_source_meter_status();
+        bool source_meter_status_pending() const noexcept;
+        void respond_source_meter_status(bool palette_requested);
+        void enable_source_meter_tiles();
+        bool source_meter_tiles_pending() const noexcept;
+        void respond_source_meter_tiles();
+        void enable_source_meter_roller();
+        bool source_meter_roller_pending() const noexcept;
+        void respond_source_meter_roller();
+        void enable_source_random();
+        bool source_random_pending() const noexcept;
+        void respond_source_random();
+        void enable_source_window_publication();
+        bool source_window_publication_pending() const noexcept;
+        void respond_source_window_publication();
+        void enable_source_foreground();
+        bool source_foreground_pending() const noexcept;
         struct Execution;
         explicit Operation(std::unique_ptr<Execution>);
         std::unique_ptr<Execution> execution_;

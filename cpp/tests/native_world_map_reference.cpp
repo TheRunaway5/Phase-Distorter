@@ -106,6 +106,18 @@ int main(int argc, char **argv) {
                                 "Map arrangement differs from source DECOMP");
                 const std::vector<std::uint8_t> original_arrangements(raw_arrangements.begin(), raw_arrangements.end());
                 const unsigned collisions = pointer(assets.image, layout.collision_pointers + set * 4) - 0xc00000;
+                for(unsigned index=0;index<native.collision_offsets.size();++index)
+                    require(native.collision_offsets[index]==word(assets.image,collisions+index*2),
+                            "Imported retained tile collision selector differs");
+                std::array<std::uint8_t,2048> retained_collision;
+                std::copy_n(oracle.bus->work_ram.begin()+0x1f800,retained_collision.size(),retained_collision.begin());
+                oracle.call(assets.version==eb::GameVersion::JP?0xc0063a:0xc0062a,set,0,false);
+                for(unsigned index=0;index<retained_collision.size();++index) {
+                    const auto expected=index<1920?std::uint8_t(native.collision_offsets[index/2]>>((index&1)*8))
+                                                  :retained_collision[index];
+                    require(oracle.bus->work_ram[0x1f800+index]==expected,
+                            "Complete LOAD_TILE_COLLISION changed a selector or retained tail");
+                }
                 // Exercise every authored condition independently, plus full
                 // flag combinations that reveal ordered replacement chains.
                 std::vector<std::vector<std::uint8_t>> flag_cases(3, std::vector<std::uint8_t>(128));
@@ -129,6 +141,9 @@ int main(int argc, char **argv) {
                     std::copy_n(assets.image.begin() + collisions, 960 * 2, oracle.bus->work_ram.begin() + 0x1f800);
                     oracle.call(oracle.event_apply, set);
                     const auto area = map.prepare(combination, state);
+                    for(unsigned index=0;index<area.collision_offsets().size();++index)
+                        require(area.collision_offsets()[index]==word(oracle.bus->work_ram,0x1f800+index*2),
+                                "Ordered event tile collision selector differs");
                     const auto retained_graphics=refreshed.graphics();
                     refreshed.reprepare_events(state);
                     require(refreshed.blocks()==area.blocks()&&refreshed.graphics()==retained_graphics,

@@ -66,6 +66,8 @@ WorldRuntime::Operation *WorldScriptTeleport::Operation::runtime_operation() noe
     auto &s=*state_;
     if(s.transition) return s.transition->runtime_operation();
     if(s.fade) return s.fade->runtime_operation();
+    if(s.relocation)return s.relocation->runtime_operation();
+    if(s.map)return s.map->runtime_operation();
     return s.runtime.get();
 }
 dialogue::Progress WorldScriptTeleport::Operation::advance(unsigned budget) {
@@ -93,8 +95,17 @@ dialogue::Progress WorldScriptTeleport::Operation::advance(unsigned budget) {
                 if(p!=dialogue::Progress::Finished) continue;
                 s.runtime.reset();s.conversation.reset();
             }
-            if(s.map) {if(!s.map->advance(1)) continue;s.map.reset();}
-            if(s.relocation) {if(!s.relocation->advance(1)) continue;s.relocation.reset();}
+            if(s.map) {if(!s.map->advance(1)) {
+                if(s.map->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+                continue;
+            }s.map.reset();}
+            if(s.relocation) {
+                if(!s.relocation->advance(1)) {
+                    if(s.relocation->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+                    continue;
+                }
+                s.relocation.reset();
+            }
             w.runtime.require_content_boundary(&s.parent);
             switch(s.phase) {
             case 0:

@@ -46,10 +46,23 @@ bool reads_temporary(NativeAction action) {
   case NativeAction::NpcInitialDirection:
   case NativeAction::RefreshGiftAppearance:
   case NativeAction::DirectionFromLeader:
+  case NativeAction::TestPlayerInArea:
+  case NativeAction::ShiftMapPalette:
+  case NativeAction::CheckCastScrollThreshold:
+  case NativeAction::ReadPendingDmaBytes:
+  case NativeAction::IsEntityStillOnCastScreen:
+  case NativeAction::CreateCastActor:
+  case NativeAction::PrintCastName:
+  case NativeAction::PrintCastPartyName:
+  case NativeAction::PrintCastNameFromVariable:
+  case NativeAction::ConvertCastActorToScreen:
+  case NativeAction::TickCastScroll:
+  case NativeAction::HalveVerticalVelocity:
+  case NativeAction::FollowVariableAngle:
+  case NativeAction::SetMovementSpeed:
     return false;
   case NativeAction::SetMovingDirection:
   case NativeAction::GetDirection:
-  case NativeAction::SetMovementSpeed:
   case NativeAction::GetMovementSpeed:
   case NativeAction::SetSurfaceFlags:
   case NativeAction::DisableCollision:
@@ -62,6 +75,7 @@ bool reads_temporary(NativeAction action) {
   case NativeAction::CheckAppearanceVisible:
   case NativeAction::StepFourWalk:
   case NativeAction::StepEightAnimation:
+  case NativeAction::SelectEightCurrent:
   case NativeAction::SnapshotPosition:
   case NativeAction::RestoreTargetPosition:
   case NativeAction::ReadEventFlag:
@@ -116,11 +130,26 @@ ActionBindings::ActionBindings(GameVersion version) {
   };
   using K = ActionRequestKind;
   using A = NativeAction;
+  add(K::ReadGameVariable,0x0099,0x0099,A::ReadPendingDmaBytes);
+  add(K::CallEngine, 0xc4e4da, 0xc4bb37, A::SetCastScrollThreshold);
+  add(K::CallEngine, 0xc4e4f9, 0xc4bb56, A::CheckCastScrollThreshold);
+  add(K::CallEngine, 0xc4ece7, 0xc4bf42, A::IsEntityStillOnCastScreen);
+  add(K::CallEngine, 0xc0a99f, 0xc0a97e, A::CreateCastActor, 4);
+  add(K::CallEngine, 0xc0a9b3, 0xc0a992, A::PrintCastName, 6);
+  add(K::CallEngine, 0xc0a9cf, 0xc0a9ae, A::PrintCastPartyName, 6);
+  add(K::CallEngine, 0xc0a9eb, 0xc0a9ca, A::PrintCastNameFromVariable, 6);
+  add(K::CallEngine, 0xc4ec6e, 0xc4bec9, A::UploadCastPalette);
+  add(K::CallEngine, 0xc0a06c, 0xc0a04b, A::ConvertCastActorToScreen);
+  add(K::SetTickCallback, 0xc4e51e, 0xc4bb7b, A::TickCastScroll);
+  add(K::WriteGameWord, 0xb4d1, 0xb6a4, A::WriteCastTileOffset);
+  add(K::WriteGameWord, 0xb4d3, 0xb6a6, A::WriteCastInitialSleep);
+  add(K::WriteGameWord, 0xb4cf, 0xb6a2, A::WriteCastTextCursor);
   add(K::CallEngine, 0xc20000, 0xc20000, A::InflictSunstrokeCheck);
   add(K::CallEngine, 0xc46e46, 0xc44bca, A::YieldToText);
   add(K::CallEngine, 0xc46adb, 0xc44857, A::TargetAngle);
   add(K::CallEngine, 0xc0a8dc, 0xc0a8bb, A::TargetReached);
   add(K::CallEngine, 0xc0aa6e, 0xc0aa4d, A::SetDirectionFrame, 2);
+  add(K::CallEngine, 0xc0aaac, 0xc0aa8b, A::SelectEightCurrent);
   add(K::CallEngine, 0xc0a864, 0xc0a843, A::CopyPartyPosition, 1);
   add(K::CallEngine, 0xc0a86f, 0xc0a84e, A::CopySpritePosition, 2);
   add(K::CallEngine, 0xc0a841, 0xc0a820, A::PlaySound, 2);
@@ -177,6 +206,9 @@ ActionBindings::ActionBindings(GameVersion version) {
   add(K::CallEngine, 0xc46c87, 0xc44a0b, A::RestoreTargetPosition);
   add(K::CallEngine, 0xc46b2d, 0xc448a9, A::DirectionToAngle);
   add(K::CallEngine, 0xc46b37, 0xc448b3, A::OppositeDirection);
+  add(K::CallEngine, 0xc46b51, 0xc448cd, A::AngleToDirection);
+  add(K::CallEngine, 0xc4730e, 0xc45092, A::HalveVerticalVelocity);
+  add(K::CallEngine, 0xc0a8e7, 0xc0a8c6, A::FollowVariableAngle);
   add(K::CallEngine, 0xc0a84c, 0xc0a82b, A::ReadEventFlag, 2);
   add(K::CallEngine, 0xc0a857, 0xc0a836, A::WriteEventFlag, 2);
   add(K::CallEngine, 0xc020f1, 0xc020ff, A::ReleaseAppearance);
@@ -253,8 +285,8 @@ ActionBindings::ActionBindings(GameVersion version) {
               0xc0d563); // Battle/swirl state predicate.
   independent(K::CallEngine, 0xc46b65,
               0xc448e1); // Save leader position in actor variables.
-  independent(K::CallEngine, 0xc46e74,
-              0xc44bf8); // TEST_PLAYER_IN_AREA, actor variables.
+  add(K::CallEngine, 0xc46e74, 0xc44bf8, A::TestPlayerInArea);
+  add(K::CallEngine, 0xc47499, 0xc4521d, A::ShiftMapPalette);
   independent(K::CallEngine, 0xc4ece7,
               0xc4bf42); // Cast-screen position predicate.
   // Installing these audited callbacks does not invoke them or read a task
@@ -303,6 +335,10 @@ BoundAction ActionBindings::compile(const ActionEngineRequest &request,
     return result;
   }
   if (found->operation == NativeAction::CreateActor ||
+      found->operation == NativeAction::CreateCastActor ||
+      found->operation == NativeAction::PrintCastName ||
+      found->operation == NativeAction::PrintCastPartyName ||
+      found->operation == NativeAction::PrintCastNameFromVariable ||
       found->operation == NativeAction::SetMovementBounds) {
     const auto word = [&](unsigned delta) {
       const unsigned cursor = (request.parameters & 0xff0000) |
@@ -317,10 +353,13 @@ BoundAction ActionBindings::compile(const ActionEngineRequest &request,
       return std::uint16_t(data.byte(cursor) | unsigned(data.byte(cursor + 1))
                                                    << 8);
     };
-    BoundAction result{found->operation,       0,   4, false,
+    BoundAction result{found->operation,       0,   found->parameter_bytes, false,
                        found->temporary_input, true, {}};
-    if (found->operation == NativeAction::CreateActor)
+    if (found->operation == NativeAction::CreateActor ||
+        found->operation == NativeAction::CreateCastActor)
       result.payload = CreateActorOperands{word(0), word(2)};
+    else if (found->parameter_bytes == 6)
+      result.payload = CastNameOperands{word(0), word(2), word(4)};
     else
       result.payload = MovementBoundsOperands{word(0), word(2)};
     return result;
@@ -389,6 +428,18 @@ NativeActionResult apply_action(const BoundAction &action,
     result.value = actor.variables[3];
     break;
   }
+  case NativeAction::SetCastScrollThreshold:
+  case NativeAction::CheckCastScrollThreshold:
+  case NativeAction::IsEntityStillOnCastScreen:
+  case NativeAction::CreateCastActor:
+  case NativeAction::PrintCastName:
+  case NativeAction::PrintCastPartyName:
+  case NativeAction::PrintCastNameFromVariable:
+  case NativeAction::UploadCastPalette:
+  case NativeAction::ConvertCastActorToScreen:
+  case NativeAction::WriteCastTileOffset:
+  case NativeAction::WriteCastInitialSleep:
+  case NativeAction::WriteCastTextCursor:
   case NativeAction::Unsupported:
   case NativeAction::TargetAngle:
   case NativeAction::TargetReached:
@@ -406,7 +457,10 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::WindowAnimationActive:
   case NativeAction::AdvanceEncounterEffects:
   case NativeAction::DirectionFromLeader:
+  case NativeAction::TestPlayerInArea:
+  case NativeAction::ShiftMapPalette:
   case NativeAction::CheckContentIntegrity:
+  case NativeAction::ReadPendingDmaBytes:
   case NativeAction::ReadMovedThisTick:
   case NativeAction::InflictSunstrokeCheck:
   case NativeAction::FadePauseActors:
@@ -451,6 +505,7 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::VelocityDistanceSleep:
   case NativeAction::EnemyAngleVelocity:
   case NativeAction::EnemyAngleDirection:
+  case NativeAction::FollowVariableAngle:
   case NativeAction::SelectFourInitial:
   case NativeAction::SelectFourAnimation:
   case NativeAction::SelectFourFirst:
@@ -458,6 +513,7 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::CheckAppearanceVisible:
   case NativeAction::StepFourWalk:
   case NativeAction::StepEightAnimation:
+  case NativeAction::SelectEightCurrent:
     return {};
   case NativeAction::YieldToText:
     scene.action_script_state = 1;
@@ -558,6 +614,9 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::TickWorldMaintenance:
     context.tick = ActorTickCallback::WorldMaintenance;
     break;
+  case NativeAction::TickCastScroll:
+    context.tick = ActorTickCallback::CastScroll;
+    break;
   case NativeAction::ProjectionWorld:
     context.projection = ActorProjection::World;
     break;
@@ -609,6 +668,19 @@ NativeActionResult apply_action(const BoundAction &action,
   case NativeAction::OppositeDirection:
     result.value = (temporary + 4) & 7;
     break;
+  case NativeAction::AngleToDirection: {
+    // C46B51 enters DIVISION16S_DIVISOR_POSITIVE directly: this is the
+    // unsigned quotient of the wrapped angle, followed by its literal table.
+    constexpr std::array<std::uint16_t,8> directions{2,3,4,5,6,7,7,1};
+    result.value=directions[std::uint16_t(temporary+0x1000u)/0x2000u];
+    break;
+  }
+  case NativeAction::HalveVerticalVelocity: {
+    const unsigned whole=actor.velocity[1]>>16;
+    result.value=std::uint16_t((whole>>1)|(whole&0x8000));
+    actor.velocity[1]=(unsigned(result.value)<<16)|(actor.velocity[1]&0xffff);
+    break;
+  }
   case NativeAction::ReadEventFlag:
   case NativeAction::WriteEventFlag: {
     const unsigned id = action.operand;
@@ -636,6 +708,7 @@ void run_actor_tick_callback(const ActionActorState &actor,
   case ActorTickCallback::PartyFollower:
   case ActorTickCallback::WorldMaintenance:
   case ActorTickCallback::EnemyPath:
+  case ActorTickCallback::CastScroll:
     throw std::logic_error(
         "Native actor callback requires its world service");
   case ActorTickCallback::TeleportLeader:

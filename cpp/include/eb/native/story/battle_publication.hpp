@@ -4,6 +4,7 @@
 #include "eb/native/battle/frame_display.hpp"
 #include "eb/native/battle_combatants.hpp"
 #include "eb/native/story/scene.hpp"
+#include <utility>
 
 namespace eb::native { struct WorldEncounterVisualState; class WorldDisplayFade; }
 namespace eb::native::story {
@@ -38,6 +39,10 @@ public:
     // remain unbound; the desktop owner binds its stable world presentation.
     void bind_world_presentation(ScenePublication &);
     void complete_publication() override {}
+    void complete_interrupt() noexcept override {display_.transient_memory().after_interrupt();}
+    void stage_world_objects(std::shared_ptr<const DirectSceneFrame> objects) override {
+        if(!windows_.prompt_state().battle_mode && world_)world_->stage_world_objects(std::move(objects));
+    }
     dialogue::WindowPalettePublication *window_palette_publication() noexcept override { return this; }
     const WorldDisplayFade *display_fade() const noexcept override { return fade_; }
     const WorldEncounterVisualState *publication_visual() const noexcept override { return visual_; }

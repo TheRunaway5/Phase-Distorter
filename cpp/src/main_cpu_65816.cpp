@@ -33,9 +33,9 @@ void MainCpu65816::snapshot_io(SnapshotArchive &archive) {
         archive(entity_preload_.guarded_world_);
     else if (archive.loading())
         entity_preload_.guarded_world_ = false;
-    entity_preload_.snapshot_columns(archive);
     const unsigned maximum_extension = archive.loading() && entity_preload_.guarded_world_
         ? RenderDistance(RenderDistance::maximum_width).activation_extension(preload_artwork(hardware_)) : 448;
+    entity_preload_.snapshot_columns(archive, maximum_extension, *this);
     if (archive.loading() && (program_counter > 0xffffff || extra_budget_clock_remainder_ >= 8 ||
         (runtime_ != MainCpuRuntime::Ported && runtime_ != MainCpuRuntime::Legacy) ||
         entity_preload_.extra_pixels_ > maximum_extension))

@@ -312,6 +312,28 @@ void target_navigation(eb::GameVersion version) {
     check(!f.h.roster.at(8 + i).targeted,
           "Navigation retained a previous target highlight");
 }
+void refocus_after_target_with_retained_lookup() {
+  for(const auto version:{eb::GameVersion::US,eb::GameVersion::JP}) {
+    Rig baseline(version),actual(version);
+    const unsigned at=version==eb::GameVersion::JP?0x8c24:0x88e2;
+    // The actual ordinary session retains these graphics bytes when the
+    // target window closes. SET_WINDOW_FOCUS never reads this lookup.
+    const unsigned raw=version==eb::GameVersion::JP?3416:19704;
+    baseline.h.f.windows.bind_ambient_register_source(baseline.h.scratch.bytes);
+    actual.h.f.windows.bind_ambient_register_source(actual.h.scratch.bytes);
+    actual.h.scratch.bytes[at]=std::uint8_t(raw);actual.h.scratch.bytes[at+1]=std::uint8_t(raw>>8);
+    auto expected=baseline.command.begin(1,0,0),op=actual.command.begin(1,0,0);
+    const std::deque<std::uint16_t> taps={0x80,0x80,0x80,0x80,0x80,0x80};
+    baseline.finish(*expected,taps);actual.finish(*op,taps);
+    check(op->result()==4&&op->result()==expected->result()&&actual.turns.menu==baseline.turns.menu&&
+        actual.h.f.windows.state().focus==baseline.h.f.windows.state().focus&&
+        actual.polls==baseline.polls&&actual.publications==baseline.publications&&
+        actual.h.f.random==baseline.h.f.random&&!actual.command.failed(),
+        "Explicit command refocus read the stale active-window lookup or changed target/input/publication/RNG");
+    check((unsigned(actual.h.scratch.bytes[at])|(unsigned(actual.h.scratch.bytes[at+1])<<8))==raw,
+        "Explicit refocus rewrote the retained graphics lookup bytes");
+  }
+}
 void ambient_scratch() {
   for (const unsigned selector : {0u, 0x8000u, 0xffffu, 8u}) {
     Rig f(eb::GameVersion::JP);
@@ -348,6 +370,7 @@ int main() {
       goods(v);
       target_navigation(v);
     }
+    refocus_after_target_with_retained_lookup();
     ambient_scratch();
     std::cout << "native battle command menu checks "
               << battle_frame_test::checks << '\n';

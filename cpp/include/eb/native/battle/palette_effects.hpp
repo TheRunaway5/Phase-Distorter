@@ -2,6 +2,11 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <stdexcept>
+
+namespace eb::native::story {class SourceMeterStatus;}
+namespace eb::native::cutscenes::ending {class InitializerWork;}
 
 namespace eb::native::battle {
 using PackedPalette = std::array<std::uint16_t, 16>;
@@ -15,6 +20,12 @@ struct PaletteBankState {
     PaletteBankState& operator=(const PaletteBankState&) = delete;
     PaletteBankState(PaletteBankState&&) = delete;
     PaletteBankState& operator=(PaletteBankState&&) = delete;
+    std::weak_ptr<const void> source_lifetime() const noexcept {return lifetime_;}
+    bool source_active() const noexcept {return source_lease_!=nullptr;}
+    bool source_owned_by(const void *lease) const noexcept {return lease&&source_lease_==lease;}
+    void require_semantic_write() const {
+        if(source_lease_)throw std::logic_error("Source palette work owns the actual staging bank");
+    }
 
     // Existing effect-bank identities0..3 are physical alternate banks12..15.
     PackedPalette& palette(unsigned bank);
@@ -31,6 +42,11 @@ struct PaletteBankState {
     bool publish_pending();
     std::array<PackedPalette, 16> staged{}, displayed{};
     std::uint8_t upload_mode{};
+private:
+    friend class story::SourceMeterStatus;
+    friend class eb::native::cutscenes::ending::InitializerWork;
+    const void *source_lease_{};
+    std::shared_ptr<const void> lifetime_=std::make_shared<const unsigned>(0);
 };
 
 struct PaletteEffectBank {
@@ -75,6 +91,7 @@ public:
 
 private:
     PaletteBankState& palettes_;
+    std::weak_ptr<const void> palette_lifetime_;
     PaletteEffectState& state_;
 };
 } // namespace eb::native::battle

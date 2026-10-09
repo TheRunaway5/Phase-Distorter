@@ -29,7 +29,9 @@ add_library(eb_native_story STATIC
     src/native/dialogue/window_resources.cpp
     src/native/dialogue/initialization_resources.cpp
     src/native/dialogue/window_graphics.cpp
+    src/native/dialogue/window_buffer.cpp
     src/native/dialogue/window_host.cpp
+    src/native/dialogue/ambient/layout.cpp
     src/native/dialogue/window_commands.cpp
     src/native/dialogue/text_animation_resources.cpp
     src/native/dialogue/text_animations.cpp

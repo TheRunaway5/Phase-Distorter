@@ -67,12 +67,18 @@ std::shared_ptr<const WindowResources> WindowResources::import(std::span<const s
     const auto flavored = detail::decode_hal_exact(region(image,source.flavored,76),112);
     const auto properties = region(image,source.properties,5 * 3);
     const auto colors = region(image,source.palettes,source.palette_bytes);
+    std::copy(properties.begin(),properties.end(),result->raw_palette_properties_.begin());
+    result->raw_palettes_.assign(colors.begin(),colors.end());
+    result->raw_palette_properties_identity_=0xc00000+source.properties;
+    result->raw_palettes_identity_=0xc00000+source.palettes;
     const auto rows = region(image,source.pagination_rows,4 * 8);
     const auto pointers = region(image,source.pagination_pointers,4 * 4);
     // BLINKING_TRIANGLE_TILES is exactly three words. Its third cell restores
     // the phase-zero prompt on acceptance; source publication owns timing.
     const auto prompts = region(image,source.prompt_descriptors,3 * 2);
     const auto tail = region(image,source.fixed_tail,64);
+    std::copy(tail.begin(),tail.end(),result->raw_fixed_tail_.begin());
+    result->raw_fixed_tail_identity_ = 0xc00000u + source.fixed_tail;
     // These five art indices are source drawing operations in C107AF, not a
     // bundled configuration/art table: ordinary/intersection corner, horizontal
     // edge, vertical edge and title/pagination join. Orientation belongs to host.

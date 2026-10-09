@@ -23,8 +23,12 @@ Enter=Start; Right Shift=Select. Controllers are supported and remappable.
 Use --help for command-line options, --game earthbound / --game mother2 to
 choose a game, and --no-config to ignore saved display/controller preferences.
 The optional photosensitivity filter uses console brightness (about 80%) and
-temporal feedback for PSI effects and Giygas. Full console scene parity and
-medical safety are unverified.
+temporal feedback for PSI effects and Giygas. Visible enemies and text retain
+their original colors/brightness. Full console scene parity is unverified.
+Use 16:10 (Steam Deck) for 1280x800 and --fullscreen for desktop fullscreen.
+--native-session N offers experimental native Continue for save slots 1-3;
+full native integration remains in progress. Machine snapshots/debug controls
+are unavailable in that route.
 
 Optional menu/shortcut setup: ./install-linux.sh or install-shortcuts.vbs.
 These create per-user shortcuts; keep this folder in place or rerun setup if

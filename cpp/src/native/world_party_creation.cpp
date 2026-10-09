@@ -82,9 +82,14 @@ WorldPartyCreation::begin_rebuild() {
   return operation;
 }
 WorldPartyCreation::Operation::Operation(WorldPartyCreation &owner,
-                                         std::optional<unsigned> member)
-    : owner_(owner), single_member_(member) {
+                                         std::optional<unsigned> member,RawActorCreation *graphics)
+    : owner_(owner), single_member_(member),graphics_(graphics) {
   created_.reserve(member ? 1 : 6);
+}
+std::unique_ptr<WorldPartyCreation::Operation>
+WorldPartyCreation::begin_rebuild(RawActorCreation &graphics) {
+  if(!graphics.uses(actors_))throw std::invalid_argument("Party raw creation requires its actual actor owner");
+  auto operation=begin_rebuild();operation->graphics_=&graphics;return operation;
 }
 WorldPartyCreation::Operation::~Operation() {
   if (owner_.active_ == this) {
@@ -179,15 +184,23 @@ void WorldPartyCreation::Operation::insert() {
   owner_.prepared_.variables[0] = member_ - 1;
   owner_.prepared_.variables[1] = record;
   owner_.formation_.trail_cursors[record] = cursor;
-  const auto actor = owner_.actors_.create_authored(spec, {role, role + 1});
-  if (!actor)
-    throw std::logic_error("Native party creation lost its validated role");
-  auto &context = owner_.actors_.actor(*actor).behavior;
+  created_role_=role;
+  if(graphics_) {
+    graphical_creation_=graphics_->begin_create(spec,{role,role+1});phase_=4;
+  } else {
+    const auto actor=owner_.actors_.create_authored(spec,{role,role+1});
+    if(!actor)throw std::logic_error("Native party creation lost its validated role");
+    complete_actor_creation(*actor);
+  }
+}
+void WorldPartyCreation::Operation::complete_actor_creation(ActorId actor) {
+  const auto role=created_role_;
+  auto &context = owner_.actors_.actor(actor).behavior;
   context.projected_x =
       signed_word(std::uint16_t(spawn_x_ - owner_.actors_.scene().camera_x));
   context.projected_y =
       signed_word(std::uint16_t(spawn_y_ - owner_.actors_.scene().camera_y));
-  created_.push_back({std::uint8_t(member_), role, *actor});
+  created_.push_back({std::uint8_t(member_), role, actor});
   owner_.actors_.order_free_authored_roles();
   owner_.formation_.current_leader_role =
       owner_.data_.initial(owner_.party_.display_order[0]).preferred_role;
@@ -261,6 +274,14 @@ bool WorldPartyCreation::Operation::advance() {
           owner_.active_ = nullptr;
         }
         break;
+      case 4:
+        if(graphical_creation_->advance()) {
+          const auto actor=graphical_creation_->actor();graphical_creation_.reset();
+          complete_actor_creation(actor);
+        } else if(graphical_creation_->needs_publication()) {
+          service_={WorldPartyCreationServiceKind::GraphicsPublication,0};
+        }
+        break;
       default:
         throw std::logic_error("Invalid native party creation phase");
       }
@@ -280,6 +301,13 @@ void WorldPartyCreation::Operation::respond() {
         "Native party creation has no pending update service");
   update_->respond();
   service_.reset();
+}
+void WorldPartyCreation::Operation::respond_graphics_publication() {
+  owner_.check();
+  if(!service_||service_->kind!=WorldPartyCreationServiceKind::GraphicsPublication||
+      !graphical_creation_||!graphical_creation_->needs_publication())
+    throw std::logic_error("Party creation has no actual raw graphics publication wait");
+  graphical_creation_->respond_publication();service_.reset();
 }
 void WorldPartyCreation::Operation::respond_comparison(bool unconscious) {
   owner_.check();

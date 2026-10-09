@@ -11,6 +11,7 @@
 #include "generated_assets.hpp"
 #include "eb/native/dialogue/fonts.hpp"
 #include "eb/native/dialogue/window_graphics.hpp"
+#include "eb/native/dialogue/window_buffer.hpp"
 #include "eb/native/dialogue/menu_model.hpp"
 #include <algorithm>
 #include <array>
@@ -663,13 +664,43 @@ void native_initialization_cases(const eb::GameAssets& assets) {
         pair.selection_with_flavor_callback();++totals.native_cases;
     }
 }
+void native_buffer_cases(const eb::GameAssets &assets) {
+    const auto fonts=dialogue::FontResources::import(assets.image,assets.version);
+    const auto resources=dialogue::WindowInitializationResources::import(assets.image,assets.version);
+    unsigned cases{};
+    for(unsigned flavor=1;flavor<=5;++flavor)for(unsigned seed:{11u,0xa5u,0x5au}) {
+        Original source(assets);
+        std::array<std::uint8_t,65536> buffer;
+        for(unsigned i=0;i<buffer.size();++i)buffer[i]=std::uint8_t(i*37+(i>>8)+seed);
+        std::copy(buffer.begin(),buffer.end(),source.bus->work_ram.begin()+0x10000);
+        dialogue::State state;dialogue::TextOutput output(fonts,state);
+        dialogue::WindowGraphics graphics(resources,output);
+        std::array<std::array<std::uint8_t,5>,4> names;
+        dialogue::PartyNameInputs inputs;
+        for(unsigned member=0;member<4;++member) {
+            std::copy_n(source.bus->work_ram.begin()+source.p.party+member*source.p.stride,5,names[member].begin());
+            inputs.names[member]=names[member];
+        }
+        for(unsigned pass=0;pass<2;++pass) {
+            const unsigned selected=pass?6-flavor:flavor;
+            source.bus->work_ram[source.p.flavor]=std::uint8_t(selected);
+            source.prepare();dialogue::prepare_window_buffer(graphics,buffer,inputs,selected);
+            require(std::equal(buffer.begin(),buffer.end(),source.bus->work_ram.begin()+0x10000),
+                "Complete retained LOAD_WINDOW_GFX BUFFER differs "+std::string(assets.title)+
+                " flavor="+std::to_string(selected)+" pass="+std::to_string(pass));
+            ++cases;
+        }
+    }
+    std::cout<<"PASS retained window BUFFER "<<assets.title<<": "<<cases
+        <<" complete original preparations/full65536bytes including unchanged tail\n";
+}
 }
 int main(int argc,char** argv) {
     try {
         if(argc<2){std::cout<<"SKIP initialization source reference: local imported packs required\n";return 77;}
         for(int i=1;i<argc;++i) {
             const auto assets=eb::load_game_assets(argv[i],eb::asset_profiles());
-            us_name_continuations(assets);poisoned_publication(assets);retained_title_visibility(assets);native_initialization_cases(assets);
+            us_name_continuations(assets);poisoned_publication(assets);retained_title_visibility(assets);native_initialization_cases(assets);native_buffer_cases(assets);
         }
         std::cout<<"PASS initialization source pilot: "<<totals.cases<<" cases, "<<totals.preparations<<" complete preparations, "<<totals.publications<<" original hardware publications, "<<totals.name_glyphs<<" original name glyph calls, "<<totals.party_reads<<" party byte reads, "<<totals.instructions<<" original instructions\n";
         std::cout<<"Original PPU samples: "<<totals.pixels<<", explicit title frame-only wait seams: "<<totals.frame_seams<<"\n";

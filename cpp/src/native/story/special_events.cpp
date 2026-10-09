@@ -32,12 +32,19 @@ void SpecialEvents::bind_town_map(world::townmap::Scene &scene) {
           "Special event town map requires its actual idle shared scene owner");
   town_map_=&scene;
 }
+void SpecialEvents::bind_cinematics(cutscenes::Services &scenes) {
+  require(!active_&&!failed_&&(!cinematics_||cinematics_==&scenes)&&scenes.uses(owners_.scene),
+          "Cinematic services require the actual shared idle story scene");
+  cinematics_=&scenes;
+}
 std::unique_ptr<SpecialEvents::Operation> SpecialEvents::begin(std::uint8_t event,Scene::Operation &parent,
                                                             WorldRuntime::Operation *runtime_parent) {
   require(!failed_&&!active_,"Special event owner is failed or busy");
   owners_.scene.require_nested(parent);
-  require(!(event>=1&&event<=16&&event!=5&&event!=6&&event!=7&&event!=8&&event!=13&&event!=14&&event!=15),
+  require(!(event>=1&&event<=16&&event!=5&&event!=6&&event!=7&&event!=8&&event!=13&&event!=14&&event!=15 &&
+            !(cinematics_&&cinematics_->supports(event))),
           "Special event requires its complete authored cinematic owner");
+  if(cinematics_&&cinematics_->supports(event))require(runtime_parent,"Cinematic event requires its actual runtime parent");
   if(event==7)require(town_map_&&runtime_parent,"Special event7 requires its actual town map and runtime parent");
   if(event==8) {
     require(owners_.action.attacker.has_value(),"Attacker-side special event lacks its live selector");
@@ -72,6 +79,12 @@ dialogue::Progress SpecialEvents::Operation::advance(unsigned budget) {
     auto &o=owner_.owners_;
     while(budget--) {
       if(bicycle_){executing_=false;return dialogue::Progress::Suspended;}
+      if(cinematic_) {
+        const auto progress=cinematic_->advance(1);
+        if(progress==dialogue::Progress::Suspended){executing_=false;return progress;}
+        if(progress!=dialogue::Progress::Finished)continue;
+        result_=cinematic_->result();cinematic_.reset();
+      }
       if(town_map_) {
         const auto progress=town_map_->advance(1);
         if(progress==dialogue::Progress::Suspended){executing_=false;return progress;}
@@ -90,10 +103,19 @@ dialogue::Progress SpecialEvents::Operation::advance(unsigned budget) {
         if(progress!=dialogue::Progress::Finished)continue;
         scene_.reset();
       }
+      if(placement_) {
+        const auto progress=placement_->advance(1);
+        if(progress==dialogue::Progress::Suspended){executing_=false;return progress;}
+        if(progress!=dialogue::Progress::Finished)continue;
+        placement_.reset();
+      }
       switch(phase_) {
       case 0:
         // C1BEFC's 5/6 branches only call C43344. The flag query returns
         // exactly 0/1; suppression is a word and must replace both bytes.
+        if(owner_.cinematics_&&owner_.cinematics_->supports(event_)){
+          cinematic_=owner_.cinematics_->begin(event_,*runtime_parent_);phase_=99;break;
+        }
         if(event_==7){town_map_=owner_.town_map_->begin(runtime_parent_);phase_=99;break;}
         if(event_==5)o.maintenance.overworld_status_suppression=1;
         else if(event_==6)o.maintenance.overworld_status_suppression=o.interactions.windows().state().flag(73)?1:0;
@@ -117,7 +139,11 @@ dialogue::Progress SpecialEvents::Operation::advance(unsigned budget) {
         }
         phase_=99;break;
       case 1:
-        o.following.position_after_pause();
+        if(runtime_parent_)
+          placement_=std::make_unique<world::PartyPlacement>(o.following,o.actors,runtime_parent_->runtime(),runtime_parent_);
+        else o.following.position_after_pause();
+        phase_=3;break;
+      case 3:
         scene_=o.scene.begin_nested(TickKind::WorldFrame,parent_);phase_=2;break;
       case 2:
         o.interactions.set_actors_paused(true);

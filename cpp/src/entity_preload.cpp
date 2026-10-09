@@ -18,6 +18,11 @@ constexpr NpcLayout npc_layout(bool jp) {
 unsigned word(std::span<const std::uint8_t> bytes, unsigned at) {
   return bytes[at] | unsigned(bytes[at + 1]) << 8;
 }
+bool row_site(bool jp, std::uint32_t pc) {
+  return pc == (jp ? 0xc01529u : 0xc01513u) ||
+         pc == (jp ? 0xc016c8u : 0xc016b2u) ||
+         pc == (jp ? 0xc0171au : 0xc01704u);
+}
 bool supported_preview(const SceneReadView &view, const NpcLayout &l, unsigned npc) {
   if (npc >= 1584 || l.definitions + npc * 17 + 17 > view.cartridge_rom.size()) return false;
   const unsigned at = l.definitions + npc * 17;
@@ -36,6 +41,7 @@ bool npc_site(bool jp, std::uint32_t pc, std::uint8_t opcode, unsigned length) {
           (pc == (jp ? 0xc0c6d5u : 0xc0c6f3u) || pc == (jp ? 0xc0c6dau : 0xc0c6f8u))) ||
          (opcode == 0x69 && length == 3 && pc == (jp ? 0xc025ceu : 0xc025c0u)) ||
          (opcode == 0x85 && length == 2 && pc == (jp ? 0xc02574u : 0xc02566u)) ||
+         (opcode == 0x6b && length == 1 && pc == (jp ? 0xc025dcu : 0xc025ceu)) ||
          (opcode == 0x22 && length == 4 &&
           (pc == (jp ? 0xc0160au : 0xc015f4u) || pc == (jp ? 0xc0165du : 0xc01647u) ||
            pc == (jp ? 0xc02500u : 0xc024f2u) || pc == (jp ? 0xc024c4u : 0xc024b6u)));
@@ -43,16 +49,18 @@ bool npc_site(bool jp, std::uint32_t pc, std::uint8_t opcode, unsigned length) {
 } // namespace
 void EntityPreload::begin_column(MainCpu65816 &cpu, std::uint8_t opcode, unsigned length,
                                  std::uint32_t operand, const SnesBus *hardware) {
-  if (!guarded_world_ || !enabled() || column_.phase || !hardware ||
+  if (!guarded_world_ || !enabled() || column_.phase || legacy_row_ || !hardware ||
       opcode != 0x22 || length != 4 || cpu.emulation_mode || (cpu.status_register & 0x30)) return;
   const bool jp = cpu.game_version == GameVersion::JP;
   const bool right = cpu.program_counter == (jp ? 0xc0160au : 0xc015f4u);
   const bool left = cpu.program_counter == (jp ? 0xc0165du : 0xc01647u);
-  if ((!right && !left) || operand != (jp ? 0xc025ddu : 0xc025cfu)) return;
+  const bool row = row_site(jp, cpu.program_counter) && operand == (jp ? 0xc0256au : 0xc0255cu);
+  if (!row && ((!right && !left) || operand != (jp ? 0xc025ddu : 0xc025cfu))) return;
   const auto view = hardware->scene_read_view();
   if (!word(view.work_ram, npc_layout(jp).enabled) || !SourceEntityAdmission::ordinary_world(view)) return;
   column_.phase = 1; column_.site = cpu.program_counter; column_.stack = cpu.stack_pointer;
-  column_.extended_x = std::uint16_t(cpu.accumulator + (right ? int(extra_pixels_ / 8) : -int(extra_pixels_ / 8)));
+  column_.extended_x = row ? extra_pixels_ / 8 :
+      std::uint16_t(cpu.accumulator + (right ? int(extra_pixels_ / 8) : -int(extra_pixels_ / 8)));
   column_.input = {cpu.accumulator, cpu.x_index, cpu.y_index, cpu.direct_page, cpu.status_register, cpu.data_bank};
 }
 void EntityPreload::finish_column(MainCpu65816 &cpu) {
@@ -65,7 +73,8 @@ void EntityPreload::finish_column(MainCpu65816 &cpu) {
     column_.canonical_return = {cpu.accumulator, cpu.x_index, cpu.y_index, cpu.direct_page,
                                  cpu.status_register, cpu.data_bank};
     restore(column_.input);
-    cpu.accumulator = column_.extended_x;
+    if (!row_site(cpu.game_version == GameVersion::JP, column_.site))
+      cpu.accumulator = column_.extended_x;
     cpu.program_counter = column_.site;
     column_.phase = 2;
   } else {
@@ -73,21 +82,31 @@ void EntityPreload::finish_column(MainCpu65816 &cpu) {
     column_ = {};
   }
 }
-void EntityPreload::snapshot_columns(SnapshotArchive &archive) {
-  if (archive.format_version() < 6) { if (archive.loading()) column_ = {}; return; }
-  archive(column_.phase, column_.site, column_.stack, column_.extended_x);
-  const auto registers = [&](Registers &r) { archive(r.a, r.x, r.y, r.direct, r.status, r.bank); };
-  registers(column_.input); registers(column_.canonical_return);
+void EntityPreload::snapshot_columns(SnapshotArchive &archive, unsigned maximum_extension, const MainCpu65816 &cpu) {
+  if (archive.format_version() >= 6) {
+    archive(column_.phase, column_.site, column_.stack, column_.extended_x);
+    const auto registers = [&](Registers &r) { archive(r.a, r.x, r.y, r.direct, r.status, r.bank); };
+    registers(column_.input); registers(column_.canonical_return);
+  } else if (archive.loading()) column_ = {};
+  if (archive.format_version() >= 9) archive(legacy_row_);
+  else if (archive.loading()) {
+    const unsigned entry = cpu.game_version == GameVersion::JP ? 0xc0256a : 0xc0255c;
+    legacy_row_ = guarded_world_ && extra_pixels_ && cpu.program_counter >= entry && cpu.program_counter <= entry + 0x72;
+  }
   const bool jp_site = column_.site == 0xc0160a || column_.site == 0xc0165d;
   const bool us_site = column_.site == 0xc015f4 || column_.site == 0xc01647;
-  if (archive.loading() && (column_.phase > 2 || (column_.phase && (!guarded_world_ || !(jp_site || us_site)))))
-    throw std::runtime_error("Invalid snapshot NPC column continuation");
+  const bool row = archive.format_version() >= 9 && (row_site(true, column_.site) || row_site(false, column_.site));
+  if (archive.loading() && (column_.phase > 2 ||
+      (column_.phase && (!guarded_world_ || !(jp_site || us_site || row))) ||
+      (row && column_.extended_x > maximum_extension / 8) ||
+      (legacy_row_ && (!guarded_world_ || column_.phase))))
+    throw std::runtime_error("Invalid snapshot NPC scan continuation");
 }
 void EntityPreload::adapt(GameVersion version, std::uint32_t pc,
                           std::uint8_t opcode, unsigned length,
                           std::uint32_t &operand,
                           std::uint16_t &accumulator, const SnesBus *hardware,
-                          std::uint16_t direct_page) const {
+                          std::uint16_t direct_page) {
   // These are verified sites in the frozen US/JP source translations, not
   // ROM byte patches. Guard the instruction shape as well as its address.
   // Native-width and standalone hardware callers never enter this policy.
@@ -98,6 +117,25 @@ void EntityPreload::adapt(GameVersion version, std::uint32_t pc,
     if (!npc_site(jp, pc, opcode, length)) return;
     const auto view = hardware->scene_read_view();
     const auto l = npc_layout(jp);
+    if (opcode == 0x6b && pc == (jp ? 0xc025dcu : 0xc025ceu)) {
+      legacy_row_ = false;
+      return;
+    }
+    // Initial loading and vertical scrolling must finish the original scan
+    // before optional work. Its caller observes the canonical return registers.
+    // Freeze both extra-row bounds for the entire continuation: hardware
+    // window/fade gates can change between the origin and loop comparisons.
+    if ((opcode == 0x85 && pc == (jp ? 0xc02574u : 0xc02566u)) ||
+        (opcode == 0x69 && pc == (jp ? 0xc025ceu : 0xc025c0u))) {
+      if ((column_.phase == 2 && row_site(jp, column_.site)) || legacy_row_) {
+        const unsigned tiles = legacy_row_ ? extra_pixels_ / 8 : column_.extended_x;
+        if (opcode == 0x85) accumulator = std::uint16_t(accumulator - tiles);
+        else if (operand == 36) operand += 2 * tiles;
+      }
+      // Older snapshots can already contain a shifted row origin. Complete
+      // that one row with matching bounds before using canonical scans.
+      return;
+    }
     if (opcode == 0x22 && operand == (jp ? 0xc01e5fu : 0xc01e49u) &&
         (pc == (jp ? 0xc02500u : 0xc024f2u) || pc == (jp ? 0xc024c4u : 0xc024b6u))) {
       const auto free = SourceEntityAdmission::inspect(view);

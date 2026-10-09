@@ -1,5 +1,6 @@
 #include "eb/native/world_battle_return.hpp"
 #include "eb/native/world_scene_presentation.hpp"
+#include "eb/native/world/party/placement.hpp"
 #include <stdexcept>
 namespace eb::native {
 namespace {
@@ -14,6 +15,7 @@ struct WorldBattleReturn::Operation::State {
   unsigned phase{};
   CameraPosition destination{};
   std::unique_ptr<WorldPartyRelocation::Operation> relocate;
+  std::unique_ptr<world::PartyPlacement> placement;
   bool done{}, executing{};
   std::unique_ptr<WorldRuntime::Operation> runtime;
   std::unique_ptr<story::PartyFormation::Operation> party;
@@ -46,7 +48,12 @@ WorldBattleReturn::Operation::Operation(std::unique_ptr<State> state) : state_(s
 WorldBattleReturn::Operation::~Operation() {
   if (state_->owner.active_ == this) { state_->owner.active_ = nullptr; state_->owner.failed_ = true; }
 }
-WorldRuntime::Operation *WorldBattleReturn::Operation::runtime_operation() noexcept { return state_->runtime.get(); }
+WorldRuntime::Operation *WorldBattleReturn::Operation::runtime_operation() noexcept {
+  if(state_->placement)return state_->placement->runtime_operation();
+  if(state_->relocate)return state_->relocate->runtime_operation();
+  if(state_->map)return state_->map->runtime_operation();
+  return state_->runtime.get();
+}
 story::PartyFormation::Operation *WorldBattleReturn::Operation::party_update() noexcept { return state_->party.get(); }
 bool WorldBattleReturn::Operation::complete() const noexcept { return state_->done; }
 std::uint16_t WorldBattleReturn::Operation::result() const {
@@ -72,12 +79,24 @@ dialogue::Progress WorldBattleReturn::Operation::advance(unsigned budget) {
         s.party.reset();
       }
       if (s.map) {
-        if (!s.map->advance(1)) continue;
+        if (!s.map->advance(1)) {
+          if(s.map->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+          continue;
+        }
         s.map.reset();
       }
       if (s.relocate) {
-        if(!s.relocate->advance(1)) continue;
+        if(!s.relocate->advance(1)) {
+          if(s.relocate->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+          continue;
+        }
         s.relocate.reset();
+      }
+      if (s.placement) {
+        const auto p=s.placement->advance(1);
+        if(p==dialogue::Progress::Suspended){s.executing=false;return p;}
+        if(p!=dialogue::Progress::Finished)continue;
+        s.placement.reset();
       }
       switch (s.phase) {
       case 0: s.party = w.refresh.begin(); ++s.phase; break;
@@ -85,9 +104,11 @@ dialogue::Progress WorldBattleReturn::Operation::advance(unsigned budget) {
         w.session.party_members_alive_overworld = 1;
         w.control.encounter.mode = 0;
         if (s.kind == WorldBattleReturnKind::Overworld) {
-          o.following.position_after_pause();
-          w.maintenance.overworld_status_suppression = 0;
+          s.placement=std::make_unique<world::PartyPlacement>(o.following,w.actors,w.runtime);
         }
+        s.phase=10;break;
+      case 10:
+        if(s.kind==WorldBattleReturnKind::Overworld)w.maintenance.overworld_status_suppression=0;
         if (w.actors.appearance_scene().teleport_destination) {
           s.phase = 20; break;
         }
@@ -115,8 +136,10 @@ dialogue::Progress WorldBattleReturn::Operation::advance(unsigned budget) {
       case 4: o.blank.finish(); o.fade.begin_in(1,1); s.phase = s.kind == WorldBattleReturnKind::Scripted ? 5 : 8; break;
       case 5: s.party = w.refresh.begin(); ++s.phase; break;
       case 6:
-        o.following.position_after_pause();
-        s.runtime = w.runtime.begin(story::TickKind::WorldFrame); ++s.phase; break;
+        s.placement=std::make_unique<world::PartyPlacement>(o.following,w.actors,w.runtime);
+        s.phase=11;break;
+      case 11:
+        s.runtime = w.runtime.begin(story::TickKind::WorldFrame);s.phase=7;break;
       case 7:
         w.interactions.set_actors_paused(true);
         if (w.session.fading_actor) {

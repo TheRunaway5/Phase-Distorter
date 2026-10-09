@@ -94,6 +94,8 @@ struct WorldPalettes::State {
     std::array<IndexedPalette, 8> sprites;
     SpritePalettes initial;
     std::array<unsigned, 3> reference;
+    AreaPalettes compose(AreaPaletteId, const MapColors &, std::span<const std::uint16_t,16>,
+                         std::span<const std::uint16_t> sprite_override={}) const;
 };
 
 WorldPalettes::WorldPalettes(std::span<const std::uint8_t> assets, WorldPaletteLayout layout)
@@ -167,18 +169,34 @@ AreaPalettes WorldPalettes::resolve(AreaPaletteId area, std::span<const std::uin
             throw std::runtime_error("Cyclic area palette event branch");
         id = s.records[id].alternate;
     }
-    const auto &record = s.records[id];
+    return s.compose(area, s.records[id].colors, std::array<std::uint16_t,16>{});
+}
+AreaPalettes WorldPalettes::resolve_photograph(AreaPaletteId area,
+    std::span<const std::uint16_t,96> scenery, std::span<const std::uint16_t,16> frame,
+    std::span<const std::uint16_t> sprite_override) const {
+    (void)state_->groups.at(area.group).at(area.variant);
+    if (scenery[32] >= 16 && sprite_override.size()!=16)
+        throw std::invalid_argument("Photograph sprite palette override requires its retained owner");
+    if (scenery[32] < 16 && !sprite_override.empty())
+        throw std::invalid_argument("Photograph palette already has an owned CGRAM source");
+    MapColors raw;
+    std::copy(scenery.begin(), scenery.end(), raw.begin());
+    return state_->compose(area, raw, frame, sprite_override);
+}
+AreaPalettes WorldPalettes::State::compose(AreaPaletteId area, const MapColors &raw,
+    std::span<const std::uint16_t,16> frame, std::span<const std::uint16_t> sprite_override) const {
+    const auto &s=*this;
     AreaPalettes result;
     result.selected = area;
-    result.animation_id = record.colors[48];
-    for (unsigned p = 0; p < 6; ++p) result.scenery_zero[p] = record.colors[p * 16];
+    result.animation_id = raw[48];
+    for (unsigned p = 0; p < 6; ++p) result.scenery_zero[p] = raw[p * 16];
     for (unsigned p = 0; p < 6; ++p)
         for (unsigned i = 1; i < 16; ++i) {
-            result.scenery[p][i] = argb(record.colors[p * 16 + i]);
-            result.scenery_high_bits[p] |= std::uint16_t((record.colors[p * 16 + i] >> 15) << i);
+            result.scenery[p][i] = argb(raw[p * 16 + i]);
+            result.scenery_high_bits[p] |= std::uint16_t((raw[p * 16 + i] >> 15) << i);
         }
     auto colors = s.sprites;
-    auto ratio = average(record.colors);
+    auto ratio = average(raw);
     for (unsigned c = 0; c < 3; ++c)
         ratio[c] = quotient((ratio[c] & 255) * 256, s.reference[c]);
     if (*std::max_element(ratio.begin(), ratio.end()) <= 256) {
@@ -197,10 +215,14 @@ AreaPalettes WorldPalettes::resolve(AreaPaletteId area, std::span<const std::uin
                 color = updated;
             }
     }
-    if (record.special >= 2 && record.special < 8)
-        std::copy_n(record.colors.begin() + (record.special - 2) * 16, 16, colors[4].begin());
-    else if (record.special >= 8)
-        colors[4] = colors[record.special - 8];
+    if (raw[32] >= 16)
+        std::copy(sprite_override.begin(), sprite_override.end(), colors[4].begin());
+    else if (raw[32] == 1)
+        std::copy(frame.begin(), frame.end(), colors[4].begin());
+    else if (raw[32] >= 2 && raw[32] < 8)
+        std::copy_n(raw.begin() + (raw[32] - 2) * 16, 16, colors[4].begin());
+    else if (raw[32] >= 8)
+        colors[4] = colors[raw[32] - 8];
     for (unsigned p = 0; p < 8; ++p) result.sprite_zero[p] = colors[p][0];
     for (unsigned p = 0; p < 8; ++p)
         for (unsigned i = 0; i < 16; ++i) {

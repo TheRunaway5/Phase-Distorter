@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <optional>
+#include <memory>
 namespace eb::native {
 struct WorldDisplayFadeState {
   // Exact authored brightness byte: bit7 forces blank; low4 is intensity.
@@ -35,12 +37,18 @@ public:
   // countdown. Their direct brightness writes do not start an NMI fade.
   void clear_parameters() noexcept;
   void write_brightness(std::uint8_t) noexcept;
+  std::weak_ptr<const void> source_lifetime() const noexcept { return lifetime_; }
   bool active() const noexcept { return state_.step != 0; }
   const WorldDisplayFadeState &state() const noexcept { return state_; }
+  // Established only by a completed real NMI commit. Mirror writes and
+  // previews do not establish hardware state for physical work admission.
+  std::optional<std::uint8_t> displayed_brightness() const noexcept {return displayed_brightness_;}
   Frame preview_next_frame() const noexcept;
   void commit_frame(const Frame &);
 private:
+  std::shared_ptr<const void> lifetime_ = std::make_shared<const unsigned>(0);
   WorldDisplayFadeState state_;
+  std::optional<std::uint8_t> displayed_brightness_;
   std::uint64_t revision_{};
 };
 } // namespace eb::native

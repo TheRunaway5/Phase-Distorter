@@ -50,6 +50,17 @@ void bindings() {
         check(unknown.operation == NativeAction::Unsupported, "Unknown routine remains unsupported");
         check(!apply_action(unknown, 9, actor, context, scene).handled && context.movement_speed == 0x1234,
               "Unsupported binding never silently changes state");
+        request.kind = ActionRequestKind::ReadGameVariable;
+        request.identifier = 0x0099;
+        const auto pending_dma = bindings.compile(request, data);
+        check(pending_dma.operation == NativeAction::ReadPendingDmaBytes &&
+                  pending_dma.temporary_input == ActionTemporaryInput::Independent &&
+                  !pending_dma.parameter_bytes &&
+                  !apply_action(pending_dma, 7, actor, context, scene).handled,
+              "Photograph DMA wait must read its actual shared counter through the world owner");
+        request.kind = ActionRequestKind::CallEngine;
+        check(bindings.compile(request, data).operation == NativeAction::Unsupported,
+              "DMA counter address was admitted as an unrelated engine routine");
         request.kind = ActionRequestKind::SetTickCallback;
         request.identifier = jp ? 0xc04fee : 0xc04d78;
         const auto following = bindings.compile(request, data);
@@ -74,10 +85,12 @@ void bindings() {
                  {0xc0a4b2, 0xc0a491, NativeAction::SelectFourSecond},
                  {0xc0c711, 0xc0c6f3, NativeAction::CheckAppearanceVisible},
                  {0xc0a443, 0xc0a422, NativeAction::StepFourWalk},
-                 {0xc0a6e3, 0xc0a6c2, NativeAction::StepEightAnimation}}) {
+                 {0xc0a6e3, 0xc0a6c2, NativeAction::StepEightAnimation},
+                 {0xc0aaac, 0xc0aa8b, NativeAction::SelectEightCurrent}}) {
             request.identifier = jp ? appearance.jp : appearance.us;
             const auto bound_appearance = bindings.compile(request, data);
             check(bound_appearance.operation == appearance.operation && !bound_appearance.parameter_bytes &&
+                      bound_appearance.temporary_input == ActionTemporaryInput::Independent &&
                       !apply_action(bound_appearance, 9, actor, context, scene).handled,
               "Regional appearance operation requires its native service owner");
         }

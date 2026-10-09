@@ -4,6 +4,9 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <memory>
+
+namespace eb::native::story { class SourceMeterRoller; class SourceMeterTiles; class SourceMeterStatus; }
 
 namespace eb::native::party {
 enum class EquipmentSlot : std::uint8_t { Weapon, Body, Arms, Other };
@@ -58,6 +61,8 @@ class State {
     State(State&&) = delete;
     State& operator=(State&&) = delete;
     GameVersion version() const { return version_; }
+    std::weak_ptr<const void> source_lifetime() const noexcept { return source_lifetime_; }
+    bool source_meter_active() const noexcept { return source_meter_lease_ != nullptr; }
     Character& character(unsigned one_based_character);
     const Character& character(unsigned one_based_character) const;
     std::span<std::uint8_t> name_field(unsigned one_based_character);
@@ -85,11 +90,17 @@ class State {
     std::uint32_t battle_money_deposited{};
 
   private:
+    friend class story::SourceMeterRoller;
+    friend class story::SourceMeterTiles;
+    friend class story::SourceMeterStatus;
+    const void *source_meter_lease_{};
     GameVersion version_;
     std::array<Character, character_count> characters_{};
     std::array<std::array<std::uint8_t, 5>, character_count> character_names_{};
     std::array<std::uint8_t, 12> mother2_player_name_{}, favourite_thing_{};
     std::array<std::uint8_t, 24> earthbound_player_name_{};
     std::array<std::uint8_t, 6> pet_name_{}, favourite_food_{};
+    // Declared last: this instance guard expires before owned character rows.
+    std::shared_ptr<const void> source_lifetime_=std::make_shared<const unsigned>(0);
 };
 } // namespace eb::native::party

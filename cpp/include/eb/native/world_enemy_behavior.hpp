@@ -4,6 +4,7 @@
 #include "eb/native/world_enemy_movement.hpp"
 
 namespace eb::native {
+namespace entities::graphics { class Lifecycle; }
 // Ordinary authored enemy decisions. Existing actors/tasks retain all live
 // geometry, flags, enemy identity, weakness and party data. This service never
 // advances time, physics, RNG, task cursors or a second copy of world state.
@@ -35,6 +36,13 @@ public:
   void bind_peripherals(PeripheralState&);
   std::uint16_t set_velocity(ActorId, std::uint16_t angle);
   std::uint16_t set_moving_direction(ActorId, std::uint16_t angle);
+  // C0A8E7 takes its angle from the actor's live var0 and refreshes retained
+  // animation only when its four-direction class changes. A changed upload
+  // destination may be omitted only with the compiled unused-result proof.
+  std::optional<std::uint16_t> follow_variable_angle(ActorId, bool discard_result);
+  // A changed pose owes this real allocation owner's upload continuation;
+  // the caller returns that completed upload's actual scalar to the script.
+  std::optional<std::uint16_t> follow_variable_angle(ActorId, const entities::graphics::Lifecycle &);
   // The caller installs the returned count on the requesting task itself.
   // Zero speed preserves the source division-by-zero quotient (low FFFF).
   std::uint16_t distance_sleep(ActorId, std::uint16_t distance);
@@ -52,6 +60,7 @@ private:
   std::uint16_t level_sum() const;
   bool flee(ActorId) const;
   void face_role_toward_actor(ActorId current, unsigned role);
+  std::optional<std::uint16_t> variable_angle(ActorId,bool,const entities::graphics::Lifecycle *);
   const EnemyMovementData &movement_;
   const GeneratedInputData &angles_;
   ActorWorld &actors_;

@@ -33,11 +33,22 @@ NativeSession::State::State(std::span<const std::uint8_t> image,GameVersion vers
             world.music,world.music_state,audio,world.presentation,battle.publication,battle.blank,
             battle.video,world.frame_display,world.fade,world.visual,content.layers,world.layer,
             world.encounter,teleport,content.teleports,*world.relocation,world.npc_commands}),
+          cinematic_display(version,cinematic_display_state,{*world.runtime,world.interactions,world.actors,
+            *world.map_load,world.map_state,world.windows,*world.window_graphics,world.party,world.clock,
+            world.presentation,world.visual,world.music,world.music_state,world.palette,world.scratch,
+            world.display,world.frame_display,world.fade,battle.background,battle.loader,battle.video,
+            battle.blank,battle.frame,battle.frame_state,content.layers,world.layer,audio}),
+          cinematics(image,version,cinematic_display,world.input),
           special_events(image,version,{world.party,world.random,world.text.event_flags,
             battle.roster,battle.action,world.refresh_party,world.following,world.interactions,
             world.session,world.actors,battle.scene,world.clock,world.meter_flipout,world.maintenance}),
           persistence(n::saves::SaveArchive(version,bytes),content.continuing) {
+        world.windows.bind_source_text_tiles(cinematic_display_state);
+        world.windows.initialize_cold_text_tiles();
+        world.bind_actor_graphics(image);
         special_events.bind_town_map(town_map);
+        cinematics.bind_cast(image,version,world.startup_owners());
+        special_events.bind_cinematics(cinematics);
         if(slot<1 || slot>3) throw std::invalid_argument("Native Continue requires slot1..3");
         persistence.repair_integrity();
         auto restored=persistence.continue_slot(slot-1);
@@ -55,7 +66,7 @@ NativeSession::State::State(std::span<const std::uint8_t> image,GameVersion vers
 NativeSession::State::~State() {
         // Destroy borrowing continuations before their actual parents and
         // conversations, including when a failed service still owns a tick.
-        teleporting.reset(); dismount.reset(); special_runtime.reset(); special_event.reset();
+        sector_music.reset(); teleporting.reset(); dismount.reset(); special_runtime.reset(); special_event.reset();
         runtime.reset(); traveling.reset(); showing_map.reset(); using_item.reset(); menu_teddy.reset(); world_target.reset(); world_menu.reset(); entering_door.reset();
         fading.reset(); returning.reset(); startup.reset(); encounter.reset();
         instant.reset(); scene.reset(); queued_text.reset(); queue.reset();
@@ -115,6 +126,10 @@ SessionDiagnostics NativeSession::diagnostics(bool details) const {
     result.native_town_maps_started=s.maps_started;
     result.native_town_maps_completed=s.maps_completed;
     result.native_town_map_active=bool(s.showing_map) || (s.special_event && s.special_event->town_map());
+    result.native_cutscenes_started=s.cinematics.started();
+    result.native_cutscenes_completed=s.cinematics.completed();
+    result.native_cutscene_active=s.cinematics.active_event();
+    result.native_cutscene_last=s.cinematics.last_event();
     result.native_travel_started=s.travel_started;
     result.native_travel_completed=s.travel_completed;
     result.native_travel_active=bool(s.traveling);

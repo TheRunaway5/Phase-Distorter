@@ -69,6 +69,8 @@ struct MeterWindows::Execution {
     MeterWindowState flags;
     std::array<std::shared_ptr<Digits>, 4> digits;
     bool active{}, poisoned{};
+    const void *source_lease{};
+    std::array<std::uint8_t,3> decimal{};
     Execution(dialogue::WindowHost& host, State& party, std::shared_ptr<const MeterWindowResources> resources)
         : host(host), party(party), resources(std::move(resources)) {
         require(this->resources && this->resources->version() == party.version() && host.version() == party.version(),
@@ -94,11 +96,44 @@ bool MeterWindows::bound_to(const dialogue::WindowHost& host, const State& party
 }
 void MeterWindows::require_live() const {
     require(!execution_->poisoned, "Abandoned meter operation cannot be resumed");
+    require(!execution_->source_lease,"Source meter artwork owns this actual meter host");
 }
 MeterWindowState& MeterWindows::state() { return execution_->flags; }
 const MeterWindowState& MeterWindows::state() const { return execution_->flags; }
 std::span<const ArtworkCellReference, 12> MeterWindows::digit_cells(unsigned phase) const {
     return *execution_->digits.at(phase);
+}
+
+bool MeterWindows::source_tiles_active() const noexcept {return execution_->source_lease!=nullptr;}
+std::array<std::uint16_t,48> MeterWindows::source_digit_words() const {
+    std::array<std::uint16_t,48> result{};
+    for(unsigned i=0;i<48;++i)result[i]=std::uint16_t(descriptor((*execution_->digits[i/12])[i%12]));
+    return result;
+}
+std::span<const std::uint8_t,3> MeterWindows::source_decimal_digits() const {return execution_->decimal;}
+void MeterWindows::set_source_digit_words(std::span<const std::uint16_t,48> words) {
+    require_live();for(unsigned i=0;i<48;++i)(*execution_->digits[i/12])[i%12]=artwork(words[i]);
+}
+void MeterWindows::set_source_decimal_digits(std::span<const std::uint8_t,3> bytes) {
+    require_live();std::copy(bytes.begin(),bytes.end(),execution_->decimal.begin());
+}
+void MeterWindows::validate_source_tiles(const void *lease) const {
+    const auto &e=*execution_;
+    require(!e.poisoned&&!e.active&&e.source_lease==lease,"Source meter artwork lost its exact idle allocation lease");
+    for(const auto &row:e.digits)require(bool(row),"Source meter artwork lost a retained digit allocation");
+}
+void MeterWindows::claim_source_tiles(const void *lease) {validate_source_tiles(nullptr);execution_->source_lease=lease;}
+void MeterWindows::release_source_tiles(const void *lease) noexcept {if(execution_->source_lease==lease)execution_->source_lease=nullptr;}
+std::uint8_t MeterWindows::read_source_digit_byte(unsigned at) const {
+    require(at<99,"Source digit read left the actual decimal/descriptor extent");
+    if(at<3)return execution_->decimal[at];
+    at-=3;return std::uint8_t(descriptor((*execution_->digits[at/24])[(at%24)/2])>>((at&1)*8));
+}
+void MeterWindows::store_source_digit_byte(unsigned at,std::uint8_t value) {
+    require(at<99,"Source digit store left the actual decimal/descriptor extent");
+    if(at<3){execution_->decimal[at]=value;return;}
+    at-=3;auto &cell=(*execution_->digits[at/24])[(at%24)/2];auto word=descriptor(cell);
+    const unsigned shift=(at&1)*8;word=(word&~(255u<<shift))|(unsigned(value)<<shift);cell=artwork(word);
 }
 
 void MeterWindows::update(std::uint16_t frame_counter) {

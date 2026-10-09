@@ -32,6 +32,10 @@ class WindowResources {
     static std::shared_ptr<const WindowResources> import(std::span<const std::uint8_t> image,
                                                          GameVersion version);
     GameVersion version() const { return version_; }
+    std::span<const std::uint8_t,15> raw_palette_properties() const {return raw_palette_properties_;}
+    std::span<const std::uint8_t> raw_palettes() const {return raw_palettes_;}
+    std::uint32_t raw_palette_properties_identity() const {return raw_palette_properties_identity_;}
+    std::uint32_t raw_palettes_identity() const {return raw_palettes_identity_;}
     unsigned configuration_count() const { return unsigned(configurations_.size()); }
     const WindowConfiguration& configuration(unsigned id) const;
     std::span<const WindowConfiguration> configurations() const { return configurations_; }
@@ -55,6 +59,10 @@ class WindowResources {
                                                         std::uint64_t frame_counter) const;
     // C2038B copies this fixed row immediately after the 28 visible rows.
     const std::array<WindowDecoration, 32>& fixed_tail(unsigned flavor) const;
+    // The same helper's second COPY_TO_VRAM uses the original descriptor
+    // bytes, independently of the flavor's decoded decoration artwork.
+    std::span<const std::uint8_t, 64> raw_fixed_tail() const { return raw_fixed_tail_; }
+    std::uint32_t raw_fixed_tail_identity() const { return raw_fixed_tail_identity_; }
     // JP title characters are single 8x8 cells indexed by encoded byte - 32.
     // US titles use the existing Tiny font and reject this region-specific API.
     const WindowArtwork& japanese_title_glyph(std::uint16_t encoded_character) const;
@@ -62,6 +70,9 @@ class WindowResources {
   private:
     explicit WindowResources(GameVersion version) : version_(version) {}
     GameVersion version_;
+    std::array<std::uint8_t,15> raw_palette_properties_{};
+    std::vector<std::uint8_t> raw_palettes_;
+    std::uint32_t raw_palette_properties_identity_{},raw_palettes_identity_{};
     std::vector<WindowConfiguration> configurations_;
     std::array<bool, 5> flavoured_{};
     std::array<std::array<WindowArtwork, 5>, 5> borders_{};
@@ -72,5 +83,7 @@ class WindowResources {
     std::array<std::array<std::array<std::uint16_t, 4>, 2>, 5> animated_palettes_{};
     std::array<WindowArtwork, 224> japanese_titles_{};
     std::array<std::array<WindowDecoration, 32>, 5> fixed_tail_{};
+    std::array<std::uint8_t, 64> raw_fixed_tail_{};
+    std::uint32_t raw_fixed_tail_identity_{};
 };
 } // namespace eb::native::dialogue

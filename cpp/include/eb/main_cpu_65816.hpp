@@ -10,6 +10,7 @@ namespace eb {
 class SnesBus;
 class SnapshotArchive;
 struct SourceProfile;
+namespace native_reference { class OriginalObjectInstructions; class OriginalGlobalDrawInstructions; }
 namespace game::runtime {
 class Instruction;
 class NativeGameplay;
@@ -92,6 +93,8 @@ class MainCpu65816 {
   private:
     friend class game::runtime::Instruction;
     friend class game::runtime::NativeGameplay;
+    friend class native_reference::OriginalObjectInstructions;
+    friend class native_reference::OriginalGlobalDrawInstructions;
     bool prepare_instruction();
     void execute_prepared_instruction();
     std::uint64_t native_gameplay_batches_ = 0;

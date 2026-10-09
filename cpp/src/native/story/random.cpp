@@ -4,6 +4,7 @@
 
 namespace eb::native::story {
 std::uint8_t next_random(RandomState& state) {
+    if(state.source_lease_)throw std::logic_error("An actual source RAND owns these shared words");
     const unsigned first_byte = state.primary_word & 0xff;
     const unsigned second_byte = state.secondary_word & 0xff;
     const unsigned product = first_byte * second_byte;

@@ -60,6 +60,8 @@ WorldRuntime::Operation *WorldDoorEntry::Operation::runtime_operation() noexcept
     auto &s=*state_;
     if(s.transition)return s.transition->runtime_operation();
     if(s.fade)return s.fade->runtime_operation();
+    if(s.relocation)return s.relocation->runtime_operation();
+    if(s.map)return s.map->runtime_operation();
     return s.runtime.get();
 }
 dialogue::Progress WorldDoorEntry::Operation::advance(unsigned budget) {
@@ -103,10 +105,19 @@ dialogue::Progress WorldDoorEntry::Operation::advance(unsigned budget) {
             if(w.clock.disabled_transitions&&s.map->stage()==WorldMapLoadStage::PublishColors&&o.fade.state().step) {
                 s.runtime=s.map->begin_palette_wait();continue;
             }
-            if(!s.map->advance(1))continue;
+            if(!s.map->advance(1)) {
+                if(s.map->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+                continue;
+            }
             s.map.reset();
         }
-        if(s.relocation){if(!s.relocation->advance(1))continue;s.relocation.reset();}
+        if(s.relocation) {
+            if(!s.relocation->advance(1)) {
+                if(s.relocation->runtime_operation()){s.executing=false;return dialogue::Progress::Suspended;}
+                continue;
+            }
+            s.relocation.reset();
+        }
         w.runtime.require_content_boundary();
         switch(s.phase) {
         case 0:

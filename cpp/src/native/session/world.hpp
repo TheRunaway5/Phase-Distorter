@@ -21,6 +21,8 @@
 #include "eb/native/world_food_status.hpp"
 #include "eb/native/world_party_relocation.hpp"
 #include "eb/native/party/meter_flipout.hpp"
+#include "eb/native/entities/graphics/lifecycle.hpp"
+#include "eb/native/entities/graphics/object_display.hpp"
 
 namespace eb::native::session {
 // The session's authoritative live world. Declaration order expresses the
@@ -115,6 +117,14 @@ struct World {
     WorldOverlayPlayback overlays;
     WorldMusicState music_state;
     WorldMusic music;
+    entities::graphics::State actor_graphics_state;
+    entities::graphics::LifecycleState actor_lifecycle_state;
+    entities::graphics::ObjectMapState actor_object_map_state;
+    entities::graphics::ObjectDisplayState actor_object_display_state;
+    std::unique_ptr<entities::graphics::Transport> actor_graphics_transport;
+    std::unique_ptr<entities::graphics::ObjectMaps> actor_object_maps;
+    std::unique_ptr<entities::graphics::Lifecycle> actor_graphics;
+    std::unique_ptr<entities::graphics::ObjectDisplay> actor_object_display;
     std::unique_ptr<WorldMapLoad> map_load;
     std::unique_ptr<WorldPartyRelocation> relocation;
     std::unique_ptr<WorldStartup> startup;
@@ -123,5 +133,6 @@ struct World {
     World(const Content &, NativeAudio &, unsigned view_width = 1024);
     ~World();
     WorldStartupOwners startup_owners();
+    void bind_actor_graphics(std::span<const std::uint8_t> image);
 };
 } // namespace eb::native::session

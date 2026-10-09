@@ -2,6 +2,8 @@
 #include "eb/native/story/window_layer.hpp"
 #include "eb/native/dialogue/fonts.hpp"
 #include "eb/native/battle/palette_effects.hpp"
+#include "eb/native/battle/frame_display.hpp"
+#include "eb/native/world_display_fade.hpp"
 #include "native_dialogue_test_assets.hpp"
 #include <algorithm>
 #include <iostream>
@@ -124,6 +126,59 @@ void run(eb::GameVersion region) {
   try { (void)presentation.capture_next(*merged); } catch(const std::exception &) { rejected=true; }
   check(rejected && transport.displayed==displayed && transport.upload_mode==7,
         "Rejected native palette mode consumed pending publication");
+  transport.upload_mode=0;
+  battle::PsiScratch scratch;
+  battle::PsiDisplayState video;
+  video.transient_memory().configure(region);
+  battle::FrameDisplay objects(video);
+  WorldDisplayFade fade(WorldDisplayFadeState{15});
+  presentation.bind_display_fade(fade);
+  presentation.bind_frame_display(objects);
+  presentation.bind_video_transport(video,scratch);
+  struct Cinematic final : cutscenes::DisplaySource {
+    std::array<unsigned,2> working{100,200};
+    mutable unsigned displayed{},latches{};
+    std::shared_ptr<const eb::DirectSceneFrame> capture_display(const cutscenes::DisplayView &view) const override {
+      auto frame=std::make_shared<eb::DirectSceneFrame>();
+      frame->width=256;frame->atlas_width=frame->atlas_height=1;
+      frame->atlas={0xffffffff};frame->palette_indices={256};
+      frame->scene_identity=view.publishing_objects?working.at(view.display_id-1):displayed;
+      return frame;
+    }
+    void complete_object_publication(std::uint8_t id) const noexcept override {
+      displayed=working[id-1];++latches;
+    }
+  } cinematic;
+  presentation.begin_distinct_scene(cinematic);
+  objects.update_screen({});
+  auto first_objects=presentation.capture_next(world);
+  check(first_objects->scene_identity==100&&cinematic.latches==1,
+        "Distinct scene omitted the real pending object publication");
+  cinematic.working[0]=300;
+  for(unsigned i=0;i<4;++i)
+    check(presentation.capture(world)->scene_identity==100&&cinematic.latches==1,
+          "Sampling displayed a reused working object buffer or advanced its latch");
+  objects.update_screen({});
+  transport.upload_mode=7;rejected=false;
+  try{(void)presentation.capture_next(world);}catch(const std::exception &){rejected=true;}
+  check(rejected&&objects.pending()&&cinematic.latches==1&&cinematic.displayed==100,
+        "Rejected cinematic publication consumed its selected object buffer");
+  transport.upload_mode=0;
+  auto second_objects=presentation.capture_next(world);
+  check(second_objects->scene_identity==200&&first_objects->scene_identity==100&&cinematic.latches==2,
+        "Replacement cinematic publication changed the prior immutable screen");
+  cinematic.working[1]=400;
+  auto retained_objects=presentation.capture_next(world);
+  check(retained_objects->scene_identity==200&&cinematic.latches==2,
+        "Palette-only cinematic NMI redrew a reused working buffer");
+  auto allocation=video.transient_memory().allocate(256);
+  check(allocation.has_value(),"Actual map row could not allocate its transient display bytes");
+  allocation->bytes[0]=0xa7;
+  presentation.complete_interrupt();
+  check(video.transient_memory().selected_bank()==1&&video.transient_memory().cursor()==0&&
+        video.transient_memory().bank(0)[0]==0xa7,
+        "Completed interrupt erased or failed to switch retained display banks");
+  presentation.end_distinct_scene(&cinematic);
 }
 }
 int main(){try{run(eb::GameVersion::US);run(eb::GameVersion::JP);std::cout<<"Native scene palette publication: "<<checks<<" checks\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

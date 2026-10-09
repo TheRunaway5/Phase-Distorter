@@ -30,6 +30,7 @@ public:
     NativeAudio &operator=(const NativeAudio &) = delete;
     void initialize();
     void bind_clock(NativeAudioClock &);
+    bool uses_clock(const NativeAudioClock &) const noexcept;
     void set_channels(bool stereo);
     void play_sound(std::uint16_t);
     void script_sound(const native::dialogue::ScriptSoundRequest &);
@@ -39,12 +40,17 @@ public:
     void stop_music();
     // PROCESS_SFX_QUEUE runs once at the actual NMI publication boundary.
     void publication();
+    // The timed NMI retires APUIO3 and its later queue-index store separately.
+    void source_write_sound_port();
+    void source_advance_sound_queue();
     void advance_master_clocks(unsigned);
     std::vector<std::int16_t> take_samples();
     std::uint64_t master_clocks() const noexcept;
     std::uint64_t instructions() const noexcept;
     std::uint64_t sample_frames() const noexcept;
     std::uint16_t current_track() const noexcept;
+    std::uint8_t sound_queue_start() const noexcept;
+    std::uint8_t sound_queue_end() const noexcept;
     GameVersion version() const noexcept;
     bool failed() const noexcept;
 private:

@@ -2,8 +2,14 @@
 // following real world bootstrap, contact palette preparation and source callers.
 #include "battle.hpp"
 #include "eb/native/story/audio_clock.hpp"
+#include "eb/native/story/source_nmi.hpp"
+#include "eb/native/story/source_world_callback.hpp"
+#include "eb/native/story/source_frame_input.hpp"
+#include "eb/native/story/source_screen.hpp"
+#include "eb/native/cutscenes/ending/credits_work.hpp"
 #include "eb/native/story/special_events.hpp"
 #include "eb/native/world_battle_return.hpp"
+#include "eb/native/world/music/transition.hpp"
 #include "eb/native/world_bicycle_lifecycle.hpp"
 #include "eb/native/world_fade_out.hpp"
 #include "eb/native/world_script_teleport.hpp"
@@ -24,6 +30,10 @@ struct Rig {
   eb::NativeAudio audio;
   session::World w;
   story::AudioFrameClock physical_clock;
+  std::unique_ptr<story::SourceWorkClock> source_work;
+  std::unique_ptr<story::SourceWorldCallbackWork> source_world_callback;
+  std::unique_ptr<cutscenes::ending::SourceCallbackDispatcher> source_callbacks;
+  std::unique_ptr<story::SourceNmiWork> source_nmi;
   session::BattleContent battle_content;
   session::Battle b;
   WorldTeleportState teleport;
@@ -46,13 +56,13 @@ struct Rig {
   unsigned rejected_teleports{};
   bool trace_queued_creations{};
   std::vector<QueuedActorCreation> last_creation_queue;
-  explicit Rig(const eb::GameAssets &a, bool game_init_input = false)
+  explicit Rig(const eb::GameAssets &a, bool game_init_input = false,bool timed_work=false)
       : content(a.image, a.version), audio(a.image, a.version),
         w(content, audio, 256), physical_clock(
                                     w.clock,
                                     [this] {
-                                      w.runtime->interrupt_publication();
-                                      audio.publication();
+                                      if(source_work)source_work->request_nmi();
+                                      else {w.runtime->interrupt_publication();audio.publication();}
                                     },
                                     [this] {
                                       ++physical_frames;
@@ -98,8 +108,18 @@ struct Rig {
     audio.initialize();
     if(game_init_input)w.clock.interrupt_mask |= 0x81;
     w.runtime->refresh_world_capture();
-    audio.bind_clock(physical_clock);
     physical_clock.bind_peripherals(w.peripherals);
+    if(timed_work) {
+      w.bind_actor_graphics(a.image);
+      source_work=std::make_unique<story::SourceWorkClock>(physical_clock,audio,w.clock,*w.runtime,
+          w.actor_object_display_state,*w.actor_object_display,w.frame_display,true);
+      source_world_callback=std::make_unique<story::SourceWorldCallbackWork>(*w.runtime,w.scheduler);
+      source_callbacks=std::make_unique<cutscenes::ending::SourceCallbackDispatcher>(*w.runtime,*source_world_callback);
+      source_nmi=std::make_unique<story::SourceNmiWork>(*w.runtime,audio,w.clock,w.session,w.frame_display,
+          w.palette,w.display,w.scratch,w.fade,w.presentation,w.peripherals,story::SourceInterruptContext{true,true,true});
+      source_nmi->bind_callback_work(*source_callbacks);source_work->bind_interrupt_work(*source_nmi);
+      audio.bind_clock(*source_work);
+    }else audio.bind_clock(physical_clock);
   }
   void service(WorldRuntime::Operation &op) {
     if(trace_queued_creations) {
@@ -115,13 +135,25 @@ struct Rig {
       check(op.maintenance_request()->kind ==
                 WorldMaintenanceService::SectorMusic,
             "Additional actual world maintenance service");
-      w.music.select(w.interactions.state().leader_x,
-                     w.interactions.state().leader_y);
-      w.music.apply_sector();
-      op.respond_maintenance();
+      auto transition=world::music::SectorTransition::begin(*w.runtime,w.music,
+          w.music_state,w.interactions.state(),w.clock,op);
+      for(unsigned work=0;;++work) {
+        check(work<1000000,"Sector music exhausted its actual source continuation budget");
+        const auto progress=transition->advance(1);
+        if(progress==dialogue::Progress::Finished)break;
+        if(progress==dialogue::Progress::Suspended)service(*transition->runtime_operation());
+      }
+      transition.reset();op.respond_maintenance();
       return;
     }
     const auto kind = op.service();
+    if(kind==story::SceneService::ScreenUpdate) {
+      check(bool(source_work),"Source screen service has no actual work owner");
+      auto leaf=op.begin_source_screen(*source_work,{true,true,true,true});
+      for(unsigned work=0;!leaf->advance(4096);++work)
+        check(work<1000000,"Actual source screen exhausted its instruction budget");
+      op.respond_source_screen(*leaf);return;
+    }
     if (kind == story::SceneService::Frame) {
       std::array<std::uint16_t, 2> raw{};
       if (inputs) {
@@ -134,6 +166,13 @@ struct Rig {
         raw = (*inputs)[cursor++];
       }
       if(!physical_input)w.peripherals.set_buttons(raw[0]);
+      if(source_work) {
+        auto leaf=op.begin_source_frame(*source_work,physical_clock,w.peripherals,w.playback,{true,true,true,true});
+        for(unsigned work=0;!leaf->advance(4096);++work)
+          check(work<1000000,"Actual source WAIT exhausted its instruction budget");
+        op.respond_source_frame(*leaf);
+        return;
+      }
       const auto boundary = op.frame_requirement();
       if (boundary != story::FrameRequirement::InputOnly) {
         physical_clock.advance_boundary(audio);
@@ -150,6 +189,7 @@ struct Rig {
       if (boundary != story::FrameRequirement::InputOnly)
         physical_clock.finish_frame(audio);
     } else if (kind == story::SceneService::Publication) {
+      if(source_work) {op.respond_source_publication();return;}
       physical_clock.advance_boundary(audio);
       audio.publication();
       op.complete_publication();

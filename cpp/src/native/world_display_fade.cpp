@@ -46,6 +46,7 @@ void WorldDisplayFade::commit_frame(const Frame &frame) {
   if (frame.owner_ != this || frame.revision_ != revision_)
     throw std::logic_error("Display fade publication is foreign, stale or already committed");
   state_ = frame.next_;
+  displayed_brightness_=state_.brightness;
   ++revision_;
 }
 } // namespace eb::native

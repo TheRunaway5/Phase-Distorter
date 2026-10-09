@@ -135,9 +135,14 @@ bool CreditsTextScene::publish_next_row() {
     if (publications_.empty()) return false;
     const auto row = publications_.front();
     publications_.pop_front();
+    source_queue_end_=(source_queue_end_+1)&127;
     for (unsigned i = 0; i < row.count; ++i)
         canvas_[row.destination_row * 32 + row.column + i] = row.clear ? 0 : rows_[row.source_row * 32 + i];
     return true;
+}
+std::optional<CreditsTextScene::RowPublication> CreditsTextScene::next_publication() const {
+    if (publications_.empty()) return std::nullopt;
+    return publications_.front();
 }
 std::uint8_t CreditsTextScene::next_byte() { return read(resources_->script(), state_.cursor++); }
 void CreditsTextScene::line(std::span<const std::uint8_t> glyphs, bool tall, bool player,
@@ -201,6 +206,11 @@ void CreditsTextScene::command(std::span<const std::uint8_t> player_name) {
 }
 bool CreditsTextScene::advance_tick(std::span<const std::uint8_t> player_name) {
     if (scroll_complete()) return false;
+    advance_callback(player_name);
+    return true;
+}
+void CreditsTextScene::advance_callback(std::span<const std::uint8_t> player_name) {
+    if(source_work_) {source_work_->advance(*this,player_name);return;}
     const auto position = std::uint16_t(state_.scroll_position >> 16);
     if (resources_->version() == GameVersion::JP ? position >= state_.next_credit_position
                                                  : position > state_.next_credit_position) {
@@ -219,7 +229,6 @@ bool CreditsTextScene::advance_tick(std::span<const std::uint8_t> player_name) {
     }
     state_.scroll_position += 0x4000;
     ++state_.ticks;
-    return true;
 }
 std::vector<std::uint8_t> CreditsTextScene::indexed_canvas(unsigned height) const {
     require(height <= 256, "Credits canvas height exceeds its circular text surface");
@@ -230,7 +239,7 @@ std::vector<std::uint8_t> CreditsTextScene::indexed_canvas(unsigned height) cons
         const auto source_y = (y + 1 + scroll) & 255;
         for (unsigned x = 0; x < 256; ++x) {
             const auto descriptor = canvas_[(source_y / 8) * 32 + x / 8];
-            const auto tile = descriptor & 1023;
+            const unsigned tile = descriptor & 1023;
             require(tile < glyphs.size(), "Credits command requests an unimported glyph");
             const auto pixel = glyphs[tile][(source_y & 7) * 8 + (x & 7)];
             pixels[y * 256 + x] = pixel ? pixel + ((descriptor >> 10) & 7) * 4 : 0;

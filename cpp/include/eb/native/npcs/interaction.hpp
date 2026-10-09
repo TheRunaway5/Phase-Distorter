@@ -10,9 +10,11 @@
 namespace eb::native::npcs {
 enum class InteractionAction { Talk, Check };
 enum class GiftAction { Open, Close, IsOpen };
-// Creation/lifecycle facts that ActorWorld does not otherwise own. Position,
-// facing, velocity, collision disable and liveness always come from ActorWorld.
-// Changing displayed artwork never replaces these creation hitboxes.
+// Collision observations. Authored actors read their live NPC selector and
+// retained creation hitbox from ActorWorld. Explicit attachments provide the
+// same facts for untagged callers. Position, facing, velocity, collision
+// disable and liveness always come from ActorWorld; artwork changes do not
+// replace the retained creation hitbox.
 struct InteractionBody {
     std::uint16_t npc_id = 0xffff, hitbox_enabled{};
     entities::CollisionHitbox lateral, vertical;
@@ -73,11 +75,14 @@ class Interactions {
     ~Interactions();
     Interactions(const Interactions&) = delete;
     Interactions& operator=(const Interactions&) = delete;
-    // Every live actor must have creation geometry before a collision query.
-    // Precedence comes from the world lifecycle, not distance, drawing order or
-    // allocation identity. Source fixtures use physical slot order; the native
-    // list has no 23-actor limit. Erased actors never remain collision targets.
-    // Detach their metadata before reusing its explicit precedence.
+    // Authored actors derive creation geometry/NPC identity from ActorWorld
+    // and use their actual numeric role as source collision precedence; only
+    // NPC roles0..22 are candidates, while reserved roles supply mover facts. These
+    // observations refresh at each query and retire with the actor. Untagged
+    // callers must attach explicit metadata/precedence before collision; the
+    // native list has no 23-actor limit. Detach explicit metadata before reusing
+    // its precedence. An explicit attach can replace a derived observation;
+    // a bound authored collision owner still supplies the live query values.
     void attach(ActorId, std::uint64_t precedence, const ActorCreationMetadata&, std::uint16_t npc_id);
     void detach(ActorId);
     InteractionBody& body(ActorId);
