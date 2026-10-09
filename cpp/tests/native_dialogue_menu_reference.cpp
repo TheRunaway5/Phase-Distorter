@@ -536,6 +536,26 @@ struct RenderPair : ModelPair {
             }
             require(wide.work_ram == ram && wide.video_ram == vram, label + " menu presentation mutated game data");
         }
+        // Actual live window records plus printed options/cursors exercise
+        // the world-group translation, rather than a tilemap-only fixture.
+        for (unsigned width : {360u, 400u, 522u, 1024u}) {
+            eb::SnesBus wide(display);
+            wide.work_ram = source.bus->work_ram;
+            const auto battle = eb::source_profile(source.version).wram_battle_mode_flag;
+            wide.work_ram[battle] = wide.work_ram[battle + 1] = 0;
+            wide.write_byte(0x2107, 0x39); wide.write_byte(0x2108, 0x59);
+            wide.set_presentation_width(width);
+            const auto ram = wide.work_ram;
+            const auto vram = wide.video_ram;
+            const auto end = wide.completed_frames + 2;
+            while (wide.completed_frames < end) wide.advance_cpu_cycles(1000);
+            const auto pixels = wide.presentation_pixels();
+            for (unsigned y = 0; y < 224; ++y) for (unsigned x = 0; x < width; ++x)
+                require(pixels[y * width + x] == (x < 256 ? display.native_framebuffer[y * 256 + x] : 0xff000000u),
+                        label + " world menu/cursor lost group alignment width=" + std::to_string(width) +
+                        " xy=" + std::to_string(x) + "," + std::to_string(y));
+            require(wide.work_ram == ram && wide.video_ram == vram, label + " world menu translation mutated game data");
+        }
     }
     void establish_composition_history() {
         if(source.version!=eb::GameVersion::US)return;

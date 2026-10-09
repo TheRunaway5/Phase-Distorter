@@ -24,6 +24,14 @@ void GameSceneRenderer::capture_aperture(int x, int y, unsigned radius_x, unsign
 
 bool GameSceneRenderer::presentation_window_contains(const SceneReadView &view, unsigned layer,
                                                       int x, unsigned y) const {
+    if (presentation_encounter_swirl_) {
+        // BATTLE_SWIRL_SEQUENCE's source HDMA rows cover one screen. Project
+        // that screen once across the viewport, including its initially empty
+        // inverted window, rather than cropping the world to the old canvas.
+        const int output_x = x + int(presentation_width_ - 256) / 2;
+        return view.layer_window_contains(layer, unsigned(std::clamp(
+            output_x * 256 / int(presentation_width_), 0, 255)));
+    }
     const unsigned selection = (view.ppu_registers[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
     if (!presentation_aperture_ || !(selection & 2))
         return view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
@@ -295,6 +303,7 @@ void GameSceneRenderer::prepare_presentation_windows(const SceneReadView &view) 
                    table = jp ? 0x8c26 : 0x88e4, head = jp ? 0x8c22 : 0x88e0;
     const auto word = [&](unsigned at) { return unsigned(view.work_ram[at]) | unsigned(view.work_ram[at + 1]) << 8; };
     std::array<UiWindow, 8> windows{};
+    std::array<unsigned, 8> ids{};
     unsigned count = 0, previous = 0xffff;
     std::array<bool, 8> seen{};
     bool moved = false;
@@ -309,11 +318,11 @@ void GameSceneRenderer::prepare_presentation_windows(const SceneReadView &view) 
         if (id >= (jp ? 52u : 53u) || word(table + id * 2) != slot || word(at) != previous ||
             x >= 32 || y >= 32 || w < 2 || h < 2 || w > 32 - x || h > 32 - y)
             return;
-        // Gameplay windows authored at the left inset: command/cash, goods
-        // actions, PSI category, status and the two battle command layouts.
-        // Dialogue and startup/name-entry windows keep their own positions.
-        const bool edge = x == 1 && (id == 0 || id == 3 || id == 4 || id == 8 ||
+        // Retain standalone left-inset gameplay windows outside the ordinary
+        // world layout. Whole world/command groups are classified below.
+        const bool edge = x == 1 && (id == 0 || id == 3 || id == 4 ||
                                     id == 10 || id == 11 || id == 15 || id == 18);
+        ids[count] = id;
         windows[count++] = {int(x * 8) - scroll_x, int(y * 8) - scroll_y - 1,
                             int((x + w) * 8) - scroll_x, int((y + h) * 8) - scroll_y - 1, edge};
         moved |= edge;
@@ -321,6 +330,28 @@ void GameSceneRenderer::prepare_presentation_windows(const SceneReadView &view) 
         slot = word(at + 2);
     }
     if (word(head + 2) != previous) return;
+    // MENU_HANDLER keeps the battle command window open while its goods,
+    // PSI and target children run. C120D6's "To ..." box is window $31;
+    // it and the other children retain their authored offsets from that menu.
+    // Battle narration has no command parent and keeps its centered position;
+    // temporary messages opened inside a command follow that command too.
+    const unsigned battle = view.source_profile.wram_battle_mode_flag;
+    const bool command_group = word(battle) &&
+        std::any_of(ids.begin(), ids.begin() + count, [](unsigned id) { return id == 15 || id == 18; });
+    const bool world_group = !word(battle) && (view.ppu_registers[5] & 0x37) == 1 &&
+        view.ppu_registers[7] == 0x39 && view.ppu_registers[8] == 0x59;
+    // The source flattens overlapping windows onto one page. Dialogue, goods,
+    // equip, PSI and the A-button check/talk path must share their parent's
+    // translation, otherwise covered portions of the parent become holes.
+    // Status and its PSI-information children retain the centered source page.
+    const bool status_group = world_group &&
+        std::any_of(ids.begin(), ids.begin() + count, [](unsigned id) { return id == 8 || id == 46 || id == 47; });
+    if (status_group) {
+        moved = false;
+        for (unsigned i = 0; i < count; ++i) windows[i].left_edge = false;
+    } else if (command_group || world_group)
+        for (unsigned i = 0; i < count; ++i)
+            moved |= windows[i].left_edge = true;
     presentation_ui_windows_ = windows;
     presentation_ui_window_count_ = count;
     presentation_left_windows_ = moved;
@@ -336,7 +367,7 @@ std::optional<int> GameSceneRenderer::presentation_window_sample_x(int x, unsign
     const int current = owner(x), shifted_x = x + int(presentation_width_ - 256) / 2,
               shifted = owner(shifted_x);
     // The source page already contains the topmost window's visible artwork.
-    // Move only artwork owned by a left window, never an overlapping dialogue.
+    // Translate the topmost owner's artwork with its entire window group.
     if (shifted >= 0 && presentation_ui_windows_[shifted].left_edge &&
         (current < 0 || presentation_ui_windows_[current].left_edge || shifted > current))
         return shifted_x;
@@ -851,14 +882,15 @@ void GameSceneRenderer::prepare_presentation_boundary(const SceneReadView &view)
     // story scenes (including the robot ending) use the same map borders as
     // walking. Screen-space raster apertures still describe one authored
     // canvas; repeating their membership leaks horizontal strips of scenery.
-    if (!presentation_aperture_ && (regs[0x30] & 0xf0)) {
+    if (!presentation_aperture_ && !presentation_encounter_swirl_ && (regs[0x30] & 0xf0)) {
         authored_canvas();
         return;
     }
     const unsigned masked_layers = (regs[0x2c] & regs[0x2e]) | (regs[0x2d] & regs[0x2f]);
     for (unsigned layer = 0; layer < 5; ++layer) {
         const unsigned selection = (regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
-        if (!presentation_aperture_ && (masked_layers & (1u << layer)) && (selection & 0x0a)) {
+        if (!presentation_aperture_ && !presentation_encounter_swirl_ &&
+            (masked_layers & (1u << layer)) && (selection & 0x0a)) {
             authored_canvas();
             return;
         }
@@ -1199,7 +1231,7 @@ void GameSceneRenderer::render_presentation_margins(const SceneReadView &view, u
                     objects[x] = world_objects[x];
         }
     }
-    if (presentation_left_windows_ || presentation_aperture_ || presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
+    if (presentation_left_windows_ || presentation_aperture_ || presentation_encounter_swirl_ || presentation_robot_ending_ || presentation_psi_display_layer_ || presentation_screen_overlay_layer_ || presentation_shift_x_ ||
         (presentation_world_map_ && (presentation_clip_left_ > 0 || presentation_clip_right_ < 256))) {
         for (unsigned x = 0; x < presentation_width_; ++x)
             output[x] = compose_presentation_pixel(view, int(x) - int(margin), y, objects[x], true);
@@ -1235,7 +1267,20 @@ void GameSceneRenderer::begin_scanline(const SceneReadView &view, unsigned y) {
         oval_window |= (masked & (1u << layer)) &&
             ((regs[0x23 + layer / 2] >> ((layer & 1) * 4)) & 2);
     const unsigned battle = view.source_profile.wram_battle_mode_flag;
-    presentation_aperture_ = aperture_valid_ && oval_window &&
+    const unsigned swirl = view.source_profile.wram_swirl_update_timer;
+    // Battle entry leaves its last HDMA mask installed after the update timer
+    // expires (AUTO_RESTORE is disabled). Its cleanup then clears the window
+    // before resetting color math. Neither timer nor window enable describes
+    // this owner's whole lifetime: keep the world wide until the source color
+    // configuration or scene changes, including the empty setup/cleanup mask.
+    // Only BATTLE_SWIRL_SEQUENCE disables AUTO_RESTORE; other title/prayer/
+    // teleport windows keep their own policy.
+    presentation_encounter_swirl_ = presentation_width_ > 256 &&
+        (regs[5] & 0x37) == 1 && regs[7] == 0x39 && regs[8] == 0x59 &&
+        !view.work_ram[battle] && !view.work_ram[battle + 1] &&
+        view.work_ram[swirl + 6] == 0x20 && !view.work_ram[swirl + 9] &&
+        regs[0x30] == 0x10 && (regs[0x31] & 0xbf) == 0xbf;
+    presentation_aperture_ = !presentation_encounter_swirl_ && aperture_valid_ && oval_window &&
         (regs[5] & 0x37) == 1 && regs[7] == 0x39 && regs[8] == 0x59 &&
         !view.work_ram[battle] && !view.work_ram[battle + 1] && presentation_width_ > 256 && y < 224 &&
         !(view.ppu_registers[0] & 0x80) &&

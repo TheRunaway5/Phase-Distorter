@@ -45,8 +45,9 @@ graphics-region boundaries.
 Entity-directed story cameras (`UNKNOWN_C46698`/`C466A8`, camera mode 2)
 retain the map's selected border policy. Active layer/color windows use the
 authored 256-pixel canvas unless the source oval routine has supplied a captured
-aperture. Extending arbitrary window-edge membership can expose horizontal
-strips outside an iris. Software and direct scene capture share these rules,
+aperture or the source battle-entry swirl owns the window. Extending arbitrary
+window-edge membership can expose horizontal strips outside an iris.
+Software and direct scene capture share these rules,
 leave source-owned actors visible, and reset when window state changes.
 Direct scenery and actor quads also clip in display coordinates after
 interpolation; changing between the ordinary map and the authored canvas resets
@@ -69,14 +70,37 @@ a fade cannot turn a road or tunnel into an unconstrained scene. Each natural
 scene clears prior correction/history immediately, including repeated captures
 within one logical frame. Existing snapshot layout remains unchanged.
 
-Screen-space window effects retain the source framing. A scenery-only boundary
+Screen-space story window effects retain the source framing. A scenery-only boundary
 adjustment would move actors independently of a fixed layer mask or color window.
 In the pyramid title demo, crossing a sector-row boundary moved the party outside
 the circular aperture even though the source camera still followed correctly.
 Active main/subscreen layer windows and color-window effects therefore avoid a
 presentation boundary adjustment. Captured story ovals use their source focus
-and shape; other windows retain the authored canvas. Unmasked scenes use the
+and shape; other story windows retain the authored canvas. Unmasked scenes use the
 scene's selected border policy.
+
+`BATTLE_SWIRL_SEQUENCE` is a separate presentation owner: its color-only swirl
+mask disables source restoration, while its pre-animation setup starts with an
+empty inverted window. Both this setup and the authored HDMA animation keep the
+expanded world visible. The host projects each source window row once across
+the selected width and recomposes the center as well as the margins, without
+changing the source window tables, color arithmetic, native pixels or timing.
+Ownership follows the source's battle-only disabled `SWIRL_AUTO_RESTORE` and
+color configuration, rather than its update timer or window enable: the last
+mask survives timer expiry, and cleanup clears that mask before resetting color
+math. Both gaps retain the expanded picture, including the instant-win cleanup
+path. Source scene/color changes end this presentation policy.
+Other story/title/prayer windows retain their existing policies.
+`widescreen_battle_entry_reference PACK...` drives original Continue with
+disposable synthetic SRAM, then runs the original regional battle-entry and
+effect routines for ordinary, advantage, disadvantage and boss transitions.
+It checks every animation update at width 398, sweeps five wide formats with
+filtering off/on at key stages (including timer expiry and original mask
+cleanup), and verifies source-memory/native-picture independence. It also runs
+original `INIT_BATTLE_SCRIPTED` through the fade into visible battle, checking
+every published canvas/aspect and each active world-mask frame. `--caller`
+selects that shorter caller check. These use synthetic SRAM and original source
+callers, not a natural enemy-contact replay or a full battle playthrough.
 
 Prayer apertures retain the original oval's centre and movement. The display's
 side margin translates the people and aperture together; the host must not
@@ -261,9 +285,22 @@ metadata, and battle-exit fades in both regional profiles. The optional
 sequences in both layouts at width 400, plus selected frames at width 1024.
 These are rendering fixtures, not a claim of naturally playing every battle.
 
-Selection windows, their text, and battle HP/PP panels retain their original
-positions inside the centered 256-pixel aperture. Unmatched OAM indicators also
-stay in that aperture when overworld boundary framing shifts the scenery;
+Gameplay command/cash windows keep their authored inset from the viewport's
+left edge. While a battle command window ($0f or $12) remains open, its target
+($31), goods, PSI and temporary-message children move by the same amount,
+preserving source overlap order, fill and text/cursor pixels. Ordinary battle
+narration with no command parent and the HP/PP panels remain centered.
+Ordinary overworld dialogue, goods, equip, PSI and check/talk windows use the
+same whole-page translation, including the A-button shortcut. Status and its
+PSI-information group remain centered. Source BG1/BG2 map ownership identifies
+the ordinary world, so startup/file-select windows retain their layout.
+`native_dialogue_window_reference --widescreen PACK...` compares the actual
+regional source-generated parent/child artwork, world menus, centered Status
+and standalone narration at
+six widths. `widescreen_window_tests` also checks filter exemptions and closure.
+`native_dialogue_menu_reference` also compares original printed options and
+cursors through the translated world layout, with source window records intact.
+Unmatched OAM indicators stay centered when overworld boundary framing shifts;
 captured actors and emitted world overlays continue to follow the map. The
 scanline and direct renderers use the same OAM ownership check.
 `widescreen_camera_path_tests` checks both map edges, selection panels/indicators,

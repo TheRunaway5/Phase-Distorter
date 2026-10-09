@@ -731,12 +731,26 @@ void resource_probe(const eb::GameAssets& assets,const dialogue::WindowResources
 
 void source_widescreen_probe(const eb::GameAssets& assets) {
     std::uint64_t compared = 0, masks = 0;
-    for (unsigned id : {0u, 15u, 18u}) {
+    struct Scenario { bool battle, centered; std::vector<unsigned> ids; };
+    std::vector<Scenario> scenarios{
+        {false, false, {0, 10}}, {false, false, {0, 1}},
+        {false, false, {0, 10, 2}}, {false, false, {0, 10, 2, 3, 1}},
+        {false, false, {0, 6, 7}}, {false, false, {0, 4, 1, 38}},
+        {false, false, {1}}, {false, false, {5}},
+        {false, true, {0, 8}}, {false, true, {8, 46, 1, 4, 47}},
+        {true, true, {14}}
+    };
+    for (unsigned id : {15u, 18u})
+        for (unsigned child : {10u, 49u, 16u, 38u, 13u, 17u, 1u, 14u})
+            scenarios.push_back({true, false, {id, child}});
+    for (const auto& scenario : scenarios) {
         Source source(assets);
-        source.create(id); source.create(10); source.draw_all();
+        const auto& ids = scenario.ids;
+        for (auto window_id : ids) source.create(window_id);
+        source.draw_all();
         source.call(assets.version == eb::GameVersion::US ? 0xc47f87 : 0xc45c1a, true);
-        const bool battle = id != 0;
-        for (unsigned width : {256u, 398u, 522u, 796u, 1024u}) {
+        const bool battle = scenario.battle;
+        for (unsigned width : {256u, 358u, 398u, 522u, 796u, 1024u}) {
             auto display = std::make_unique<eb::SnesBus>(*source.bus);
             const unsigned layer = battle ? 0 : 2;
             for (unsigned cell = 0; cell < 896; ++cell) {
@@ -747,6 +761,9 @@ void source_widescreen_probe(const eb::GameAssets& assets) {
             std::copy_n(source.bus->work_ram.begin() + 0x200, 64, display->palette_ram.begin());
             display->write_byte(0x420c, 0);
             display->write_byte(0x2100, 15); display->write_byte(0x2105, battle ? 0 : 1);
+            if (!battle) {
+                display->write_byte(0x2107, 0x39); display->write_byte(0x2108, 0x59);
+            }
             display->write_byte(0x2107 + layer, 0x7c);
             display->write_byte(layer ? 0x210c : 0x210b, 6);
             display->write_byte(0x212c, 1u << layer); display->write_byte(0x212d, 0);
@@ -757,15 +774,17 @@ void source_widescreen_probe(const eb::GameAssets& assets) {
             display->set_presentation_width(width); display->set_presentation_effects_enabled(true);
             const auto end = display->completed_frames + 2;
             while (display->completed_frames < end) display->advance_cpu_cycles(1000);
-            for (unsigned window_id : {id, 10u}) {
+            for (unsigned window_id : ids) {
                 const unsigned record = source.record(source.slot(window_id)), left = source.get(record + 6) * 8,
                                top = source.get(record + 8) * 8, w = (source.get(record + 10) + 2) * 8,
                                h = (source.get(record + 12) + 2) * 8;
                 for (unsigned y = top; y < top + h; ++y)
                     for (unsigned x = left; x < left + w; ++x) {
-                        const auto at = y * width + x;
+                        const auto at = y * width + x + (scenario.centered ? (width - 256) / 2 : 0);
                         require(display->presentation_pixels()[at] == display->native_framebuffer[y * 256 + x],
-                                "Actual source command/cash artwork differs at the widescreen left edge");
+                                "Source battle/window alignment differs: window=" + std::to_string(window_id) +
+                                " root=" + std::to_string(ids.front()) +
+                                " width=" + std::to_string(width) + " pixel=" + std::to_string(x) + "," + std::to_string(y));
                         masks += display->presentation_unfiltered_mask()[at] != 0;
                         ++compared;
                     }
@@ -774,7 +793,7 @@ void source_widescreen_probe(const eb::GameAssets& assets) {
     }
     require(masks > compared / 2, "Actual command/cash artwork did not receive its photosensitivity exemption");
     std::cout << "PASS " << (assets.version == eb::GameVersion::US ? "US" : "JP")
-              << " real source command/cash windows at five widths: " << compared
+              << " real source command/cash/target/dialogue windows at six widths: " << compared
               << " native-art comparisons, " << masks << " protected pixels\n";
 }
 }

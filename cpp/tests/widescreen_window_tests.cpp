@@ -21,7 +21,7 @@ void draw(eb::SnesBus &bus) {
     const auto end = bus.completed_frames + 2;
     while (bus.completed_frames < end) bus.advance_cpu_cycles(1000);
 }
-void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter) {
+void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter, bool target = false) {
     auto bus = std::make_unique<eb::SnesBus>(std::array<std::uint8_t, 1>{0}, version);
     const bool jp = version == eb::GameVersion::JP, battle = id == 15 || id == 18;
     const unsigned table = jp ? 0x8c26 : 0x88e4, records = jp ? 0x89c2 : 0x8650,
@@ -45,11 +45,13 @@ void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter) 
     };
     record(0, id, 1, 1, menu_width, menu_height);
     record(1, 10, 1, 10, jp ? 9 : 8, 4);
-    record(2, battle ? 14 : 1, 4, 16, 24, 6);
+    if (target) record(2, 49, jp ? 9 : 10, 4, jp ? 22 : 20, 4);
+    else record(2, battle ? 14 : 1, 4, 16, 24, 6);
     ram_word(*bus, head, 0); ram_word(*bus, head + 2, 2);
     const auto source_ram = bus->work_ram;
     const unsigned layer = battle ? 0 : 2;
     bus->write_byte(0x2100, 15); bus->write_byte(0x2105, battle ? 0 : 9);
+    if (!battle) { bus->write_byte(0x2107, 0x39); bus->write_byte(0x2108, 0x59); }
     bus->write_byte(0x2107 + layer, 0x7c);
     bus->write_byte(layer ? 0x210c : 0x210b, 6);
     bus->write_byte(0x212c, 1u << layer);
@@ -63,7 +65,13 @@ void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter) 
     require(raw[16 * width + 8] == 0xffffffff, "Command box is still anchored to the native center");
     require(raw[84 * width + 8] == 0xffffffff, "Money counter did not follow the left-edge command box");
     require(raw[16 * width + 8 + menu_width * 8] == 0xff000000, "Command box duplicated or stretched beyond its native width");
-    require(raw[132 * width + margin + 32] == 0xffffffff, "Dialogue moved with the command box");
+    if (target) {
+        const unsigned left = (jp ? 9 : 10) * 8, right = left + (jp ? 22 : 20) * 8;
+        require(raw[36 * width + left] == 0xffffffff, "Enemy target box did not follow its battle command parent");
+        if (width > 256)
+            require(raw[36 * width + margin + right - 1] == 0xff000000, "Enemy target box remained at its old centered position");
+    } else require(raw[132 * width + 32] == 0xffffffff,
+                   "Nested text did not keep its window group's position");
     require(bus->native_framebuffer[16 * 256 + 8] == 0xffffffff &&
             bus->native_framebuffer[16 * 256 + 8 + menu_width * 8] == 0xff000000,
             "Presentation positioning modified the canonical framebuffer");
@@ -78,11 +86,12 @@ void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter) 
         eb::PresentationPipeline pipeline({}, settings, 60, 300, true, frame(1));
         bus->palette_ram[4] = 0; bus->palette_ram[5] = 0x7c;
         draw(*bus); pipeline.completed_frame(frame(2)); pipeline.simulation_finished(frame(2), 1, {});
-        for (unsigned at : {16 * width + 8, 84 * width + 8, 132 * width + margin + 32})
+        for (unsigned at : {16 * width + 8, 84 * width + 8,
+                           target ? 36 * width + (jp ? 9u : 10u) * 8 : 132 * width + 32})
             require(pipeline.current_picture().pixels[at] == 0xff0000ff &&
                     bus->presentation_unfiltered_mask()[at], "Relocated menu/dialogue retained photosensitivity motion blur");
     }
-    // Closing a menu must remove its shifted copy without moving dialogue.
+    // Standalone world dialogue stays left; battle narration returns to center.
     ram_word(*bus, table + id * 2, 0xffff); ram_word(*bus, table + 20, 0xffff);
     ram_word(*bus, head, 2); ram_word(*bus, records + 2 * size, 0xffff);
     for (unsigned row = 1; row < 14; ++row)
@@ -91,8 +100,8 @@ void windows(eb::GameVersion version, unsigned width, unsigned id, bool filter) 
     draw(*bus);
     require(bus->presentation_pixels()[16 * width + 8] == 0xff000000,
             "Closed command box left artwork at the widescreen edge");
-    require(bus->presentation_pixels()[132 * width + margin + 32] != 0xff000000,
-            "Closing command box removed unrelated dialogue");
+    if (!target) require(bus->presentation_pixels()[132 * width + (battle ? margin : 0) + 32] != 0xff000000,
+                         "Closing command box removed unrelated dialogue");
 }
 } // namespace
 int main() {
@@ -100,7 +109,10 @@ int main() {
         for (auto version : {eb::GameVersion::US, eb::GameVersion::JP})
             for (unsigned width : {256u, 358u, 398u, 522u, 796u, 1024u})
                 for (unsigned id : {0u, 15u, 18u})
-                    for (bool filter : {false, true}) windows(version, width, id, filter);
-        std::cout << "Regional commands and money keep their left inset at six widths; dialogue remains centered and unfiltered\n";
+                    for (bool filter : {false, true}) {
+                        windows(version, width, id, filter);
+                        if (id != 0) windows(version, width, id, filter, true);
+                    }
+        std::cout << "Regional command groups and world dialogue keep their left inset at six widths and remain unfiltered\n";
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

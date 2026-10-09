@@ -55,6 +55,7 @@ struct Fixture {
     bus.enable_native_sprite_runtime(true);
     cpu.set_runtime(runtime);
     cpu.set_world_preload_width(width);
+    bus.set_presentation_width(width);
     call(jp ? 0xc0925e : 0xc0927c, 0, 0); // Real source actor/task reset, including frame callbacks.
     call(jp ? 0xc01a7f : 0xc01a69, 0, 0); // Real miscellaneous-object and collision-identity initialization.
     put(first, 0xffff); pools(22, 70);
@@ -289,7 +290,8 @@ void legacy_row_snapshot(const GameAssets &assets, MainCpuRuntime runtime) {
 // Walking executes these source JSL sites, not the isolated row/cell loaders.
 // Static placements retain canonical activation while moving actors scan wide.
 void walking_column_handoff(const GameAssets &assets, MainCpuRuntime runtime) {
-  for (unsigned id : {328u, 572u, 1530u, 1567u, 1246u, 676u})
+  for (unsigned id : {328u, 362u, 363u, 364u, 366u, 368u, 370u, 572u, 573u, 574u, 575u, 576u, 577u, 578u, 579u,
+                      975u, 976u, 977u, 978u, 979u, 980u, 981u, 1530u, 1567u, 1246u, 676u})
     for (unsigned width : {256u, 398u, 522u, 800u, 1024u})
       for (bool right : {false, true}) {
         const auto p = anchor(assets, id);
@@ -504,26 +506,118 @@ void priority_and_preview(const GameAssets &assets) {
   }
 }
 void initialization_task_capacity(const GameAssets &assets) {
-  context = assets.title + " crowded first source action frame, 30 free tasks";
-  const auto content = crowd(assets, 21, 0);
-  Fixture f(assets, 1024, MainCpuRuntime::Ported, content);
-  f.put(f.enemy_enabled, 0); // Isolate the proven NPC worker-demand regression.
-  f.pools(22, 30); f.camera(1024, 6400, 0);
-  f.call(f.row, 128, 805);
-  const unsigned admitted = f.actor_count();
-  check(admitted > 0, "Crowded initialization task fixture admitted no moving NPCs");
-  for (unsigned role = 0; role < admitted; ++role)
-    check(f.task_count(role * 2) == 1, "CREATE did not allocate exactly its source main task");
-  f.frame();
-  unsigned children = 0;
-  for (unsigned role = 0; role < admitted; ++role) {
-    const unsigned tasks = f.task_count(role * 2);
-    children += tasks - 1;
+  for (unsigned script : {12u, 584u, 585u, 586u, 587u, 588u, 589u, 590u}) {
+    context = assets.title + " crowded first source action frame, 30 free tasks, script=" + std::to_string(script);
+    const auto content = crowd(assets, 21, 0, script);
+    Fixture f(assets, 1024, MainCpuRuntime::Ported, content);
+    // Source roads-open / pre-bus state: flags632 and309 remain clear. The
+    // authored conditional opcodes branch when the corresponding result is zero.
+    f.put(f.enemy_enabled, 0); // Isolate the proven NPC worker-demand regression.
+    f.pools(22, 30); f.camera(1024, 6400, 0);
+    f.call(f.row, 128, 805);
+    const unsigned admitted = f.actor_count();
+    check(admitted > 0, "Crowded initialization task fixture admitted no moving NPCs");
+    for (unsigned role = 0; role < admitted; ++role)
+      check(f.task_count(role * 2) == 1, "CREATE did not allocate exactly its source main task");
+    f.frame();
+    check(f.actor_count() == admitted, "Worker fixture actor left its authored route during initialization");
+    unsigned children = 0;
+    for (unsigned role = 0; role < admitted; ++role) {
+      const unsigned tasks = f.task_count(role * 2);
+      children += tasks - 1;
+    }
+    std::cout << assets.title << " initialization script=" << script << ": " << admitted << " source CREATEs, "
+              << children << " of " << admitted * 2 << " required child tasks\n";
+    for (unsigned role = 0; role < admitted; ++role)
+      check(f.task_count(role * 2) == 3, "Extra walker/vehicle lost an authored animation/retention or collision child task");
+    for (unsigned frame = 0; frame < 8; ++frame) f.frame();
+    for (unsigned role = 0; role < admitted; ++role)
+      check(f.task_count(role * 2) == 3, "Walker/vehicle exceeded its lifetime task reservation");
   }
-  std::cout << assets.title << " initialization: " << admitted << " source NPC12 CREATEs, "
-            << children << " of " << admitted * 2 << " required child tasks\n";
-  for (unsigned role = 0; role < admitted; ++role)
-    check(f.task_count(role * 2) == 3, "Extra NPC12 lost an authored animation/retention or collision child task");
+}
+void passive_vehicles(const GameAssets &assets, MainCpuRuntime runtime) {
+  const NpcCatalog catalog(assets.image, npc_catalog_layout(assets.version, false));
+  for (unsigned id : {175u, 176u, 186u, 357u, 358u, 360u})
+    for (unsigned width : {256u, 398u, 522u, 800u, 1024u})
+      for (int x : {-65, 320}) {
+        const auto p = anchor(assets, id);
+        const auto &definition = catalog.definition(id);
+        context = assets.title + " passive vehicle=" + std::to_string(id) +
+            " width=" + std::to_string(width) + " x=" + std::to_string(x);
+        Fixture f(assets, width, runtime);
+        if (definition.event_flag && definition.appearance == NpcAppearance::FlagOn)
+          f.bus.work_ram[f.flags + (definition.event_flag - 1) / 8] |= 1u << ((definition.event_flag - 1) & 7);
+        f.camera(std::uint16_t(int(p.x) - x), p.y - 112, p.tileset);
+        f.call(f.row, std::uint16_t(int(p.x) - x) / 8, p.y / 8);
+        check(f.contains(id) == (width > 256), "Passive vehicle retained native-width spawn bounds");
+        if (width == 256) continue;
+        unsigned role = 0; while (f.get(f.npc + role * 2) != id) ++role;
+        check(f.get(f.script + role * 2) == definition.script,
+              "Widened vehicle creation substituted its authored program");
+        check(f.task_count(role * 2) == 1, "Vehicle CREATE lost its authored main task");
+      }
+}
+void traffic_visible_respawn(const GameAssets &assets, MainCpuRuntime runtime) {
+  // The completed-load cell scanner is also used when a route finishes and
+  // its placement becomes eligible again. The old native exclusion rectangle
+  // must not let traffic materialize in a visible widescreen side band.
+  unsigned offscreen_births = 0;
+  for (unsigned id : {175u, 176u, 186u, 357u, 358u, 360u})
+    for (unsigned width : {358u, 398u, 522u, 800u, 1024u}) {
+      const int margin = int(width - 256) / 2;
+      for (int x : {-32, 288, -margin - 8, 256 + margin + 8}) {
+        const auto p = anchor(assets, id);
+        context = assets.title + " visible traffic respawn npc=" + std::to_string(id) +
+            " width=" + std::to_string(width) + " x=" + std::to_string(x);
+        Fixture f(assets, width, runtime);
+        f.put(f.enabled, 0xffff);
+        f.camera(std::uint16_t(int(p.x) - x), p.y - 112, p.tileset);
+        f.call(f.cell, p.x / 256, p.y / 256);
+        check(!f.contains(id), "Passive traffic spawned inside the visible widescreen picture");
+      }
+      // Exercise the walking caller, not just a cell query, starting at the
+      // outside of the complete source preload range. Admission must remain
+      // possible before any authored piece enters the displayed viewport.
+      const auto p = anchor(assets, id);
+      Fixture f(assets, width, runtime);
+      f.put(f.enabled, 0xffff); f.put(f.enemy_enabled, 0);
+      const int extra = RenderDistance(width).activation_extension(
+          f.bus.native_sprite_runtime()->resources()->artwork_bounds());
+      for (bool right : {false, true}) {
+        if (f.contains(id)) break;
+        const int x = right ? 320 + extra - 8 : -64 - extra + 8;
+        const int camera_x = int(p.x) - x;
+        f.camera(std::uint16_t(camera_x), p.y - 112, p.tileset);
+        if (!SourceEntityAdmission::ordinary_world(f.bus.scene_read_view())) continue;
+        const unsigned site = right ? (f.jp ? 0xc0160a : 0xc015f4) : (f.jp ? 0xc0165d : 0xc01647);
+        f.cpu.emulation_mode = false; f.cpu.status_register = MainCpu65816::InterruptDisable;
+        f.cpu.data_bank = 0x7e; f.cpu.direct_page = 0x1e00; f.cpu.stack_pointer = 0x1fff;
+        f.cpu.accumulator = camera_x / 8 + (right ? 34 : -3);
+        f.cpu.x_index = (p.y - 112) / 8 - 1; f.cpu.program_counter = site;
+        for (unsigned steps = 0; ; ++steps) {
+          check(steps < 250000, "Offscreen traffic column failed to return");
+          f.cpu.step_instruction();
+          if (f.cpu.program_counter == site + 4 && f.cpu.stack_pointer == 0x1fff) break;
+        }
+        if (!f.contains(id)) continue; // Source appearance/capacity remains authoritative.
+        ++offscreen_births;
+        unsigned role = 0; while (f.get(f.npc + role * 2) != id) ++role;
+        const auto &profile = source_profile(assets.version);
+        check(f.get(profile.wram_entity_world_coordinates.x + role * 2) == p.x &&
+              f.get(profile.wram_entity_world_coordinates.y + role * 2) == p.y,
+              "Traffic admission moved an authored route entrance");
+        for (unsigned tick = 0; tick < 20; ++tick) f.frame();
+        const auto actor = f.bus.native_sprite_runtime()->snapshot(role * 2);
+        check(actor && actor->image, "Offscreen traffic never published its source-selected pose");
+        const int drawn_x = std::int16_t(f.get(profile.wram_entity_world_coordinates.x + role * 2)) - camera_x;
+        for (const auto &part : actor->image->parts)
+          check(drawn_x + part.left + 16 <= -margin || drawn_x + part.left >= 256 + margin,
+                "Traffic first pose materialized inside the displayed viewport");
+      }
+    }
+  check(offscreen_births > 0, "Traffic exclusion prevented every offscreen walking spawn");
+  std::cout << assets.title << ": offscreen traffic births=" << offscreen_births
+            << ", visible side-band births rejected\n";
 }
 void task_content_proofs(const GameAssets &assets) {
   context = assets.title + " immutable source task content proof";
@@ -553,7 +647,11 @@ void task_content_proofs(const GameAssets &assets) {
   const unsigned directory = assets.version == GameVersion::JP ? 0x4002f : 0x400d4;
   // A reviewed program bound may not follow a changed directory to an unknown
   // program, even though the authored action-region signatures still match.
-  for (unsigned script : {12u, 16u, 25u, 32u, 588u, 605u, assets.version == GameVersion::JP ? 860u : 864u}) {
+  for (unsigned script : {7u, 9u, 10u, 11u, 12u, 16u, 25u, 32u, 584u, 585u, 586u, 587u,
+                          588u, 589u, 590u, 605u, 609u,
+                          assets.version == GameVersion::JP ? 860u : 864u,
+                          assets.version == GameVersion::JP ? 863u : 867u,
+                          assets.version == GameVersion::JP ? 873u : 877u}) {
     auto changed = content; changed[directory + script * 3] ^= 1;
     Fixture f(assets, 1024, MainCpuRuntime::Ported, changed);
     check(!SourceEntityAdmission::script_task_demand(f.bus.scene_read_view(), script),
@@ -671,14 +769,19 @@ void retention_and_enemy_isolation(const GameAssets &assets) {
 int main(int argc, char **argv) {
   try {
     check(argc >= 2, "npc_preload_reference pack.ebpak ...");
-    for (int i = 1; i < argc; ++i) {
+    const bool traffic_only = std::string_view(argv[1]) == "--traffic";
+    for (int i = traffic_only ? 2 : 1; i < argc; ++i) {
       const auto assets = load_game_assets(argv[i], asset_profiles());
       for (auto runtime : {MainCpuRuntime::Ported, MainCpuRuntime::Legacy}) {
+        traffic_visible_respawn(assets, runtime);
+        if (traffic_only) continue;
+        passive_vehicles(assets, runtime);
         room_transition_gate(assets, runtime);
         legacy_row_snapshot(assets, runtime);
         room_entry(assets, runtime);
         walking_column_handoff(assets, runtime); actual_edges(assets, runtime);
       }
+      if (traffic_only) continue;
       scene_gates(assets); source_guard(assets); priority_and_preview(assets);
       initialization_task_capacity(assets);
       task_content_proofs(assets); negative_source_camera(assets); enemy_capacity_coexistence(assets);

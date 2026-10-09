@@ -10,8 +10,8 @@
     {
       "mode": "0644",
       "path": "PATCH-NOTES.md",
-      "sha256": "83a56de629a41acfe71cc31bb2301b776e0a829953f15d647d81c30943ac6af4",
-      "size": 9132
+      "sha256": "50bb51097a3dcb5e677671cc487e59202991de6c0a8d659e6c8a985b15c6cfed",
+      "size": 10579
     },
     {
       "mode": "0644",
@@ -70,8 +70,8 @@
     {
       "mode": "0755",
       "path": "launchers/linux/bin/eb_cpp",
-      "sha256": "9409d7b5de6c136264428530d213cd52c7609fb5df7a82d92e6a5bd6ffcaaaa2",
-      "size": 27489152
+      "sha256": "8aef9f4475e1b316df61e92bd32b1fb89b01d5bf8a5c58c3dd329cac208e7029",
+      "size": 27497736
     },
     {
       "mode": "0644",
@@ -130,8 +130,8 @@
     {
       "mode": "0755",
       "path": "launchers/windows/bin/eb_cpp.exe",
-      "sha256": "6d2691d77ef6da2643c80ce96b1f6de283801c90fa21073838c42448b817d6d1",
-      "size": 46961405
+      "sha256": "4d73f1e6ed8b3a598b1213b7c3563ad7c0274fa380190103dea4117168e2cb36",
+      "size": 46966175
     },
     {
       "mode": "0644",

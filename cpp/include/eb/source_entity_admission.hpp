@@ -16,7 +16,7 @@ class SourceEntityAdmission {
 public:
   static bool ordinary_world(const SceneReadView &view);
   static std::optional<SourceEntityAdmission> inspect(const SceneReadView &view);
-  // Extra NPC simulation currently admits only the verified script6/12 family.
+  // Extra NPC simulation admits verified walking and passive traffic families.
   // Other programs keep their original source activation until their task
   // lifetime is proven; no generic script interpreter or dormant pose is used.
   static std::optional<unsigned> moving_npc_tasks(const SceneReadView &view, unsigned npc);

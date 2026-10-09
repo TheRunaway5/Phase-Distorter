@@ -23,15 +23,35 @@ runtime. The native engine is still in development.
   retaining the original appearance, ownership and capacity checks.
 - Expose **Player does max damage** in the Debug settings. The option uses the
   existing player-damage rules; misses and zero-damage results remain possible.
+- **Spawn passive cars, delivery vans and taxis across the widescreen loading
+  area.** Their original routes, appearance conditions and collision remain
+  authoritative. Reserve all required worker tasks and nearby NPC/enemy capacity
+  before admitting extra traffic. Defer later spawns at visible route entrances
+  until they are offscreen, fixing cars and vans appearing within the wider
+  picture while walking through Twoson.
+- **Fix late museum lamps and Twoson street posts in widescreen.** Their
+  photograph-trigger scripts now supply verified initial artwork previews
+  without running the triggers. Check all fifteen streetlights and six Twoson
+  street posts during edge scrolling and source activation, with artwork
+  prepared beyond the visible viewport.
 
 ## Widescreen, Steam Deck and fullscreen
 
 - Clearly label the **16:10 (Steam Deck)** display preset and document 1280×800
   use. Add **`--fullscreen`** to start directly in desktop fullscreen mode.
-- Place command, carried-money, Goods, PSI-category and Status windows at the
-  widescreen left edge using their original inset and dimensions. Dialogue,
-  startup and name-entry layouts retain their authored positioning. Both the
-  completed-frame and direct scene renderers follow the same placement.
+- Move overworld command, carried-money, dialogue, Goods, Equip, PSI and
+  check/talk windows together toward the widescreen left edge, using their
+  original dimensions and relative offsets. This also covers the A-button
+  shortcut and prevents overlapping windows from leaving clipped parent menus.
+  **Status and its PSI information remain centered.** Startup and name-entry
+  retain their authored layouts. Direct and completed-frame rendering agree.
+- Move battle target-selection, Goods, PSI and temporary-message windows with
+  their battle command menu. Preserve text, cursors and overlap order; standalone
+  battle narration and HP/PP panels remain centered.
+- **Keep the overworld wide during battle entry.** The source transition mask
+  spans the selected canvas from setup through the spiral, its final held mask
+  and cleanup. Fix the remaining snaps back to native width when the animation
+  timer expires and when its mask is cleared, including instant-win cleanup.
 - Keep the entire **War Against Giygas** intro card centered in its original
   4:3 composition, including static, clean holds, palette flashes and fades.
   The following logo scene restores the selected widescreen width.

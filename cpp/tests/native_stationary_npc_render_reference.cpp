@@ -1152,7 +1152,7 @@ void test_catalog_prepared_edges(const eb::GameAssets &assets) {
 void test_prop_creation_continuity(const eb::GameAssets &assets) {
     using namespace eb::native;
     unsigned cases = 0;
-    for (NpcId npc : {572, 1530, 1567, 1246, 676})
+    for (NpcId npc : {362, 363, 364, 366, 368, 370, 981, 572, 1530, 1567, 1246, 676})
       for (unsigned width : {398u, 522u, 800u, 1024u})
         for (int x : {-65, 320}) {
             Fixture f(assets);
@@ -1633,7 +1633,8 @@ void test_world_prop_scroll_visibility(const eb::GameAssets &assets) {
     unsigned cases = 0, pixels = 0;
     // Real unopened/open presents, a trash can, sanctuary encounter markers,
     // and lamps must already be visible before source activation reaches them.
-    for (NpcId npc : {1530, 1567, 1246, 676, 572})
+    for (NpcId npc : {366, 362, 363, 364, 368, 370, 981, 572, 573, 574, 575, 576, 577, 578, 579,
+                      975, 976, 977, 978, 979, 980, 1530, 1567, 1246, 676})
         for (unsigned width : {398u, 522u, 800u, 1024u})
             for (bool right : {false, true})
                 for (bool flag_set : {false, true}) {
@@ -1683,7 +1684,8 @@ void test_world_prop_scroll_visibility(const eb::GameAssets &assets) {
                                     const bool hidden = definition.appearance == NpcAppearance::FlagOff && flag_set;
                                     if (hidden) require(actual[out].priority < 0, "Defeated sanctuary boss was previewed");
                                     else if (actual[out].palette_index != 128 + sprite.palette * 16 + index) {
-                                        std::cerr << "Pop-in npc=" << npc << " width=" << width << " x=" << x
+                                        std::cerr << "Pop-in npc=" << npc << " script=" << definition.script
+                                                  << " width=" << width << " x=" << x
                                                   << " flag=" << flag_set << "\n";
                                         require(false, "Visible prop pops in after entering the widescreen picture");
                                     }
@@ -1752,9 +1754,16 @@ int main(int argc, char **argv) {
         if (argc < 2) throw std::runtime_error("Pass one or more game asset packs");
         const bool prayer_only = std::string_view(argv[1]) == "--prayer-focus";
         const bool ending_only = std::string_view(argv[1]) == "--robot-ending";
-        if ((prayer_only || ending_only) && argc < 3) throw std::runtime_error("Pass game asset packs after the focused selector");
-        for (int i = prayer_only || ending_only ? 2 : 1; i < argc; ++i) {
+        const bool props_only = std::string_view(argv[1]) == "--props";
+        if ((prayer_only || ending_only || props_only) && argc < 3) throw std::runtime_error("Pass game asset packs after the focused selector");
+        for (int i = prayer_only || ending_only || props_only ? 2 : 1; i < argc; ++i) {
             const auto assets = eb::load_game_assets(argv[i], eb::asset_profiles());
+            if (props_only) {
+                test_world_prop_scroll_visibility(assets);
+                test_prop_creation_continuity(assets);
+                test_prepared_viewport_visibility(assets);
+                continue;
+            }
             if (!prayer_only) test_robot_ending_departure(assets);
             if (ending_only) continue;
             test_prayer_focus_matches_native(assets);

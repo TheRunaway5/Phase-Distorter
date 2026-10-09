@@ -176,6 +176,7 @@ class GameSceneRenderer {
     int aperture_x_{}, aperture_y_{};
     unsigned aperture_radius_x_{}, aperture_radius_y_{};
     bool presentation_aperture_{};
+    bool presentation_encounter_swirl_{};
     bool presentation_window_contains(const SceneReadView &view, unsigned layer, int x, unsigned y) const;
     bool presentation_robot_ending_ = false; // Derived from the source corpse actors each scanline.
     bool presentation_jp_title_ = false;

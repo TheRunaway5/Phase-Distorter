@@ -150,10 +150,13 @@ void run(const eb::GameAssets &assets) {
     std::uint64_t candidates = 0, pixels = 0, exclusions = 0;
     std::array<bool,2> exterior_pair{};
     std::array<bool,2> twoson_benches{}, twoson_facing{};
+    bool museum_lamp = false, twoson_post = false;
     for (unsigned id = 0; id < catalog.size(); ++id) {
         const auto &d = catalog.definition(NpcId(id));
         require(ready.supports(NpcId(id)) ==
                     ((d.type == NpcType::ItemBox && d.script == 9) ||
+                     (d.type == NpcType::Object && (d.script == (assets.version == eb::GameVersion::JP ? 873u : 877u) ||
+                                                  d.script == (assets.version == eb::GameVersion::JP ? 863u : 867u))) ||
                      ((d.type == NpcType::Person || d.type == NpcType::Object) &&
                       (d.script == 7 || d.script == 8 || d.script == 605 || d.script == 606 || d.script == 693))),
                 "Readiness admitted an unsupported authored program");
@@ -168,6 +171,8 @@ void run(const eb::GameAssets &assets) {
             const auto area = map.prepare(tileset,flags);
             for (const auto &sprite : sprites) {
                 const auto &definition = catalog.definition(sprite.placement.npc);
+                museum_lamp |= sprite.placement.npc == 981;
+                twoson_post |= sprite.placement.npc == 366;
                 if (sprite.placement.npc == 328 || sprite.placement.npc == 329) {
                     const unsigned member = sprite.placement.npc - 328;
                     require(tileset == 2 && definition.script == 605 &&
@@ -254,6 +259,8 @@ void run(const eb::GameAssets &assets) {
         }
     }
     require(exterior_pair[0] && exterior_pair[1], "Theater exterior pair was not source-verified");
+    require(museum_lamp, "Museum photograph-trigger lamp was not source-verified");
+    require(twoson_post, "Twoson photograph-trigger street post was not source-verified");
     require(twoson_benches[0] && twoson_benches[1] && twoson_facing[0] && twoson_facing[1],
             "Twoson props/people were not source-verified");
     require(candidates > 100 && long_cases[0][4] && long_cases[1][4] && long_cases[2][4],
@@ -261,7 +268,7 @@ void run(const eb::GameAssets &assets) {
     std::cout << "PASS stationary NPC source proof " << assets.title << ": candidates=" << candidates
               << " exact_source_pixels=" << pixels << " source_ticks=" << oracle.ticks
               << " active_exclusions=" << exclusions
-              << "; fixed-position scripts7/8/9/605/606/693, Twoson benches350/351 and people304/311, no activation\n";
+              << "; fixed-position scripts7/8/9/605/606/693 and museum lamp981, Twoson post366, benches350/351 and people304/311, no activation\n";
 }
 }
 int main(int argc, char **argv) {

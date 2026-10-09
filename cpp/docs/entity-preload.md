@@ -8,8 +8,13 @@ without frame interpolation, at every supported even width through 1024.
 
 Stationary Person/Object scripts 7, 8, 605, 606 and 693, plus ItemBox
 script 9, have source-verified initial poses. Present and trash-container poses
-follow their opened flags; sanctuary markers follow their defeated flags. Their
-dormant artwork is prepared and drawn without allocating source actors, running
+follow their opened flags; sanctuary markers follow their defeated flags.
+The museum streetlight and Twoson street post's photograph-trigger programs
+(US 877/867, JP 873/863) publish the same fixed pose before their first yield.
+Preparation runs no photograph trigger or additional task. All fifteen authored
+streetlight placements and all six Twoson street posts are covered by the
+scrolling edge sweep, including source creation/first-draw handoff.
+Their dormant artwork is prepared and drawn without allocating source actors, running
 callbacks or advancing randomness. A newly created actor keeps
 its prepared artwork until its first source draw, provided its initial pose,
 script and authored position still match and it is not explicitly hidden.
@@ -63,7 +68,19 @@ in completed-load mode for people, lamps, presents, containers and sanctuary
 markers at five widths, under both source runtimes and regional content. It also
 saves and resumes exactly between the canonical and additional scans.
 
-Moving NPCs in the proven script 6/12 family can activate earlier. Other NPC
+Moving NPCs in the proven script 6/12 family and passive traffic routes 584–590
+can activate earlier. Traffic's shared `C36A41` initializer owns one main task
+and two animation/retention and collision workers across all route waypoints.
+Source appearance, road/bus flags, movement and collision remain authoritative.
+After initial map loading, traffic also preserves the source's exclusion of
+visible births over the wider picture. The shared content band includes camera
+reframing and padding; imported normal/mirrored pieces determine whether any
+part of the vehicle would be visible. A route entrance in this band is deferred
+until it is offscreen. Initial forced-blank loading and authored route positions
+remain unchanged. No renderer/interpolation history feeds admission decisions.
+The source-backed traffic sweep checks visible side-band rejection and real
+walking-column admission/first poses outside the picture in both runtimes.
+Other NPC
 programs retain their original activation until their worker-task lifetime is
 proven. Existing source-created actors retain the wider horizontal lifetime.
 Unknown programs never receive an invented moving pose.
@@ -77,6 +94,13 @@ A minimum task reserve protects other scheduling. Source programs and directory
 entries must match reviewed regional content before their task bounds are used;
 content signatures are checked once by the native compatibility owner at load.
 Unproven task demand, corrupt lists and insufficient capacity fail closed.
+Canonical stationary programs 7/9/10/11, flag-gated walker 609, and the nearby
+photo triggers 867/877 (JP 863/873) also have reviewed demand bounds, avoiding
+unnecessary traffic rejection while reserving their actual source work.
+Artwork readiness has a separate host budget of 4096 shared images / 64 MiB.
+The regional whole-map readiness sweep includes 17,160 widened footprints
+through width 1024 per region and peaks at 672 images / 1,972,608 payload bytes;
+lamps do not spend the fixed source actor/task pools for previews.
 
 The adapter changes verified parameters of compiled source loaders rather than
 patching instruction bytes or mutating render snapshots. Appearance conditions,

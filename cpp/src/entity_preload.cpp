@@ -34,6 +34,25 @@ bool unsupported_npc(const SceneReadView &view, const NpcLayout &l, unsigned npc
          view.cartridge_rom[l.definitions + npc * 17] >= 1 &&
          view.cartridge_rom[l.definitions + npc * 17] <= 3 && !supported_preview(view, l, npc);
 }
+bool visible_traffic_birth(const SceneReadView &view, const NpcLayout &l, unsigned npc,
+                           int x, int y, unsigned width) {
+  if (!view.native_sprites || npc >= 1584 || word(view.work_ram, l.enabled) == 1) return false;
+  const unsigned at = l.definitions + npc * 17;
+  if (at + 17 > view.cartridge_rom.size()) return false;
+  const unsigned script = word(view.cartridge_rom, at + 4);
+  if (script < 584 || script > 590 || !SourceEntityAdmission::moving_npc_tasks(view, npc)) return false;
+  // Source C0222B excludes births in the original picture after map loading.
+  // Keep that rule over the widened view, including the shared camera-reframe
+  // allowance/padding and both authored orientations. This is configuration
+  // and immutable geometry, never feedback from a rendered/interpolated frame.
+  const auto bounds = RenderDistance(width).content_bounds();
+  const auto shape = view.native_sprites->resources()->raw_shape(word(view.cartridge_rom, at + 1));
+  for (unsigned i = 0; i < shape.size(); i += 5) {
+    const int left = x + std::int8_t(shape[i + 3]), top = y + std::int8_t(shape[i]) - 1;
+    if (left < bounds.right && left + 16 > bounds.left && top < 224 && top + 16 > 0) return true;
+  }
+  return false;
+}
 bool npc_site(bool jp, std::uint32_t pc, std::uint8_t opcode, unsigned length) {
   return (opcode == 0xa9 && length == 3 &&
           (pc == (jp ? 0xc023a3u : 0xc02395u) || pc == (jp ? 0xc023b9u : 0xc023abu))) ||
@@ -141,10 +160,14 @@ void EntityPreload::adapt(GameVersion version, std::uint32_t pc,
       const auto free = SourceEntityAdmission::inspect(view);
       const int dx = std::int16_t(std::uint16_t(word(view.work_ram, std::uint16_t(direct_page + 0x0e)) -
                          word(view.work_ram, view.source_profile.wram_background_scroll.layer1_x)));
+      const int dy = std::int16_t(std::uint16_t(word(view.work_ram, std::uint16_t(direct_page + 0x10)) -
+                         word(view.work_ram, view.source_profile.wram_background_scroll.layer1_y)));
+      const unsigned npc = word(view.work_ram, std::uint16_t(direct_page + 0x20));
       const bool extra = dx < -64 || dx >= 320;
       bool admit = free && free->has_capacity();
+      if (admit && SourceEntityAdmission::ordinary_world(view) &&
+          visible_traffic_birth(view, l, npc, dx, dy, hardware->presentation_width())) admit = false;
       if (admit && extra) {
-        const unsigned npc = word(view.work_ram, std::uint16_t(direct_page + 0x20));
         const auto demand = SourceEntityAdmission::moving_npc_tasks(view, npc);
         admit = word(view.work_ram, l.enabled) && SourceEntityAdmission::ordinary_world(view) &&
                 demand && free->can_admit_extra_npc(*demand);

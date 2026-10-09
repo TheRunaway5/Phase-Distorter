@@ -79,6 +79,25 @@ void verify_stationary_programs(const ActionScriptData &scripts, GameVersion ver
     blink.call(jp ? 0xc0a491 : 0xc0a4b2);
     blink.byte(6); blink.byte(24); blink.call(0xc40015);
     blink.byte(0x0b); blink.word(animation_loop); blink.byte(0x19); blink.word(scripts.entry(35));
+    // The museum streetlight and Twoson street post own photograph triggers.
+    // Their shared initializer selects the same stationary first pose before
+    // the first one-frame yield; previewing that artwork never runs the trigger.
+    Expected photo{scripts, scripts.entry(jp ? 873 : 877)};
+    photo.byte(0x1a);
+    const unsigned photo_birth = (photo.at & 0xff0000) | scripts.byte(photo.at) |
+                                  unsigned(scripts.byte(photo.at + 1)) << 8;
+    photo.word(photo_birth); photo.byte(6); photo.byte(1);
+    Expected twoson{scripts, scripts.entry(jp ? 863 : 867)};
+    twoson.byte(0x1a); twoson.word(photo_birth); twoson.byte(6); twoson.byte(1);
+    Expected birth{scripts, photo_birth};
+    birth.byte(0x25); birth.word(stationary); birth.byte(0x3b); birth.byte(0); birth.byte(0x39);
+    birth.byte(7);
+    const unsigned photo_retention = (birth.at & 0xff0000) | scripts.byte(birth.at) |
+                                      unsigned(scripts.byte(birth.at + 1)) << 8;
+    birth.word(photo_retention); birth.call(surface); birth.call(first_pose); birth.byte(0x1b);
+    Expected expiry{scripts, photo_retention};
+    expiry.byte(6); expiry.byte(30); expiry.call(jp ? 0xc0c698 : 0xc0c6b6);
+    expiry.byte(0x0b); expiry.word(photo_retention); expiry.byte(0x19); expiry.word(scripts.entry(35));
 }
 }
 struct StationaryNpcSprites::State {
@@ -87,11 +106,13 @@ struct StationaryNpcSprites::State {
     WorldCollision collision;
     std::shared_ptr<SpriteResources> sprites;
     NpcSpriteReadinessLimits resource_limits;
+    GameVersion version;
     std::vector<std::optional<NpcPlacement>> placements;
     State(std::span<const std::uint8_t> assets, GameVersion version, std::shared_ptr<SpriteResources> resources,
           NpcSpriteReadinessLimits limits, bool restore_threed_npcs)
         : npcs(assets, npc_catalog_layout(version, restore_threed_npcs)), map(assets, world_map_layout(version)),
-          collision(assets, world_collision_layout(version)), sprites(std::move(resources)), resource_limits(limits) {
+          collision(assets, world_collision_layout(version)), sprites(std::move(resources)), resource_limits(limits),
+          version(version) {
         if (!sprites) throw std::invalid_argument("Missing stationary NPC sprite resources");
         if (!limits.images || !limits.image_bytes)
             throw std::invalid_argument("NPC resource preparation requires positive limits");
@@ -114,7 +135,7 @@ StationaryNpcSprites::StationaryNpcSprites(std::span<const std::uint8_t> assets,
 bool StationaryNpcSprites::supports(NpcId npc) const {
     if (npc >= state_->npcs.size()) return false;
     const auto &definition = state_->npcs.definition(npc);
-    return supports_stationary_npc_preview(definition.type, definition.script);
+    return supports_stationary_npc_preview(definition.type, definition.script, state_->version);
 }
 bool StationaryNpcSprites::supports(NpcId npc, unsigned current_script) const {
     return supports(npc) && state_->npcs.definition(npc).script == current_script;

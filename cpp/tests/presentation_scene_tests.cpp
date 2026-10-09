@@ -430,8 +430,8 @@ void run_command_layout(const eb::GameAssets &game, unsigned width) {
                 "Direct and scanline command placement differ");
         require(raster[16 * width + 8] == 0xffffffff && raster[84 * width + 8] == 0xffffffff,
                 "Direct scene did not anchor commands and cash at the left edge");
-        require(raster[132 * width + (width - 256) / 2 + 96] == 0xffffffff,
-                "Direct scene moved unrelated dialogue");
+        require(raster[132 * width + 96] == 0xffffffff,
+                "Direct scene did not move dialogue with its world menu group");
         return scene;
     };
     eb::DirectSceneMotion motion;

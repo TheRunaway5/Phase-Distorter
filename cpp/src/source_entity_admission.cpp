@@ -35,9 +35,13 @@ struct TaskRule {
   unsigned us_script, jp_script, us_entry, jp_entry, tasks;
   Content content;
 };
-constexpr std::array<TaskRule, 27> task_rules{{
+constexpr std::array<TaskRule, 39> task_rules{{
   {6,   6,   0xc3a2e4, 0xc3a2d4, 3, Content::movement},
+  {7,   7,   0xc3a287, 0xc3a277, 1, Content::movement},
   {8,   8,   0xc3a2aa, 0xc3a29a, 1, Content::movement},
+  {9,   9,   0xc3a299, 0xc3a289, 1, Content::movement},
+  {10,  10,  0xc3a2d3, 0xc3a2c3, 1, Content::movement},
+  {11,  11,  0xc3a2d3, 0xc3a2c3, 1, Content::movement},
   {12,  12,  0xc3a2e4, 0xc3a2d4, 3, Content::movement},
   {13,  13,  0xc3a33b, 0xc3a32b, 3, Content::movement},
   {14,  14,  0xc3a349, 0xc3a339, 3, Content::movement},
@@ -58,12 +62,20 @@ constexpr std::array<TaskRule, 27> task_rules{{
   {30,  30,  0xc3a953, 0xc3a943, ordinary_enemy_tasks, Content::movement},
   {31,  31,  0xc3a9da, 0xc3a9ca, ordinary_enemy_tasks, Content::movement},
   {32,  32,  0xc3de01, 0xc3ddeb, 5, Content::movement},
+  {584, 584, 0xc36a53, 0xc36a4d, 3, Content::both},
+  {585, 585, 0xc36a98, 0xc36a92, 3, Content::both},
+  {586, 586, 0xc36abf, 0xc36ab9, 3, Content::both},
+  {587, 587, 0xc36ae6, 0xc36ae0, 3, Content::both},
   {588, 588, 0xc36aff, 0xc36af9, 3, Content::both},
+  {589, 589, 0xc36b18, 0xc36b12, 3, Content::both},
   {590, 590, 0xc36b4b, 0xc36b45, 3, Content::both},
   {605, 605, 0xc36e19, 0xc36e13, 2, Content::both},
   {606, 606, 0xc36e2d, 0xc36e27, 2, Content::both},
+  {609, 609, 0xc36e6a, 0xc36e64, 3, Content::both}, // Flag-gated script16, or release.
   // The authored EVENT864 photo trigger has directory identity 860 in JP.
   {864, 860, 0xc394fd, 0xc394f7, 2, Content::contextual},
+  {867, 863, 0xc39590, 0xc3958a, 2, Content::contextual},
+  {877, 873, 0xc3977a, 0xc39774, 2, Content::contextual},
 }};
 unsigned task_limit(const SceneReadView &view, unsigned script, SourceTaskContentProof proof) {
   const bool japanese = view.game_version == GameVersion::JP;
@@ -174,7 +186,10 @@ std::optional<unsigned> SourceEntityAdmission::moving_npc_tasks(const SceneReadV
   if (npc >= 1584 || l.definitions + npc * 17 + 17 > view.cartridge_rom.size()) return std::nullopt;
   const unsigned at = l.definitions + npc * 17, type = view.cartridge_rom[at];
   const unsigned script = word(view.cartridge_rom, at + 4);
-  if (type < 1 || type > 3 || (script != 6 && script != 12)) return std::nullopt;
+  // Traffic uses C36A41: one main task plus the same two animation/retention
+  // and collision workers for its entire route, including each waypoint.
+  const bool traffic = script >= 584 && script <= 590;
+  if (type < 1 || type > 3 || (script != 6 && script != 12 && !traffic)) return std::nullopt;
   const unsigned tasks = task_limit(view, script, task_proof(view));
   return tasks < task_pool ? std::optional<unsigned>(tasks) : std::nullopt;
 }

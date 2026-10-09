@@ -36,7 +36,8 @@ python3 cpp/tools/package_release.py --version 0.3 \
 The [build record](releases/Phase-Distorter-0.3-build-info.json) records source
 identity, binaries, archive hashes and verification. See
 [releases/SHA256SUMS](releases/SHA256SUMS) for all retained archive hashes.
-Local logs and extracted-package checks are in `build/verification/release-0.3/`.
+Latest logs and extracted-package checks are in
+`build/verification/release-0.3-spiral/`.
 
 Linux requires glibc 2.43 or newer and desktop OpenGL. Windows execution checks
 use Wine. Tests and replays do not establish a complete game playthrough,
@@ -49,25 +50,37 @@ release has been created or published.
 
 ## v0.3 validation
 
-Both Release builds pass their registered suites: **261 passed, 103 optional
-asset-dependent tests skipped, zero failures per platform**. Five packager
-regression tests pass. Ten selected asset-backed programs pass for both regions,
-covering room entry, source NPC scans, filter foregrounds, intro/cinematic
-presentation, teleport party roles and native menus/travel/encounters/coffee/tea.
+The refreshed Release builds pass **261 tests with 104 optional asset-dependent
+tests skipped and zero final failures per platform**. Five packager regressions
+pass. An initial shared-prefix Wine run failed the virtual-controller fixture;
+the complete suite passes with its own Wine prefix and virtual display. Both
+the initial result and isolated repeat are retained in the build record.
+
+Fresh US/JP battle-entry checks pass on Linux and Windows via Wine. Every one of
+328 source animation updates per region is checked at width 398; key stages
+are swept at widths 358, 398, 522, 796 and 1024 with filtering off/on. Ordinary,
+advantage, disadvantage and boss transitions preserve source memory and native
+pixels. The regression reproduced two remaining crops: the final mask outlived
+its update timer, and mask cleanup preceded color-configuration cleanup. Both
+now keep the selected canvas. Original scripted battle entry also passes
+through 105 world-mask frames and into visible battle in each region.
+
+Unrelated prayer apertures pass 504 frames and 77,333,760 pixel comparisons per
+region. Scene boundary/iris fixtures pass 4,917,257 checks per region. Earlier
+Twoson traffic, street-post, menu and optional native-engine results remain in
+the preserved preceding build records.
 
 All three archives pass CRC, payload/manifest/checksum and executable-mode
-audits; their binaries match the builds and canonical launchers. The combined
-folder equals its ZIP. Repeated packaging reproduces all three archives byte
-for byte, and older release ZIP hashes remain unchanged.
+audits. Binaries match the builds and canonical launchers; the combined folder
+equals its ZIP. Repeated packaging reproduces all archives byte for byte. Older
+release ZIPs are unchanged, and the preceding 0.3 snapshot is preserved locally
+under `build/verification/release-0.3-spiral/previous-0.3/`.
 
-All **28 regular extracted-package/launcher runs** pass for both games, with
+All **28 fresh extracted-package/launcher runs** pass for both games, with
 Linux/Wine state, native/presentation pictures, generated PCM and corresponding
-OpenGL readbacks matching across the tested native/CRT/high-rate/VRR modes.
-All **eight extracted native Continue runs** pass with zero gameplay CPU
-instructions and matching canonical pictures/PCM. Fullscreen 16:10 CRT
-readbacks match in a private KWin-backed 1280×800 virtual display. Disposable
-synthetic saves remain unchanged. These results retain the acceptance limits
-above and in the machine-readable build record.
+OpenGL readbacks matching across native/CRT/high-rate/VRR modes in a private
+virtual display. These are bounded source-caller and rendering scenarios, not a
+natural enemy-contact replay, full-game playthrough or hardware acceptance.
 
 ## Historical v0.2.1 release
 

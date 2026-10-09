@@ -3,6 +3,7 @@
 // actor/script/RNG work.
 #include "eb/main_cpu_65816.hpp"
 #include "eb/native/npc_sprite_readiness.hpp"
+#include "eb/render_distance.hpp"
 #include "eb/snes_bus.hpp"
 #include "generated_assets.hpp"
 #include <algorithm>
@@ -120,6 +121,8 @@ void run(const eb::GameAssets &assets) {
   NpcVisibility state{0, flags, active};
   std::uint64_t variants = 0;
   std::size_t peak_images = 0, peak_bytes = 0;
+  std::size_t wide_images = 0, wide_bytes = 0;
+  unsigned wide_requests = 0;
   std::set<unsigned> covered_groups;
   for (unsigned pattern = 0; pattern < 2; ++pattern) {
     std::fill(flags.begin(), flags.end(), pattern ? 255 : 0);
@@ -192,6 +195,16 @@ void run(const eb::GameAssets &assets) {
                     "Readiness mutated source actor/RNG/CPU/graphics state");
             peak_images = std::max(peak_images, readiness.stats().images);
             peak_bytes = std::max(peak_bytes, readiness.stats().image_bytes);
+            // Check the actual shared viewport policy, including camera
+            // reframing, padding and the largest imported sprite extents.
+            for (unsigned width : {398u, 522u, 800u, 1024u}) {
+              const auto bounds = eb::RenderDistance(width).placement_bounds(resources->artwork_bounds());
+              readiness.prepare({int(x * 256) + bounds.left, int(y * 256) + bounds.top,
+                                 int(x * 256) + bounds.right, int(y * 256) + bounds.bottom}, state);
+              wide_images = std::max(wide_images, readiness.stats().images);
+              wide_bytes = std::max(wide_bytes, readiness.stats().image_bytes);
+              ++wide_requests;
+            }
           }
         }
     }
@@ -206,6 +219,9 @@ void run(const eb::GameAssets &assets) {
             << " sprite groups, " << variants
             << " shared authored variants; peak " << peak_images << " images/"
             << peak_bytes << " payload bytes; no gameplay mutation\n";
+  std::cout << "PASS " << assets.title << ": " << wide_requests
+            << " widened readiness footprints through1024px; peak " << wide_images
+            << " images/" << wide_bytes << " payload bytes within default4096-image/64MiB budget\n";
 }
 } // namespace
 int main(int argc, char **argv) {
