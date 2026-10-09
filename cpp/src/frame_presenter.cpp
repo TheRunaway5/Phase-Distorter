@@ -1,4 +1,5 @@
 #include "eb/frame_presenter.hpp"
+#include "scene_draw_batch.hpp"
 
 // This layer draws completed pictures or immutable source scenes. It never
 // advances the game or changes the hardware framebuffer.
@@ -157,7 +158,12 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
             pixels_[4*i+2] = scene.atlas[i]; pixels_[4*i+3] = scene.atlas[i] >> 24;
         }
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scene.atlas_width, scene.atlas_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels_.data());
+        if (scene_texture_width_ != scene.atlas_width || scene_texture_height_ != scene.atlas_height) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scene.atlas_width, scene.atlas_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            scene_texture_width_ = scene.atlas_width;
+            scene_texture_height_ = scene.atlas_height;
+        }
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, scene.atlas_width, scene.atlas_height, GL_RGBA, GL_UNSIGNED_BYTE, pixels_.data());
         uploaded_scene_ = picture.artwork;
     }
     if (scene.effects) {
@@ -170,10 +176,14 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     bool objects = false;
+    std::array<int, 4> scissor{};
+    bool clipped = false;
+    SceneDrawBatch batch(scene_vertices_);
     for (const auto& quad : scene.quads) {
         if (quad.object && !objects) {
             // The first opaque OBJ wins even if a background hides it. This
             // matches OAM selection before BG priority, unlike a Z buffer alone.
+            batch.flush();
             objects = true; glEnable(GL_STENCIL_TEST);
             glStencilFunc(GL_EQUAL, 0, 255); glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
         }
@@ -183,7 +193,9 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
                     clipped_top = std::max(0.f, quad.clip.top),
                     clipped_bottom = std::min(float(height), quad.clip.bottom);
         if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) continue;
-        if (clipped_left > 0 || clipped_right < scene.width || clipped_top > 0 || clipped_bottom < height) {
+        const bool next_clipped = clipped_left > 0 || clipped_right < scene.width || clipped_top > 0 || clipped_bottom < height;
+        std::array<int, 4> next_scissor{};
+        if (next_clipped) {
             // Clip fragments after motion without changing the original quad
             // or UV interpolation. Cropping geometry can round exact nearest-
             // texel boundaries differently at fractional display positions.
@@ -191,32 +203,19 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
                       x1 = int(std::ceil(clipped_right * viewport[2] / scene.width - .5f)),
                       y0 = int(std::ceil(clipped_top * viewport[3] / height - .5f)),
                       y1 = int(std::ceil(clipped_bottom * viewport[3] / height - .5f));
-            glEnable(GL_SCISSOR_TEST);
-            glScissor(viewport[0] + x0, viewport[1] + viewport[3] - y1, x1 - x0, y1 - y0);
-        } else glDisable(GL_SCISSOR_TEST);
-        const float left = (quad.x + offset.x) * 2 / scene.width - 1;
-        const float right = left + quad.width * 2.f / scene.width;
-        const float top = 1 - (quad.y + offset.y) * 2 / height;
-        const float bottom = top - quad.height * 2.f / height;
-        const float z = .8f - quad.priority * .1f;
-        // Match floor-based source sampling when a drawable pixel lies exactly
-        // on a nearest-texel boundary. One UV ULP prevents interpolation from
-        // rounding that tie down; at the 4096px atlas limit the adjustment is
-        // at most 1/2048 of a source texel, with unchanged geometry and alpha.
-        const auto texture_coordinate = [](float value) {
-            return std::nextafter(value, std::numeric_limits<float>::infinity());
-        };
-        const float u0 = texture_coordinate(float(quad.u) / scene.atlas_width),
-                    v0 = texture_coordinate(float(quad.v) / scene.atlas_height);
-        const float u1 = texture_coordinate(float(quad.u + quad.width) / scene.atlas_width),
-                    v1 = texture_coordinate(float(quad.v + quad.height) / scene.atlas_height);
-        glBegin(GL_TRIANGLE_STRIP);
-        glTexCoord2f(u0,v1); glVertex3f(left,bottom,z);
-        glTexCoord2f(u1,v1); glVertex3f(right,bottom,z);
-        glTexCoord2f(u0,v0); glVertex3f(left,top,z);
-        glTexCoord2f(u1,v0); glVertex3f(right,top,z);
-        glEnd();
+            next_scissor = {viewport[0] + x0, viewport[1] + viewport[3] - y1, x1 - x0, y1 - y0};
+        }
+        if (next_clipped != clipped || (next_clipped && next_scissor != scissor)) {
+            batch.flush();
+            clipped = next_clipped; scissor = next_scissor;
+            if (clipped) {
+                glEnable(GL_SCISSOR_TEST);
+                glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
+            } else glDisable(GL_SCISSOR_TEST);
+        }
+        batch.append(quad, offset, scene);
     }
+    batch.flush();
     glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_ALPHA_TEST); glDisable(GL_DEPTH_TEST);
     if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL direct scene presentation failed");
     return true;

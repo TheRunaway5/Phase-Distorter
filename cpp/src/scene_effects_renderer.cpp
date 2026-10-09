@@ -1,4 +1,5 @@
 #include "eb/scene_effects_renderer.hpp"
+#include "scene_draw_batch.hpp"
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <algorithm>
@@ -118,6 +119,7 @@ struct SceneEffectsRenderer::Impl {
     } layer, resolve;
     GLuint framebuffer{}, depth_stencil{}, images[2]{}, windows{};
     int width{}, height{};
+    std::vector<float> vertices;
     ~Impl() {
         if (layer.id) DeleteProgram(layer.id);
         if (resolve.id) DeleteProgram(resolve.id);
@@ -232,33 +234,43 @@ void SceneEffectsRenderer::draw(const DirectScenePicture& picture, unsigned atla
             glDisable(GL_SCISSOR_TEST); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
             glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS);
             glStencilFunc(GL_EQUAL, 0, 255); glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
+            SceneDrawBatch batch(gl.vertices);
+            bool state_valid = false, objects = false, masked = false, clipped = false;
+            float alpha = 0;
+            std::array<int, 4> scissor{};
             for (const auto& quad : scene.quads) {
                 const auto layer = unsigned(quad.layer);
                 if (layer == 5 || !(pass ? effect.sub[layer] : effect.main[layer])) continue;
-                if (quad.object) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
-                gl.Uniform1i(gl.layer.masked, effect.masked[layer]);
-                gl.Uniform1f(gl.layer.alpha, pass ? (quad.priority >= 0 ? 1 : 0) :
-                    (quad.color_math_eligible && effect.math[layer] ? 1 : 0));
+                const bool next_objects = quad.object, next_masked = effect.masked[layer];
+                const float next_alpha = pass ? (quad.priority >= 0 ? 1 : 0) :
+                    (quad.color_math_eligible && effect.math[layer] ? 1 : 0);
                 const auto offset = quad.motion < picture.offsets.size() ? picture.offsets[quad.motion] : DirectScenePicture::Offset{};
                 const float l = std::max(0.f, quad.clip.left), r = std::min(float(scene.width), quad.clip.right),
                             t = std::max(0.f, quad.clip.top), b = std::min(224.f, quad.clip.bottom);
                 if (l >= r || t >= b) continue;
-                if (l > 0 || r < scene.width || t > 0 || b < 224) {
+                const bool next_clipped = l > 0 || r < scene.width || t > 0 || b < 224;
+                std::array<int, 4> next_scissor{};
+                if (next_clipped) {
                     const int x0 = int(std::ceil(l * gl.width / scene.width - .5f)), x1 = int(std::ceil(r * gl.width / scene.width - .5f)),
                               y0 = int(std::ceil(t * gl.height / 224 - .5f)), y1 = int(std::ceil(b * gl.height / 224 - .5f));
-                    glEnable(GL_SCISSOR_TEST); glScissor(x0, gl.height - y1, x1 - x0, y1 - y0);
-                } else glDisable(GL_SCISSOR_TEST);
-                const float left = (quad.x + offset.x) * 2 / scene.width - 1, right = left + quad.width * 2.f / scene.width,
-                            top = 1 - (quad.y + offset.y) * 2 / 224, bottom = top - quad.height * 2.f / 224,
-                            z = .8f - quad.priority * .1f;
-                const auto uv = [](float v) { return std::nextafter(v, std::numeric_limits<float>::infinity()); };
-                const float u0 = uv(float(quad.u) / scene.atlas_width), u1 = uv(float(quad.u + quad.width) / scene.atlas_width),
-                            v0 = uv(float(quad.v) / scene.atlas_height), v1 = uv(float(quad.v + quad.height) / scene.atlas_height);
-                glBegin(GL_TRIANGLE_STRIP);
-                glTexCoord2f(u0, v1); glVertex3f(left, bottom, z); glTexCoord2f(u1, v1); glVertex3f(right, bottom, z);
-                glTexCoord2f(u0, v0); glVertex3f(left, top, z); glTexCoord2f(u1, v0); glVertex3f(right, top, z);
-                glEnd();
+                    next_scissor = {x0, gl.height - y1, x1 - x0, y1 - y0};
+                }
+                if (!state_valid || objects != next_objects || masked != next_masked || alpha != next_alpha ||
+                    clipped != next_clipped || (next_clipped && scissor != next_scissor)) {
+                    batch.flush();
+                    if (next_objects) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
+                    gl.Uniform1i(gl.layer.masked, next_masked);
+                    gl.Uniform1f(gl.layer.alpha, next_alpha);
+                    if (next_clipped) {
+                        glEnable(GL_SCISSOR_TEST);
+                        glScissor(next_scissor[0], next_scissor[1], next_scissor[2], next_scissor[3]);
+                    } else glDisable(GL_SCISSOR_TEST);
+                    state_valid = true; objects = next_objects; masked = next_masked; alpha = next_alpha;
+                    clipped = next_clipped; scissor = next_scissor;
+                }
+                batch.append(quad, offset, scene);
             }
+            batch.flush();
         }
         glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_DEPTH_TEST);
         gl.BindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0); glDrawBuffer(GL_BACK);

@@ -3,10 +3,11 @@ Phase Distorter @VERSION@ - combined Linux / Windows x86-64 launcher folder
 Extract the complete Phase-Distorter-@VERSION@-launchers-x86_64 folder.
 On Linux, run ./launch.sh or open launchers/linux/bin/eb_cpp directly.
 On Windows, double-click launch.bat or open launchers\windows\bin\eb_cpp.exe.
-Keep the directory structure intact. The Linux libraries live in
-launchers/linux/lib/; Windows SDL2.dll stays beside eb_cpp.exe.
+Keep the directory structure intact. The Linux SDL2 runtime lives in
+launchers/linux/lib/; C++ support is linked privately into the Linux application.
+Windows SDL2.dll stays beside eb_cpp.exe.
 
-Linux requires glibc 2.43 or newer and desktop OpenGL. Windows requires
+Linux requires glibc 2.36 or newer and desktop OpenGL. Windows requires
 64-bit Windows and desktop OpenGL. Windows checks use Wine; native Windows
 hardware validation remains outstanding. No compiler is needed to play.
 

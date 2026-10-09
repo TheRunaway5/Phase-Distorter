@@ -198,6 +198,25 @@ int main() {
             auto effect = effect_scene(256, variant);
             compare_effect(present, {effect, {{}, {.2f, -.2f}}}, 2, variant);
         }
+        // Dense tile runs share draw state, then change masking, math eligibility,
+        // clipping and OBJ selection. Splitting artwork must preserve every
+        // pixel, including transparent holes and fractional texture boundaries.
+        for (unsigned variant : {0u, 19u, 82u, 127u}) {
+            auto tiled = effect_scene(256, variant);
+            const auto original = tiled->quads;
+            tiled->quads.clear();
+            for (const auto& quad : original)
+                for (unsigned y = 0; y < quad.height; y += 4)
+                    for (unsigned x = 0; x < quad.width; x += 4) {
+                        auto tile = quad;
+                        tile.u += x; tile.v += y; tile.x += x; tile.y += y;
+                        tile.width = std::min(4u, quad.width - x);
+                        tile.height = std::min(4u, quad.height - y);
+                        tiled->quads.push_back(tile);
+                    }
+            for (unsigned phase = 0; phase < 3; ++phase)
+                compare_effect(present, {tiled, {{}, {phase / 5.f, phase / -5.f}}}, 2, 500 + variant);
+        }
         // The canonical window remains centered in wide scenes and extends its
         // edge bounds into the margins. Fractional geometry is still resolved
         // at output resolution; an inset/letterbox must not shift the mask.

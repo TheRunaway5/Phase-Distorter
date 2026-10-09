@@ -1,3 +1,17 @@
+# Phase Distorter 0.3.1 — 2026-10-09
+
+Changes since the packaged v0.3 build are in
+[the v0.3.1 patch notes](releases/Phase-Distorter-0.3.1-patch-notes.md).
+
+- Batch direct scene primitives with matching draw state and reuse atlas texture
+  storage, reducing renderer cost while preserving source pixels and CRT quality.
+- Add an opt-in imported-map renderer benchmark and dense tile regressions.
+  Expensive game updates still block presentation; uncapped stability remains open.
+- Make glibc 2.36 the standard Linux release baseline, with private static C++
+  support and SDL2 2.32.10, including the GCC 12 native-menu coroutine ownership fix.
+- Rebuild both canonical launchers and provide Linux, Windows and combined
+  v0.3.1 bundles with manifests, checksums, notes and a source/build record.
+
 # Phase Distorter 0.3 — 2026-10-09
 
 Complete changes since the actual packaged v0.2.1 source snapshot are in
@@ -15,6 +29,8 @@ Complete changes since the actual packaged v0.2.1 source snapshot are in
 - Expand native cinematic, graphics, dialogue, retained-state and source-work
   implementations and regional source comparisons. Whole-engine and physical
   cutscene acceptance remain open; the regular session remains the default.
+- Add a separate Linux compatibility package targeting glibc 2.36, covering
+  glibc 2.37 hosts, with rebuilt SDL2 and statically linked C++ support.
 - Rebuild Linux and Windows launchers and supply separate and combined v0.3
   bundles, manifests, checksums and a build record for manual GitHub upload.
 

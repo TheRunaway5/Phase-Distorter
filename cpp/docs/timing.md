@@ -123,6 +123,27 @@ ceiling while VRR is selected. `--no-vsync` explicitly bypasses this behavior.
 The application cannot enable the monitor/driver's VRR configuration. A high
 submission rate does not prove a display scans out that many distinct frames.
 
+Direct scene rendering batches consecutive primitives that share stencil,
+scissor, window-mask and color-math state. Source order, triangle diagonals and
+nearest-texel sampling stay intact; batches end before any state change. Atlas
+storage is reused when new artwork has the same dimensions. These reduce CPU
+driver work without lowering resolution or changing the CRT shader.
+
+The desktop still executes game updates on its presentation thread. An expensive
+update blocks extra draws, even when the GPU is fast enough. Uncapped therefore
+cannot promise uniform intervals, and a presentation cap alone cannot remove
+update stalls. Separating game production from presentation remains future work.
+
+`direct_scene_benchmark pack.ebpak` measures a 1,218-primitive imported map at
+1920×1200, with plain/effect composition and CRT on/off. Build it with
+`cmake --build build --target direct_scene_benchmark`; the executable is under
+`build/cpp/`. It warms each path for 50 draws and measures 400 draws with GPU
+completion included. It excludes game updates, atlas replacement and swaps, so
+its timings describe renderer cost rather than whole-game FPS. One native
+NVIDIA run reduced the median plain+CRT cost from 0.277 to 0.205 ms and effect+CRT
+from 0.349 to 0.267 ms. Results depend on hardware and host load; this benchmark
+is deliberately outside CTest.
+
 Windows uses SDL's timer backend for whole-millisecond waits and yields through
 the remaining fraction. A Wine real-clock probe found the MinGW standard-library
 3 ms wait rounding to roughly 15–16 ms, limiting even GPU-backed presentation

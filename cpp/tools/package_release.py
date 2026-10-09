@@ -109,7 +109,8 @@ def template(name: str, version: str, output_name: str) -> Entry:
 
 
 def package_entries(platform: str, version: str, runtime: Path,
-                    patch_notes: Path | None = None) -> list[Entry]:
+                    patch_notes: Path | None = None,
+                    static_cxx_runtime: bool = False) -> list[Entry]:
     # No recursive source-tree copy: adding a file to a worktree cannot silently
     # add it to a release. Every artifact, dependency and notice is named here.
     entries = [file_entry(ROOT / source, name) for source, name in COMMON_NOTICES]
@@ -131,7 +132,10 @@ def package_entries(platform: str, version: str, runtime: Path,
         entries.append(entry)
         entries.append(file_entry(ROOT / "install-linux.sh", "install-linux.sh", 0o755))
         entries.append(file_entry(ROOT / "cpp/resources/phase-distorter.png", "cpp/resources/phase-distorter.png"))
-        for name in RUNTIME_LIBRARIES:
+        # A compatibility build embeds its C++ support runtime. Shipping older
+        # shared copies could shadow the newer runtime needed by GPU drivers.
+        libraries = ("libSDL2-2.0.so.0",) if static_cxx_runtime else RUNTIME_LIBRARIES
+        for name in libraries:
             entry = file_entry(runtime / name, "lib/" + name, 0o755)
             require_native(entry, platform)
             entries.append(entry)
@@ -257,6 +261,8 @@ def main() -> int:
     parser.add_argument("--version", default=(ROOT / "VERSION").read_text(encoding="utf-8").strip())
     parser.add_argument("--platform", choices=("all", "windows", "linux"), default="all")
     parser.add_argument("--linux-runtime-dir", type=Path, default=ROOT / "launchers/linux/lib")
+    parser.add_argument("--linux-static-cxx-runtime", action="store_true",
+                        help="Package only SDL2 when the Linux application's C++ runtime is linked statically")
     parser.add_argument("--patch-notes", type=Path, help="Include this explicitly selected Markdown file in each bundle")
     parser.add_argument("--include-launchers", action="store_true", help="Also create the combined versioned launcher folder and ZIP")
     parser.add_argument("--check", action="store_true", help="Validate whitelisted inputs without writing releases")
@@ -268,7 +274,8 @@ def main() -> int:
         parser.error("--include-launchers requires --platform all")
     # Validate all selected packages first; a missing runtime or notice should
     # fail before any previous release archive is replaced.
-    packages = {platform: package_entries(platform, args.version, args.linux_runtime_dir, args.patch_notes)
+    packages = {platform: package_entries(platform, args.version, args.linux_runtime_dir, args.patch_notes,
+                                         args.linux_static_cxx_runtime)
                 for platform in platforms}
     if args.include_launchers:
         packages["launchers"] = launcher_entries(packages, args.version)

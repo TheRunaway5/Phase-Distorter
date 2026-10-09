@@ -1,10 +1,9 @@
 Phase Distorter @VERSION@ - Windows x86-64
 EarthBound / Mother 2 PC port
 
-This update fixes Teleport alpha arrivals and missing widescreen room NPCs,
-keeps enemies/text clear through photosensitivity filtering, improves 16:10,
-fullscreen and widescreen scene/menu presentation, and adds an experimental
-native Continue route. PATCH-NOTES.md lists all changes since v0.2.1.
+This update reduces direct scene rendering cost through draw batching and
+texture reuse, preserving CRT quality and source pixels. Linux now uses a
+glibc 2.36 baseline. PATCH-NOTES.md lists all changes since v0.3.
 Existing supported imports, normal saves and older snapshots remain usable.
 
 Use Extract All to unpack this entire ZIP, then open its

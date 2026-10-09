@@ -346,10 +346,13 @@ CommandMenu::Operation::Execution::run() {
   const auto window_id = dialogue::WindowId{o.content->command_window(shape)};
   co_await window({dialogue::WindowAction::Open, window_id, {}, 0});
   const auto name = o.party.name_field(character);
-  co_await window({dialogue::WindowAction::Title,
-                   window_id,
-                   {name.begin(), name.end()},
-                   jp() ? 4u : 5u});
+  // Keep the vector-owning command named across suspension. GCC 12 can
+  // double-destroy the nested aggregate temporary in a co_await expression.
+  dialogue::WindowCommand title{dialogue::WindowAction::Title,
+                                window_id,
+                                {name.begin(), name.end()},
+                                jp() ? 4u : 5u};
+  co_await window(std::move(title));
   auto add = [&](unsigned label, unsigned value, unsigned x, unsigned y) {
     o.model.append_value(o.content->command(label), {}, std::uint16_t(value),
                          std::uint16_t(x), std::uint16_t(y), false);

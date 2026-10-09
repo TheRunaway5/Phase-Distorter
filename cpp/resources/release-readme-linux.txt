@@ -1,10 +1,9 @@
 Phase Distorter @VERSION@ - Linux x86-64
 EarthBound / Mother 2 PC port
 
-This update fixes Teleport alpha arrivals and missing widescreen room NPCs,
-keeps enemies/text clear through photosensitivity filtering, improves 16:10,
-fullscreen and widescreen scene/menu presentation, and adds an experimental
-native Continue route. PATCH-NOTES.md lists all changes since v0.2.1.
+This update reduces direct scene rendering cost through draw batching and
+texture reuse, preserving CRT quality and source pixels. Linux now uses a
+glibc 2.36 baseline. PATCH-NOTES.md lists all changes since v0.3.
 Existing supported imports, normal saves and older snapshots remain usable.
 
 Extract this entire ZIP, then open its Phase-Distorter-@VERSION@-linux-x86_64
@@ -14,9 +13,9 @@ in that extracted application folder:
   chmod +x "Phase Distorter"
   "./Phase Distorter"
 
-Requirements: x86-64 Linux, glibc 2.43 or newer, desktop OpenGL support and the
-system graphics/window/audio libraries used by your desktop. SDL2, libstdc++
-and libgcc_s are supplied in lib/; keep that folder beside the executable.
+Requirements: x86-64 Linux, glibc 2.36 or newer, desktop OpenGL support and the
+system graphics/window/audio libraries used by your desktop. SDL2 is supplied in lib/; keep that folder beside the executable. C++ support
+is linked privately into the application; system GPU drivers use their own runtime.
 Graphics drivers and glibc are system components and are not bundled. On an
 older distribution, build from the matching full source snapshot instead.
 

@@ -58,11 +58,13 @@ private:
     bool direct_scene_ = false;
     unsigned texture_{};
     unsigned scene_texture_{};
+    unsigned scene_texture_width_{}, scene_texture_height_{};
     std::shared_ptr<const DirectSceneFrame> uploaded_scene_;
     int drawable_width_{}, drawable_height_{};
     int texture_width_ = width, texture_height_ = height;
     // Reused RGBA upload storage; conversion avoids host-endianness assumptions.
     std::vector<std::uint8_t> pixels_;
+    std::vector<float> scene_vertices_;
     bool begin_draw(int drawable_width, int drawable_height, double aspect, int top_inset);
 };
 } // namespace eb

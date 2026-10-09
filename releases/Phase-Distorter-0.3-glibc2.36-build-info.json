@@ -1,0 +1,125 @@
+{
+  "application_version": "0.3",
+  "architecture": "x86_64",
+  "archive": {
+    "bytes": 9923801,
+    "path": "Phase-Distorter-0.3-glibc2.36-linux-x86_64.zip",
+    "sha256": "70811bbe61c82cbe6d6ff849823a3fd66f2b2d11ac1d6b1c22b9b2867da0b551"
+  },
+  "binary": {
+    "bytes": 28825128,
+    "path": "Phase Distorter",
+    "sha256": "e9e664ebb319e9a41358a199030e75fdcf6691ae6b6635cb1920fe3b97642be6"
+  },
+  "build": {
+    "SDL2": "2.32.10; same source version as original release; SDL_SSE3=OFF",
+    "compiler": "GCC 12.2.0-14+deb12u1",
+    "configuration": "Release; C++20; -march=x86-64 -mtune=generic",
+    "docker_recipe": "cpp/tools/linux-compat.Dockerfile",
+    "environment": "Debian 12 bookworm-slim; verified official amd64 OCI image in rootless bubblewrap",
+    "glibc": "2.36-9+deb12u14",
+    "image_digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
+    "link_flags": "-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL"
+  },
+  "checks": {
+    "archive_audit": {
+      "archive_sha256": "70811bbe61c82cbe6d6ff849823a3fd66f2b2d11ac1d6b1c22b9b2867da0b551",
+      "canonical_build_package_identity": true,
+      "files": 21,
+      "manifest_checksums_modes": true,
+      "no_game_or_user_data": true,
+      "only_SDL2_shared_runtime": true,
+      "reproducible": true
+    },
+    "desktop": "Xvfb 1280x800 fullscreen 16:10; CRT on; software OpenGL; both glibc 2.36 and current host",
+    "desktop_frames_per_game": 180,
+    "desktop_outputs_match_original": "US/JP native pixels, widescreen pixels, OpenGL readbacks and WAV bytes",
+    "extracted_package_runs": [
+      {
+        "bundled_SDL2_loaded": true,
+        "exit": 0,
+        "game": "earthbound",
+        "outputs": {
+          "-gl.ppm": "1505050f92f1841c0b11df86bb4a9011caa29fa2e0f8cdf5efeae3963cd70f11",
+          "-native.ppm": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+          "-wide.ppm": "e8e9c5d56bebff092bba5dc8078b1c1a4a2f5ebe2f4098b131bf00c1df1ced33",
+          ".wav": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d"
+        },
+        "outputs_match_previous": true
+      },
+      {
+        "bundled_SDL2_loaded": true,
+        "exit": 0,
+        "game": "mother2",
+        "outputs": {
+          "-gl.ppm": "6f1f6f3f80d23277c8ccb60a066c45cda9ede9ccced7f10814cb85b8acdeb46a",
+          "-native.ppm": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+          "-wide.ppm": "b1b95ef8de07c35f1c85b3a8def8b96d878cedb0e5703fb0c98a07a002ab4f6a",
+          ".wav": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d"
+        },
+        "outputs_match_previous": true
+      }
+    ],
+    "failed": 0,
+    "headless_frames_per_game": 1200,
+    "headless_outputs_match_original": "US/JP native pixels, widescreen pixels and WAV bytes",
+    "native_menu_checks": 201,
+    "optional_skipped": 104,
+    "packager_regressions": 5,
+    "passed": 261,
+    "registered": 365,
+    "reproducible_archive": true,
+    "valgrind_errors": 0
+  },
+  "compatibility": {
+    "SDL2_max_glibc": "2.34",
+    "abi_audit": {
+      "Phase Distorter": {
+        "max_glibc": "2.36",
+        "needed": [
+          "libSDL2-2.0.so.0",
+          "libGL.so.1",
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ]
+      },
+      "libSDL2-2.0.so.0": {
+        "max_glibc": "2.34",
+        "needed": [
+          "libm.so.6",
+          "libc.so.6"
+        ]
+      }
+    },
+    "application_ISA": "x86-64-baseline",
+    "application_max_glibc": "2.36",
+    "glibc_requirement_satisfied_by_2_37": true,
+    "minimum_glibc": "2.36",
+    "requested_glibc": "2.37",
+    "shared_CXX_runtime_bundled": false
+  },
+  "evidence_directory": "build/verification/linux-glibc236",
+  "limits": [
+    "No physical Steam Deck, hardware GPU, controller or audio acceptance",
+    "No full game playthrough",
+    "Concurrent uncapped-framerate renderer work is excluded",
+    "Original version 0.3 archives are separate from this compatibility variant"
+  ],
+  "platform": "linux",
+  "prepared": "2026-10-09",
+  "project": "Phase Distorter",
+  "schema": 1,
+  "source": {
+    "base_commit": "775070ce5eaca37d83c106f1dfa497d795b1f65a",
+    "concurrent_renderer_changes_excluded": true,
+    "frozen_through_build_and_validation": true,
+    "input_count": 2415,
+    "input_index": "Phase-Distorter-0.3-glibc2.36-source-inputs.json",
+    "input_index_sha256": "c87903ab7789c09683af226c70a00260ec96485335a2c13cadead3f346f62ba5",
+    "modified_application_inputs": [
+      "cpp/src/native/battle/menu/command.cpp"
+    ]
+  },
+  "version": "0.3-glibc2.36"
+}

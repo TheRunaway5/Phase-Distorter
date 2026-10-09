@@ -37,6 +37,12 @@ runtime. The native engine is still in development.
 
 ## Widescreen, Steam Deck and fullscreen
 
+- **Add a Linux compatibility ZIP for glibc 2.36.** Rebuild the application
+  and the same SDL2 2.32.10 against Debian 12. Link C++ support statically so
+  newer system graphics drivers can use their own C++ runtime.
+  This covers the requested glibc 2.37 baseline. Physical Steam Deck testing
+  remains outstanding.
+
 - Clearly label the **16:10 (Steam Deck)** display preset and document 1280×800
   use. Add **`--fullscreen`** to start directly in desktop fullscreen mode.
 - Move overworld command, carried-money, dialogue, Goods, Equip, PSI and
