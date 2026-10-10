@@ -3,6 +3,7 @@
 #include "eb/game_version.hpp"
 #include "eb/presentation_frame.hpp"
 #include "eb/snapshot_types.hpp"
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -40,6 +41,7 @@ class DesktopDisplay {
     bool fullscreen() const;
     bool wants_register_diagnostics() const;
     double frame_rate() const;
+    std::chrono::steady_clock::duration swap_duration() const;
     double presentation_rate() const;
     void update_swap_interval();
     void present(const SessionDiagnostics &diagnostics, PresentationPicture picture,

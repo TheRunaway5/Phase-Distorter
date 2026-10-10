@@ -131,7 +131,7 @@ void PresentationPipeline::simulation_finished(PresentationFrame current_frame, 
     elapsed_frames = std::max<std::uint64_t>(elapsed_frames, 1);
     native_wait_pending_ = false;
     if (high_rate_) {
-        presentation_clock_.simulated(elapsed_frames);
+        presentation_clock_.simulated(now, elapsed_frames);
         if (presentation_clock_.simulation_due(now))
             catch_up_frames_ += elapsed_frames;
     } else {
@@ -175,6 +175,10 @@ void PresentationPipeline::presented(Time now) {
         native_picture_pending_ = false;
         native_wait_pending_ = true;
     }
+}
+
+void PresentationPipeline::report_swap_cost(Time::duration cost) {
+    presentation_clock_.set_swap_cost(cost);
 }
 
 PresentationPipeline::Time PresentationPipeline::wake_time(Time now) const {

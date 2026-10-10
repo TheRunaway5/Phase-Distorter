@@ -51,6 +51,9 @@ public:
     PresentationPicture picture(Time now);
     void presented(Time now);
     Time wake_time(Time now) const;
+    // Feed the measured wall cost of a completed presentation swap; the
+    // clock's draw clearance adapts to it.
+    void report_swap_cost(Time::duration cost);
 
     // The latest native/filtered canvas, including partial-step results, rather
     // than an interpolated host picture. Valid until the next producer canvas

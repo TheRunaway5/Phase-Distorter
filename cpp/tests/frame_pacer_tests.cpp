@@ -82,7 +82,7 @@ int main() {
             const auto end=now+std::chrono::seconds(10);
             while(now<end) {
                 clock.resume(now);
-                if(clock.simulation_due(now)) { ++ticks; clock.simulated(1); now+=std::chrono::microseconds(100); }
+                if(clock.simulation_due(now)) { ++ticks; clock.simulated(now,1); now+=std::chrono::microseconds(100); }
                 if(clock.presentation_due(now)) { ++draws; now+=std::chrono::microseconds(100); clock.presented(now); }
                 now=std::max(now,clock.wake(now));
             }
@@ -93,13 +93,72 @@ int main() {
         }
         eb::PresentationClock high(Time{},300);
         require(high.simulation_due(Time{}),"First game tick was not due");
-        high.simulated(2);
+        high.simulated(Time{},2);
         require(!high.simulation_due(Time{}+eb::FramePacer::period()),"Multi-frame DMA lost simulation time");
-        high.reset(Time{},0); high.simulated(1);
+        high.reset(Time{},0); high.simulated(Time{},1);
         require(high.fraction(Time{}+eb::FramePacer::period()/2)>.499 && high.fraction(Time{}+eb::FramePacer::period()/2)<.501,
             "Presentation fraction does not track game cadence");
-        high.resume(Time{}+std::chrono::seconds(5)); high.simulated(1);
+        high.resume(Time{}+std::chrono::seconds(5)); high.simulated(Time{}+std::chrono::seconds(5),1);
         require(!high.simulation_due(Time{}+std::chrono::seconds(5)),"Host suspension created a game tick backlog");
+        // Sustained uniform lateness shifts the blend window without changing
+        // its rate, and converges until the endpoint no longer holds.
+        eb::PresentationClock late(Time{},120);
+        Time arrived{};
+        for (unsigned k=1;k<=40;++k) {
+            arrived=Time{}+eb::FramePacer::period()*(k-1)+std::chrono::milliseconds(2);
+            late.simulated(arrived,1);
+        }
+        const double v=late.fraction(arrived+eb::FramePacer::period()*3/4)
+                      -late.fraction(arrived+eb::FramePacer::period()/4);
+        require(v>.499&&v<.501,"Constant update cost did not keep a constant motion rate");
+        require(late.fraction(arrived+std::chrono::microseconds(200))>late.fraction(arrived),
+            "Sustained uniform lateness still froze the blend endpoint");
+        // Alternating update costs change when frames complete, not how fast
+        // the picture moves: the fraction spans one native period per window.
+        eb::PresentationClock alt(Time{},120);
+        double v8{},v2{};
+        for (unsigned k=1;k<=41;++k) {
+            const auto arrived_alt=Time{}+eb::FramePacer::period()*(k-1)
+                +std::chrono::milliseconds(k%2?8:2);
+            alt.simulated(arrived_alt,1);
+            if (k==39) v8=alt.fraction(arrived_alt+std::chrono::microseconds(3000))
+                            -alt.fraction(arrived_alt);
+            if (k==41) v2=alt.fraction(arrived_alt+std::chrono::microseconds(3000))
+                            -alt.fraction(arrived_alt);
+        }
+        require(v8>.179&&v8<.181&&v2>.179&&v2<.181,
+            "Alternating update costs changed the motion rate");
+        // A draw slot inside the clearance is deferred past the tick.
+        eb::PresentationClock gated(Time{},120);
+        gated.simulated(Time{},1);
+        for (int i=0;i<8;++i) gated.set_swap_cost(std::chrono::microseconds(1500));
+        gated.presented(Time{});
+        const auto near_deadline=Time{}+eb::FramePacer::period()-std::chrono::milliseconds(1);
+        require(!gated.presentation_due(near_deadline),"Draw slot entered the swap clearance before the tick deadline");
+        const auto tick_arrival=Time{}+eb::FramePacer::period();
+        gated.simulated(tick_arrival,1);
+        require(gated.presentation_due(tick_arrival+std::chrono::microseconds(100)),
+            "Deferred draw slot was not presented after the tick");
+        const auto slot=gated.wake(Time{}+eb::FramePacer::period()/2);
+        require(slot>Time{}+eb::FramePacer::period()/2 && slot<Time{}+std::chrono::microseconds(8400),
+            "wake missed a drawable draw slot outside the clearance");
+        // 144 fps slots drift into the clearance window; such a wake goes
+        // straight to the tick instead of waking up to sleep again.
+        eb::PresentationClock gated144(Time{},144);
+        gated144.simulated(Time{},1);
+        for (int i=0;i<8;++i) gated144.set_swap_cost(std::chrono::microseconds(2000));
+        gated144.presented(Time{}+std::chrono::microseconds(10000));
+        require(gated144.wake(Time{}+std::chrono::microseconds(11000))==Time{}+eb::FramePacer::period(),
+            "wake inside the clearance must target the tick");
+        // The clearance follows the measured swap cost instead of a fixed
+        // budget: cheap draws stay drawable up to the tick, costly ones defer.
+        eb::PresentationClock cost(Time{},300);
+        cost.simulated(Time{},1);
+        for (int i=0;i<8;++i) cost.set_swap_cost(std::chrono::microseconds(2000));
+        require(cost.presentation_due(Time{}+std::chrono::microseconds(12000)),
+            "Clearance suppressed draws beyond the measured swap cost");
+        require(!cost.presentation_due(Time{}+std::chrono::microseconds(13500)),
+            "Clearance did not follow the measured swap cost");
         eb::FramePacer switched(Time{});
         const auto changed=Time{}+std::chrono::seconds(30);
         switched.set_rate(changed, eb::FramePacer::rate_for_refresh(144,true));
