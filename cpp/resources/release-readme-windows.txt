@@ -128,3 +128,11 @@ it adds one game frame of visual latency and can show blending artifacts. Turn
 it off (or use --no-interpolation) for the original completed pictures. With VRR,
 output stays below the display ceiling; without VRR, higher rates disable vsync
 and may tear. Actual FPS depends on the computer, window system and driver.
+
+VERSION 0.4 PERFORMANCE UPDATE
+Background tile-row and palette reuse, cheaper cached reads and reduced software
+rasterizer coordinate work lower update CPU cost. A paired Twoson replay measured
+about 19-20% less median CPU time; this is not a whole-game FPS guarantee. Game
+updates still share the presentation thread, and uncapped output can remain
+uneven under load. Rendering resolution, CRT quality and game/audio speed remain
+unchanged. See PATCH-NOTES.md for scope and validation limits.

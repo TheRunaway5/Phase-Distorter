@@ -1,7 +1,7 @@
 # Phase Distorter standalone entry point. The release ships translated C++
 # sources, so configuring here never needs the original assembly checkout.
 cmake_minimum_required(VERSION 3.20)
-project(earthbound_cpp_v1 VERSION 0.3.1 LANGUAGES CXX)
+project(earthbound_cpp_v1 VERSION 0.4 LANGUAGES CXX)
 # Enable CTest at this top level so `ctest --test-dir build` discovers the
 # checks registered by cpp/. The child project shares this cache option.
 option(EB_BUILD_TESTS "Build verification programs" ON)

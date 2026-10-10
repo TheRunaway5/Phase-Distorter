@@ -1,3 +1,16 @@
+# Phase Distorter 0.4 — 2026-10-10
+
+Changes since the packaged v0.3.1 build are in
+[the v0.4 patch notes](releases/Phase-Distorter-0.4-patch-notes.md).
+
+- Decode and reuse background tile rows and palette colors, accelerate cached
+  reads, and skip inactive window calculations while preserving source pixels.
+- Reduce repeated coordinate work in the direct scene software rasterizer.
+- Lower median update CPU time by about 19–20% in the paired regional walking
+  replay. Uncapped stability under load remains unresolved.
+- Expand independent background sampling coverage and rebuild Linux, Windows
+  and combined 0.4 bundles with refreshed canonical launchers and build records.
+
 # Phase Distorter 0.3.1 — 2026-10-09
 
 Changes since the packaged v0.3 build are in

@@ -3,17 +3,10 @@
 #include <algorithm>
 
 #include "snes_ppu_constants.hpp"
+#include "planar_tile_row.hpp"
 
 namespace eb {
 namespace {
-// Expand one bitplane byte to eight byte lanes, leftmost pixel first.
-constexpr auto planar_lanes = [] {
-    std::array<std::uint64_t, 256> table{};
-    for (unsigned byte = 0; byte < 256; ++byte)
-        for (unsigned x = 0; x < 8; ++x)
-            table[byte] |= std::uint64_t((byte >> (7 - x)) & 1) << (x * 8);
-    return table;
-}();
 int signed_13_bit(unsigned value) {
     return (value & 0x1000) ? int(value & 0x1fff) - 0x2000 : int(value & 0x1fff);
 }
@@ -24,6 +17,8 @@ int signed_13_bit(unsigned value) {
 // matters only when both are enabled.
 bool SceneReadView::layer_window_contains(unsigned layer, unsigned x) const {
     const unsigned window_selection = (ppu_registers[0x23 + layer / 2] >> ((layer & 1) * 4)) & 15;
+    if (!(window_selection & 10))
+        return false;
     const bool window1_enabled = window_selection & 2, window2_enabled = window_selection & 8;
     bool inside_window1 = x >= ppu_registers[0x26] && x <= ppu_registers[0x27],
          inside_window2 = x >= ppu_registers[0x28] && x <= ppu_registers[0x29];
@@ -52,8 +47,8 @@ bool SceneReadView::layer_window_contains(unsigned layer, unsigned x) const {
 // Decode tilemap entry -> tile quadrant/flips -> planar pixel -> palette and
 // priority. Signed x permits sampling presentation margins; masks implement
 // hardware map wrapping only after scroll/mosaic has selected a coordinate.
-PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x, unsigned y,
-                                                const GameSceneRenderer *scene) const {
+PpuPixel SceneReadView::sample_background_pixel_miss(unsigned background_layer, int x, unsigned y,
+                                                     const GameSceneRenderer *scene) const {
     const unsigned mode = ppu_registers[5] & 7, depth = background_color_depths[mode][background_layer];
     if (mode == 7)
         return sample_mode7_pixel(background_layer, x, y);
@@ -67,18 +62,15 @@ PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x
     // Ordinary tiled modes share map, palette and priority across eight
     // neighboring pixels. Raster state is immutable for this borrowed view.
     // Offset-per-tile, mode 7 and mosaic retain the scalar sampler.
+    // A fine-scrolled tile can cross x=0/256. The native half may be a VRAM
+    // patch while its offscreen continuation comes from the source world map.
     auto* row_cache = tile_rows && mode <= 1 &&
         (!(ppu_registers[6] & (1 << background_layer)) || mosaic == 1)
         ? &tile_rows->layers[background_layer] : nullptr;
     const int raw_x = x + int(background_scroll_x[background_layer]);
     const int cell_x = raw_x >= 0 ? raw_x / 8 : (raw_x - 7) / 8;
     const unsigned lane = unsigned(raw_x) & 7;
-    // A fine-scrolled tile can cross x=0/256. The native half may be a VRAM
-    // patch while its offscreen continuation comes from the source world map.
     const bool native_ring = x >= 0 && x < 256;
-    if (row_cache && row_cache->valid && row_cache->cell_x == cell_x &&
-        row_cache->y == y && row_cache->scene == scene && row_cache->native_ring == native_ring)
-        return row_cache->pixels[lane];
     const unsigned tile_size = (ppu_registers[5] & (0x10 << background_layer)) ? 16 : 8;
     unsigned scrolled_x = unsigned(x + background_scroll_x[background_layer]) & 1023,
              scrolled_y = (y + background_scroll_y[background_layer]) & 1023;
@@ -171,9 +163,7 @@ PpuPixel SceneReadView::sample_background_pixel(unsigned background_layer, int x
     };
     const unsigned row_address = base + tile * depth * 8 + (tile_pixel_y % 8) * 2;
     if (row_cache) {
-        std::uint64_t decoded = 0;
-        for (unsigned plane = 0; plane < depth; ++plane)
-            decoded |= planar_lanes[video_ram[(row_address + (plane / 2) * 16 + (plane & 1)) & 0xffff]] << plane;
+        const auto decoded = detail::decode_planar_row(video_ram, row_address, depth);
         for (unsigned col = 0; col < 8; ++col)
             row_cache->pixels[col] = pixel(unsigned(decoded >> (((entry & 0x4000) ? 7 - col : col) * 8)) & 255);
         row_cache->cell_x = cell_x;
@@ -412,8 +402,9 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
                                                                           margin && scenery ? this : nullptr);
         if (candidate.priority < 0)
             continue;
-        const bool masked = margin ? presentation_window_contains(view, layer, x, y)
-                                   : view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255)));
+        const bool masked = ((view.ppu_registers[0x2e] | view.ppu_registers[0x2f]) & (1u << layer)) &&
+            (margin ? presentation_window_contains(view, layer, x, y)
+                    : view.layer_window_contains(layer, unsigned(std::clamp(x, 0, 255))));
         if constexpr (IncludeReference) {
             // OVERWORLD_SETUP_VRAM and LOAD_BATTLE_BG put the two-bit window
             // artwork at word $6000 and its page at $7c00 (BG3 / battle BG1).
@@ -449,8 +440,14 @@ GameSceneRenderer::CompositePixel GameSceneRenderer::compose_pixel(
                 reference_sub = clean;
         }
     }
-    const bool inside = margin ? presentation_window_contains(view, 5, x, y)
-                               : view.layer_window_contains(5, unsigned(std::clamp(x, 0, 255)));
+    const auto needs_window = [](unsigned policy) {
+        const unsigned clip = policy >> 6, prevent = (policy >> 4) & 3;
+        return clip == 1 || clip == 2 || prevent == 1 || prevent == 2;
+    };
+    const bool inside = (needs_window(view.ppu_registers[0x30]) ||
+        (include_reference && needs_window(presentation_reference_cgwsel_))) &&
+        (margin ? presentation_window_contains(view, 5, x, y)
+                : view.layer_window_contains(5, unsigned(std::clamp(x, 0, 255))));
     const auto affected = [inside](unsigned setting) {
         return setting == 3 || (setting == 1 && !inside) || (setting == 2 && inside);
     };

@@ -1,0 +1,809 @@
+{
+  "architecture": "x86_64",
+  "archives": {
+    "Phase-Distorter-0.4-launchers-x86_64.zip": {
+      "bytes": 24252039,
+      "sha256": "572b1f4d600296eaf4ef82e32663cf0e381f5724136c01e1ab63a1bc0c8d95f0"
+    },
+    "Phase-Distorter-0.4-linux-x86_64.zip": {
+      "bytes": 9922203,
+      "sha256": "2070e10fdfe1eafc868011e9ea6e66e3a2b80e8092285ff0ec327b44d974d2ff"
+    },
+    "Phase-Distorter-0.4-windows-x86_64.zip": {
+      "bytes": 14352728,
+      "sha256": "17dceb9787fde4499016043cd635b8e90ee896e170a2a9b7451aec1f809d72bc"
+    }
+  },
+  "baseline_release": "0.3.1",
+  "baseline_source": "Actual packaged v0.3.1 source index",
+  "baseline_source_inputs": {
+    "record": "Phase-Distorter-0.3.1-source-inputs.json",
+    "sha256": "e66e7699ddcedf18d69cb75493170a0f244a896d7c28b48fb0410c34e5ea15a8"
+  },
+  "binaries": {
+    "linux": {
+      "build_path": "build/linux-glibc236/cpp/eb_cpp",
+      "bytes": 28833560,
+      "path": "launchers/linux/bin/eb_cpp",
+      "sha256": "8a4fa165beb9006498f6b7f3025fa6631b113847aa5a7416d337238d551a3105"
+    },
+    "windows": {
+      "build_path": "build-windows/cpp/eb_cpp.exe",
+      "bytes": 46971558,
+      "path": "launchers/windows/bin/eb_cpp.exe",
+      "sha256": "3c7c66cc897ad0812c60ba01c0b2c8d44c0ac410d06c94e60fc61f6b52167185"
+    }
+  },
+  "builds": {
+    "linux": {
+      "SDL2": "2.32.10; rebuilt on glibc 2.36 baseline; SDL_SSE3=OFF",
+      "compiler": "GCC 12.2.0-14+deb12u1",
+      "configuration": "Release; C++20; -march=x86-64 -mtune=generic",
+      "directory": "build/linux-glibc236",
+      "environment": "Debian 12 glibc 2.36 in rootless bubblewrap, verified official bookworm-slim image",
+      "link_flags": "-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL"
+    },
+    "windows": {
+      "compiler": "MinGW-w64 GCC 16.2.0",
+      "configuration": "Release; C++20",
+      "directory": "build-windows",
+      "execution": "Wine 11.19"
+    }
+  },
+  "checks": {
+    "archive_audit": {
+      "launchers": {
+        "crc_ok": true,
+        "manifest_files": 26,
+        "payload_hashes_and_modes_match": true,
+        "version": "0.4"
+      },
+      "linux": {
+        "crc_ok": true,
+        "manifest_files": 19,
+        "payload_hashes_and_modes_match": true,
+        "version": "0.4"
+      },
+      "windows": {
+        "crc_ok": true,
+        "manifest_files": 14,
+        "payload_hashes_and_modes_match": true,
+        "version": "0.4"
+      }
+    },
+    "compared_with_0_3_1": "All matching regular/native cases retain CPU state, native/presentation pixels, PCM and corresponding GL readbacks",
+    "controller_fixture": "Ignore physical Xbox 360 VID 045e/PID 028e in CTest; isolated Wine prefix and virtual display",
+    "graphics": "Private Xvfb; software OpenGL; SDL dummy audio",
+    "native_continue_comparison": "Debian glibc 2.36/current Linux/Wine native pixels, CRT readbacks and PCM match; instructions=0; saves unchanged",
+    "native_continue_frames_per_run": 180,
+    "native_continue_package_runs": [
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "earthbound",
+        "gl_sha256": "b69a3892bb4b4db6650132ea3f9bdb24c0d675dccd824fcf7f4ddf42c7ae9467",
+        "instructions": 0,
+        "native_sha256": "abfd588e8b0d97ba30fab4a208427183eed4c0256b93778a44da035e421debd8",
+        "platform": "debian",
+        "save_unchanged": true,
+        "wav_sha256": "757b430ad3f1212019841230f9ef1fb4cffddfefc012cef7e1516689f4370281"
+      },
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "mother2",
+        "gl_sha256": "662d1181b9e28331875a41967ec26a08cb92f9e9f2c45bbaf4e97b9aeaed8c3c",
+        "instructions": 0,
+        "native_sha256": "fe79710c34f431ed479b7c382c8c65e86bf44d5846cc1ec5efa7c73cdaceca3f",
+        "platform": "debian",
+        "save_unchanged": true,
+        "wav_sha256": "42896869af2770b2c8317849547f256c054cd0a9305e410673738e4ef403738b"
+      },
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "earthbound",
+        "gl_sha256": "b69a3892bb4b4db6650132ea3f9bdb24c0d675dccd824fcf7f4ddf42c7ae9467",
+        "instructions": 0,
+        "native_sha256": "abfd588e8b0d97ba30fab4a208427183eed4c0256b93778a44da035e421debd8",
+        "platform": "linux-host",
+        "save_unchanged": true,
+        "wav_sha256": "757b430ad3f1212019841230f9ef1fb4cffddfefc012cef7e1516689f4370281"
+      },
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "mother2",
+        "gl_sha256": "662d1181b9e28331875a41967ec26a08cb92f9e9f2c45bbaf4e97b9aeaed8c3c",
+        "instructions": 0,
+        "native_sha256": "fe79710c34f431ed479b7c382c8c65e86bf44d5846cc1ec5efa7c73cdaceca3f",
+        "platform": "linux-host",
+        "save_unchanged": true,
+        "wav_sha256": "42896869af2770b2c8317849547f256c054cd0a9305e410673738e4ef403738b"
+      },
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "earthbound",
+        "gl_sha256": "b69a3892bb4b4db6650132ea3f9bdb24c0d675dccd824fcf7f4ddf42c7ae9467",
+        "instructions": 0,
+        "native_sha256": "abfd588e8b0d97ba30fab4a208427183eed4c0256b93778a44da035e421debd8",
+        "platform": "windows",
+        "save_unchanged": true,
+        "wav_sha256": "757b430ad3f1212019841230f9ef1fb4cffddfefc012cef7e1516689f4370281"
+      },
+      {
+        "exit": 0,
+        "frames": 180,
+        "game": "mother2",
+        "gl_sha256": "662d1181b9e28331875a41967ec26a08cb92f9e9f2c45bbaf4e97b9aeaed8c3c",
+        "instructions": 0,
+        "native_sha256": "fe79710c34f431ed479b7c382c8c65e86bf44d5846cc1ec5efa7c73cdaceca3f",
+        "platform": "windows",
+        "save_unchanged": true,
+        "wav_sha256": "42896869af2770b2c8317849547f256c054cd0a9305e410673738e4ef403738b"
+      }
+    ],
+    "packager_regressions": 5,
+    "previous_release_archives_count": 15,
+    "previous_release_archives_preserved": true,
+    "registered_suites": {
+      "linux": {
+        "evidence": "build/verification/release-0.4/ctest-linux.log",
+        "failed": 0,
+        "optional_skipped": 104,
+        "passed": 261,
+        "registered": 365
+      },
+      "windows": {
+        "evidence": "build/verification/release-0.4/ctest-windows.log",
+        "failed": 0,
+        "optional_skipped": 104,
+        "passed": 261,
+        "registered": 365
+      }
+    },
+    "regular_desktop_frames_per_run": 180,
+    "regular_headless_frames_per_run": 1200,
+    "regular_package_and_launcher_runs": [
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "mode": "headless",
+        "native_sha256": "916a3cb02c60901902f901dd78f0b50640efe890233ee898e9a1c9f7ea27a30c",
+        "platform": "linux",
+        "state": [
+          "frames=1200 steps=18190435 instructions=18189373 native_batches=0 spc_instructions=5091380 audio_frames=638947",
+          "PC=c42725 A=0700 X=000c Y=0020 S=1fe7 D=1eb7 DB=7e P=84 E=0",
+          "SPC PC=0de2 A=0f X=00 Y=16 SP=cd P=00"
+        ],
+        "wav_sha256": "81bd8ee8b284e111c487d8dcdb808a66a02618a1a63740ed7593652ceab600a8",
+        "wide_sha256": "a96e066b271e3aa41f8e7943af1bc154f8a20a074e8352a0587b1e152384707d"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "mode": "launcher",
+        "native_sha256": "916a3cb02c60901902f901dd78f0b50640efe890233ee898e9a1c9f7ea27a30c",
+        "platform": "linux",
+        "state": [
+          "frames=1200 steps=18190435 instructions=18189373 native_batches=0 spc_instructions=5091380 audio_frames=638947",
+          "PC=c42725 A=0700 X=000c Y=0020 S=1fe7 D=1eb7 DB=7e P=84 E=0",
+          "SPC PC=0de2 A=0f X=00 Y=16 SP=cd P=00"
+        ],
+        "wav_sha256": "81bd8ee8b284e111c487d8dcdb808a66a02618a1a63740ed7593652ceab600a8",
+        "wide_sha256": "a96e066b271e3aa41f8e7943af1bc154f8a20a074e8352a0587b1e152384707d"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "fd99a5b2dbc9a5085353853ca7e9e591515f01bc02262c31c75895a4e388129c",
+        "mode": "native",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "native-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "300-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "uncapped-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "vrr-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "mode": "headless",
+        "native_sha256": "3c75167facd9a8de5953473eced8a6549b73bed650609a69d9ebccadd9546d96",
+        "platform": "linux",
+        "state": [
+          "frames=1200 steps=18190301 instructions=18189240 native_batches=0 spc_instructions=5091380 audio_frames=638948",
+          "PC=c08495 A=0000 X=b0cf Y=b020 S=1fe2 D=0000 DB=00 P=06 E=0",
+          "SPC PC=0bd9 A=2b X=00 Y=00 SP=c9 P=00"
+        ],
+        "wav_sha256": "2197d16e5595f3b57dd96620cf00e5011f5b8c4a17b79cd94086897d9e153bc7",
+        "wide_sha256": "7b7b790885125b5a45f7cd461cd004569cf9afac049aa7c20fb8d2d287d9de86"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "mode": "launcher",
+        "native_sha256": "3c75167facd9a8de5953473eced8a6549b73bed650609a69d9ebccadd9546d96",
+        "platform": "linux",
+        "state": [
+          "frames=1200 steps=18190301 instructions=18189240 native_batches=0 spc_instructions=5091380 audio_frames=638948",
+          "PC=c08495 A=0000 X=b0cf Y=b020 S=1fe2 D=0000 DB=00 P=06 E=0",
+          "SPC PC=0bd9 A=2b X=00 Y=00 SP=c9 P=00"
+        ],
+        "wav_sha256": "2197d16e5595f3b57dd96620cf00e5011f5b8c4a17b79cd94086897d9e153bc7",
+        "wide_sha256": "7b7b790885125b5a45f7cd461cd004569cf9afac049aa7c20fb8d2d287d9de86"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "5d88f17be4523861afed4ab319166aea9d4a38f1f5e47bb9ac80871ab33f49e4",
+        "mode": "native",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "native-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "300-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "uncapped-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "vrr-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "linux",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "mode": "headless",
+        "native_sha256": "916a3cb02c60901902f901dd78f0b50640efe890233ee898e9a1c9f7ea27a30c",
+        "platform": "windows",
+        "state": [
+          "frames=1200 steps=18190435 instructions=18189373 native_batches=0 spc_instructions=5091380 audio_frames=638947",
+          "PC=c42725 A=0700 X=000c Y=0020 S=1fe7 D=1eb7 DB=7e P=84 E=0",
+          "SPC PC=0de2 A=0f X=00 Y=16 SP=cd P=00"
+        ],
+        "wav_sha256": "81bd8ee8b284e111c487d8dcdb808a66a02618a1a63740ed7593652ceab600a8",
+        "wide_sha256": "a96e066b271e3aa41f8e7943af1bc154f8a20a074e8352a0587b1e152384707d"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "mode": "launcher",
+        "native_sha256": "916a3cb02c60901902f901dd78f0b50640efe890233ee898e9a1c9f7ea27a30c",
+        "platform": "windows",
+        "state": [
+          "frames=1200 steps=18190435 instructions=18189373 native_batches=0 spc_instructions=5091380 audio_frames=638947",
+          "PC=c42725 A=0700 X=000c Y=0020 S=1fe7 D=1eb7 DB=7e P=84 E=0",
+          "SPC PC=0de2 A=0f X=00 Y=16 SP=cd P=00"
+        ],
+        "wav_sha256": "81bd8ee8b284e111c487d8dcdb808a66a02618a1a63740ed7593652ceab600a8",
+        "wide_sha256": "a96e066b271e3aa41f8e7943af1bc154f8a20a074e8352a0587b1e152384707d"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "fd99a5b2dbc9a5085353853ca7e9e591515f01bc02262c31c75895a4e388129c",
+        "mode": "native",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "native-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "300-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "uncapped-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "earthbound",
+        "gl_sha256": "59245d1ee25a5f89ebe39bc4234f330b034ea4d452e8faca89fe7ac3e1951ac8",
+        "mode": "vrr-crt",
+        "native_sha256": "5a9408dd4a924a022b1e5622b67e4ae15ef4b5300d2c5f93698e624f9f49a5c4",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2724950 instructions=2724828 native_batches=0 spc_instructions=776544 audio_frames=95842",
+          "PC=c0875f A=0000 X=005b Y=0000 S=1fed D=1ed0 DB=7e P=26 E=0",
+          "SPC PC=057c A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "33dce4330f506efc9c82dd8dbdd905fa53ed1244dda9dc00f46cd702c4db1d1f"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "mode": "headless",
+        "native_sha256": "3c75167facd9a8de5953473eced8a6549b73bed650609a69d9ebccadd9546d96",
+        "platform": "windows",
+        "state": [
+          "frames=1200 steps=18190301 instructions=18189240 native_batches=0 spc_instructions=5091380 audio_frames=638948",
+          "PC=c08495 A=0000 X=b0cf Y=b020 S=1fe2 D=0000 DB=00 P=06 E=0",
+          "SPC PC=0bd9 A=2b X=00 Y=00 SP=c9 P=00"
+        ],
+        "wav_sha256": "2197d16e5595f3b57dd96620cf00e5011f5b8c4a17b79cd94086897d9e153bc7",
+        "wide_sha256": "7b7b790885125b5a45f7cd461cd004569cf9afac049aa7c20fb8d2d287d9de86"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "mode": "launcher",
+        "native_sha256": "3c75167facd9a8de5953473eced8a6549b73bed650609a69d9ebccadd9546d96",
+        "platform": "windows",
+        "state": [
+          "frames=1200 steps=18190301 instructions=18189240 native_batches=0 spc_instructions=5091380 audio_frames=638948",
+          "PC=c08495 A=0000 X=b0cf Y=b020 S=1fe2 D=0000 DB=00 P=06 E=0",
+          "SPC PC=0bd9 A=2b X=00 Y=00 SP=c9 P=00"
+        ],
+        "wav_sha256": "2197d16e5595f3b57dd96620cf00e5011f5b8c4a17b79cd94086897d9e153bc7",
+        "wide_sha256": "7b7b790885125b5a45f7cd461cd004569cf9afac049aa7c20fb8d2d287d9de86"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "5d88f17be4523861afed4ab319166aea9d4a38f1f5e47bb9ac80871ab33f49e4",
+        "mode": "native",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "native-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "300-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "uncapped-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      },
+      {
+        "exit": 0,
+        "game": "mother2",
+        "gl_sha256": "cda143fd306e5359fa6f5c39dcbb848adfbfc83a6a173dd87b4d554dc43ff52c",
+        "mode": "vrr-crt",
+        "native_sha256": "f947df38ef99273b040a4ed04c3bdf873087af68947a83205705835591279b35",
+        "platform": "windows",
+        "state": [
+          "frames=180 steps=2725174 instructions=2725052 native_batches=0 spc_instructions=776549 audio_frames=95842",
+          "PC=c08758 A=0000 X=005b Y=0000 S=1fed D=1ece DB=7e P=26 E=0",
+          "SPC PC=0579 A=13 X=61 Y=00 SP=cf P=02"
+        ],
+        "wav_sha256": "ee1da4959e8f7ba8fc72500cc91996b73388a1f926e1703a79483bacdc2aa31d",
+        "wide_sha256": "755a239b88918e6ff2567f515aa66e7e4d2a2c6e5ca8cd3e1d8ef39c1d9f08ab"
+      }
+    ],
+    "repeated_archives_byte_identical": true,
+    "source_inputs_frozen": true
+  },
+  "documentation_inputs": {
+    "CHANGELOG.md": "47a2cc7fac023e4e3ad513f4b6eb89014e035b9f4038db852364280c99654d7c",
+    "README.md": "18683c465de5f887245bf8c99387306e17456a03320e7e221176f4b4188723fd",
+    "RELEASE.md": "b61e618612c1a390f6b513fcbe5d518ceb45fde918a9dd499689188eb585b299",
+    "cpp/docs/timing.md": "b7ed52572a29075c177573511da4a26fa441930c1b9270890c5f3a38cfefa2ca",
+    "releases/Phase-Distorter-0.4-patch-notes.md": "7243778788320120d8ace21f35db059d6f695a5245715fbc16944c7f86f5773e"
+  },
+  "evidence_directory": "build/verification/release-0.4",
+  "git_head": "9c1b3e5b7391bf246b42759d2b261f461cef9c8c",
+  "github_release": {
+    "draft_body": "releases/Phase-Distorter-0.4-patch-notes.md",
+    "published": false,
+    "suggested_tag": "0.4",
+    "title": "Phase Distorter v0.4"
+  },
+  "includes_uncommitted_changes": true,
+  "limits": [
+    "Host CPU/GPU measurements do not establish physical scanout or performance on other hardware.",
+    "Simulation still shares the presentation thread; scene transitions can stall.",
+    "Windows execution was validated through Wine.",
+    "Uncapped gaps returned in later busy-workstation runs; no uniform uncapped pacing guarantee is established.",
+    "No physical Steam Deck/controller/VRR/audio acceptance or complete playthrough",
+    "Default GameSession and experimental NativeSession Continue retain their v0.3 fidelity limits"
+  ],
+  "linux_abi": {
+    "launchers/linux/bin/eb_cpp": {
+      "max_glibc": "2.36",
+      "needed": [
+        "libSDL2-2.0.so.0",
+        "libGL.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "sha256": "8a4fa165beb9006498f6b7f3025fa6631b113847aa5a7416d337238d551a3105"
+    },
+    "launchers/linux/lib/libSDL2-2.0.so.0": {
+      "max_glibc": "2.34",
+      "needed": [
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "sha256": "70fc72937d7bc09f115c90d7665a37e03674bd5aa85d8370a10c0215b580b841"
+    }
+  },
+  "optimization_evidence": {
+    "capped_native_measurements": [
+      {
+        "cap": 120,
+        "fps": 118.02,
+        "label": "before",
+        "max_ms": 79.0731,
+        "median_ms": 8.3349,
+        "over_16ms": 2,
+        "p95_ms": 14.8988,
+        "p99_ms": 15.5603
+      },
+      {
+        "cap": 240,
+        "fps": 220.19,
+        "label": "before",
+        "max_ms": 61.4718,
+        "median_ms": 4.1679,
+        "over_16ms": 1,
+        "p95_ms": 10.473,
+        "p99_ms": 12.0323
+      },
+      {
+        "cap": 120,
+        "fps": 119.08,
+        "label": "after",
+        "max_ms": 42.337,
+        "median_ms": 8.333,
+        "over_16ms": 1,
+        "p95_ms": 12.4906,
+        "p99_ms": 13.1162
+      },
+      {
+        "cap": 240,
+        "fps": 232.73,
+        "label": "after",
+        "max_ms": 42.7456,
+        "median_ms": 4.1659,
+        "over_16ms": 1,
+        "p95_ms": 7.2125,
+        "p99_ms": 8.4997
+      }
+    ],
+    "directory": "build/verification/high-rate-followup",
+    "interpretation": "Measured CPU savings in a paired replay; busy-workstation uncapped probes still fail the pacing target; not a uniform FPS guarantee",
+    "preceding_validation": {
+      "cached_scalar_samples": 983040,
+      "effect_pixel_comparisons_per_platform": 50577408,
+      "linux_ctest_optional_skipped": 104,
+      "linux_ctest_passed": 261,
+      "native_map_gpu_comparisons": 90,
+      "scalar_published_plane_comparisons": 6415360,
+      "us_jp_ordered_write_differential_frames_each": 3000,
+      "windows_wine_focused_passed": 5
+    },
+    "same_application_source_hashes": {
+      "cpp/docs/timing.md": "b7ed52572a29075c177573511da4a26fa441930c1b9270890c5f3a38cfefa2ca",
+      "cpp/include/eb/scene_read_view.hpp": "9b60244dc0bd96960286a9b73b131f9f5a7aef2a13f505db3bb5b766866e7543",
+      "cpp/src/direct_scene.cpp": "19c9abb94d87348680613485ac33784bf771ba6f88ee026cfd8bde5dc7429baf",
+      "cpp/src/direct_scene_capture.cpp": "ef630d0e392e8cec22e1e13058b224d5308781ce6094e616aac52326c25a11a6",
+      "cpp/src/native/battle_background_scene.cpp": "31e22488a5f914ff34f6f5acd57ef0ac8cb6bc836f8f2a857f675fd6324c2698",
+      "cpp/src/planar_tile_row.hpp": "b21e4aea815a9f0480e075081cea8744dcbc8182fc1ef8022212ce637a28de4e",
+      "cpp/src/snes_ppu_renderer.cpp": "e92e6c40ee4d421bb8c53aa372428f7ff07a00a62ce079534eb8a1ee7926f250",
+      "cpp/tests/background_row_tests.cpp": "c286a26b4756320f86e85a67d70164092a794d140946a752f9f372c816b12f14"
+    },
+    "uncapped_observations": [
+      {
+        "fps": 3660.706957804186,
+        "gaps_over_8_333_ms_per_second": 15.990607615993323,
+        "meets_probe_target_under_1_gap_per_second": false,
+        "run": "before-confirm"
+      },
+      {
+        "fps": 4892.99157281621,
+        "gaps_over_8_333_ms_per_second": 0.45702197994780713,
+        "meets_probe_target_under_1_gap_per_second": true,
+        "run": "after"
+      },
+      {
+        "fps": 4786.526073466865,
+        "gaps_over_8_333_ms_per_second": 0.11376176051020476,
+        "meets_probe_target_under_1_gap_per_second": true,
+        "run": "after-confirm"
+      },
+      {
+        "fps": 2889.406844088837,
+        "gaps_over_8_333_ms_per_second": 14.122445749586745,
+        "meets_probe_target_under_1_gap_per_second": false,
+        "run": "final"
+      },
+      {
+        "fps": 1069.1819967816962,
+        "gaps_over_8_333_ms_per_second": 33.47987545839389,
+        "meets_probe_target_under_1_gap_per_second": false,
+        "run": "final-repeat"
+      }
+    ],
+    "world_cpu_measurements": [
+      {
+        "evidence": [
+          "frames=2264 steps=28048024 audio=1205481 direct_scenes=600 output_hash=7605075090383454973",
+          "PC=809470 A=0000 X=0700 Y=0000 S=1ff7 D=1ef0 DB=7e P=07 E=0",
+          "SPC PC=0705 A=ba X=05 Y=09 SP=cc P=00"
+        ],
+        "label": "before",
+        "max_ms": 9.14738,
+        "median_ms": 6.7233,
+        "p95_ms": 7.5416,
+        "p99_ms": 8.26483,
+        "region": "earthbound"
+      },
+      {
+        "evidence": [
+          "frames=2264 steps=28048024 audio=1205481 direct_scenes=600 output_hash=7605075090383454973",
+          "PC=809470 A=0000 X=0700 Y=0000 S=1ff7 D=1ef0 DB=7e P=07 E=0",
+          "SPC PC=0705 A=ba X=05 Y=09 SP=cc P=00"
+        ],
+        "label": "after",
+        "max_ms": 6.91399,
+        "median_ms": 5.4543,
+        "p95_ms": 6.15463,
+        "p99_ms": 6.55804,
+        "region": "earthbound"
+      },
+      {
+        "evidence": [
+          "frames=2082 steps=25692576 audio=1108574 direct_scenes=600 output_hash=12319078494511899129",
+          "PC=80944f A=0000 X=0a00 Y=0000 S=1ff7 D=1ef0 DB=7e P=07 E=0",
+          "SPC PC=072a A=03 X=06 Y=01 SP=cc P=00"
+        ],
+        "label": "before",
+        "max_ms": 8.6564,
+        "median_ms": 6.87224,
+        "p95_ms": 7.78157,
+        "p99_ms": 8.24341,
+        "region": "mother2"
+      },
+      {
+        "evidence": [
+          "frames=2082 steps=25692576 audio=1108574 direct_scenes=600 output_hash=12319078494511899129",
+          "PC=80944f A=0000 X=0a00 Y=0000 S=1ff7 D=1ef0 DB=7e P=07 E=0",
+          "SPC PC=072a A=03 X=06 Y=01 SP=cc P=00"
+        ],
+        "label": "after",
+        "max_ms": 7.37702,
+        "median_ms": 5.50591,
+        "p95_ms": 6.51376,
+        "p99_ms": 6.92301,
+        "region": "mother2"
+      }
+    ]
+  },
+  "prepared": "2026-10-10",
+  "project": "Phase Distorter",
+  "schema": 1,
+  "source_inputs": {
+    "changed_since_packaged_0_3_1": [
+      "CMakeLists.txt",
+      "VERSION",
+      "cpp/include/eb/scene_read_view.hpp",
+      "cpp/resources/release-readme-launchers.txt",
+      "cpp/resources/release-readme-linux.txt",
+      "cpp/resources/release-readme-windows.txt",
+      "cpp/src/direct_scene.cpp",
+      "cpp/src/direct_scene_capture.cpp",
+      "cpp/src/native/battle_background_scene.cpp",
+      "cpp/src/planar_tile_row.hpp",
+      "cpp/src/snes_ppu_renderer.cpp",
+      "cpp/tests/background_row_tests.cpp"
+    ],
+    "count": 2999,
+    "record": "Phase-Distorter-0.4-source-inputs.json",
+    "removed_since_packaged_0_3_1": [],
+    "scope": "cpp/include, cpp/src, cpp/tests, cpp/cmake, cpp/resources, cpp/tools, cpp/external, generated, root/cpp CMakeLists.txt and VERSION; excludes Python caches",
+    "sha256": "90682d9db810eff08aa66f89376c4c0197022a9818d93cca34ba5eb712421c08",
+    "unchanged_through_build_and_validation": true
+  },
+  "version": "0.4",
+  "versioned_launcher_folder": "releases/Phase-Distorter-0.4-launchers-x86_64"
+}

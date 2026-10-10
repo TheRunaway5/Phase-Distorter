@@ -1,6 +1,7 @@
 #include "eb/native/battle_background_scene.hpp"
 #include "eb/native/battle/palette_effects.hpp"
 #include "eb/native/battle/background_loader.hpp"
+#include "../planar_tile_row.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -644,6 +645,8 @@ BattleBackgroundSceneFrame::draw_published_layers(
     return unsigned(vram[std::uint16_t(at)]) |
            (unsigned(vram[std::uint16_t(at + 1)]) << 8);
   };
+  // Convert only palette entries actually used by this immutable capture.
+  std::array<std::uint32_t, 256> argb{};
   for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
     const auto &source = ordinal ? *secondary : primary;
     const auto *other = !ordinal && shared_artwork && secondary ? &*secondary : nullptr;
@@ -652,17 +655,21 @@ BattleBackgroundSceneFrame::draw_published_layers(
     const unsigned map_width = map & 1 ? 64 : 32, map_height = map & 2 ? 64 : 32;
     const unsigned tile_size = layout.mode & (0x10u << layer) ? 16 : 8;
     const unsigned graphics = ((layout.graphics[layer / 2] >> ((layer & 1) * 4)) & 15) * 8192;
-    for (unsigned y = 0; y < 224; ++y)
-      for (unsigned x = 0; x < width; ++x) {
-        const unsigned horizontal = other && other->axis == BattleDistortionAxis::Horizontal
-            ? other->offsets[y] : source.axis == BattleDistortionAxis::Horizontal
-            ? source.offsets[y] : source.horizontal_scroll;
-        const unsigned vertical = other && other->axis == BattleDistortionAxis::Vertical
-            ? other->offsets[y] : source.axis == BattleDistortionAxis::Vertical
-            ? source.offsets[y] : source.vertical_scroll;
+    for (unsigned y = 0; y < 224; ++y) {
+      const unsigned horizontal = other && other->axis == BattleDistortionAxis::Horizontal
+          ? other->offsets[y] : source.axis == BattleDistortionAxis::Horizontal
+          ? source.offsets[y] : source.horizontal_scroll;
+      const unsigned vertical = other && other->axis == BattleDistortionAxis::Vertical
+          ? other->offsets[y] : source.axis == BattleDistortionAxis::Vertical
+          ? source.offsets[y] : source.vertical_scroll;
+      const unsigned sy = (y + 1 + vertical) & 1023;
+      const unsigned my = (sy / tile_size) % map_height;
+      for (unsigned x = 0; x < width;) {
         const unsigned sx = (std::uint32_t(int(x) - margin) + horizontal) & 1023;
-        const unsigned sy = (y + 1 + vertical) & 1023;
-        const unsigned mx = (sx / tile_size) % map_width, my = (sy / tile_size) % map_height;
+        // Fine scroll and clipping can begin/end inside a tile. Stop at each
+        // eight-pixel boundary, including a flipped 16-pixel tile's quadrant.
+        const unsigned run = std::min(width - x, 8 - (sx & 7));
+        const unsigned mx = (sx / tile_size) % map_width;
         const unsigned screen = mx / 32 + (my / 32) * (map_width / 32);
         const unsigned entry = word(((map & 0xfc) << 9) + screen * 2048 +
                                     ((my % 32) * 32 + mx % 32) * 2);
@@ -670,18 +677,23 @@ BattleBackgroundSceneFrame::draw_published_layers(
         const unsigned ty = entry & 0x8000 ? tile_size - 1 - sy % tile_size : sy % tile_size;
         const unsigned tile = ((entry & 1023) + tx / 8 + (ty / 8) * 16) & 1023;
         const unsigned start = graphics + tile * bitdepth * 8;
-        unsigned index = 0;
-        for (unsigned plane = 0; plane < bitdepth; ++plane)
-          index |= ((vram[std::uint16_t(start + (plane / 2) * 16 + (ty % 8) * 2 + (plane & 1))]
-                     >> (7 - tx % 8)) & 1u) << plane;
-        if (!index) continue;
+        const auto decoded = detail::decode_planar_row(vram, start + (ty % 8) * 2, bitdepth);
         const unsigned palette = ((entry >> 10) & 7) * (1u << bitdepth) +
                                  (bitdepth == 2 ? layer * 32 : 0);
         const unsigned high = (entry >> 13) & 1;
         const auto at = std::size_t(ordinal * 448 + high * 224 + y) * width + x;
-        out->atlas[at] = palette_argb(colors.at(palette + index));
-        out->palette_indices[at] = std::uint16_t(palette + index);
+        for (unsigned i = 0; i < run; ++i) {
+          const unsigned lane = entry & 0x4000 ? 7 - ((sx + i) & 7) : (sx + i) & 7;
+          const unsigned index = unsigned(decoded >> (lane * 8)) & 255;
+          if (!index) continue;
+          auto &color = argb[palette + index];
+          if (!color) color = palette_argb(colors.at(palette + index));
+          out->atlas[at + i] = color;
+          out->palette_indices[at + i] = std::uint16_t(palette + index);
+        }
+        x += run;
       }
+    }
     for (unsigned high = 0; high < 2; ++high) {
       const int low = bitdepth == 4 ? (ordinal ? 6 : 5) : (ordinal ? 0 : 1);
       out->quads.push_back({0, ordinal * 448 + high * 224, width, 224, 0, 0,

@@ -74,8 +74,13 @@ void DirectSceneCapture::enable(bool enabled) {
     pending_.reset();
     published_.reset();
 }
-std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView &view,
+std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView &source,
                                                             GameSceneRenderer &renderer) {
+    // Capture temporarily changes world sampling policy. Its scratch rows
+    // must never reuse the canonical scanline's cached VRAM/world selection.
+    BackgroundTileRows tile_rows;
+    auto view = source;
+    view.tile_rows = &tile_rows;
     const auto &regs = view.ppu_registers;
     if (!renderer.presentation_world_map_ || (regs[0] & 0x80) || ((regs[6] >> 4) && (regs[6] & 15)) ||
         (regs[0x2e] & regs[0x2c]) || (regs[0x30] & 0xf0) || ((regs[0x30] & 2) && (regs[0x31] & 0x3f)))
@@ -119,6 +124,12 @@ std::shared_ptr<DirectSceneFrame> DirectSceneCapture::build(const SceneReadView 
         if (!(regs[0x2c] & (1 << bg)))
             continue;
         const bool world = bg < 2;
+        // World-map entries change on world tile boundaries. Cache only when
+        // those boundaries align with the PPU's fine scroll in both axes.
+        const bool aligned = !world ||
+            (!((renderer.presentation_world_x_[bg] ^ view.background_scroll_x[bg]) & 7) &&
+             !((renderer.presentation_world_y_[bg] ^ view.background_scroll_y[bg]) & 7));
+        view.tile_rows = aligned ? &tile_rows : nullptr;
         const bool screen_overlay = renderer.presentation_screen_overlay_layer_ & (1u << bg);
         const bool moved_window = renderer.presentation_left_windows_ && bg == renderer.presentation_ui_layer_;
         const unsigned w = world ? plane_width : (screen_overlay || moved_window) ? frame->width : 256,

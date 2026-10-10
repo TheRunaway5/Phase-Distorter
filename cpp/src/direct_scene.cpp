@@ -82,6 +82,12 @@ std::vector<std::uint32_t> rasterize_direct_scene(const DirectScenePicture &pict
     std::vector<Pixel> main(std::size_t(width) * height, {effects ? effects->backdrop : 0xff000000});
     std::vector<Pixel> sub;
     if (effects) sub.assign(main.size(), {argb5({effects->fixed[0], effects->fixed[1], effects->fixed[2]}, 15)});
+    // Sampling X is constant down a primitive; window X is constant across
+    // the whole picture. Keep the same half-pixel arithmetic, once per column.
+    std::vector<unsigned> source_columns(width);
+    std::vector<int> window_columns(effects ? width : 0);
+    for (unsigned x = 0; x < window_columns.size(); ++x)
+        window_columns[x] = std::clamp(int(std::floor((x + .5f) / scale - (scene.width - 256.f) / 2)), 0, 255);
     for (const auto &quad : scene.quads) {
         const auto layer = unsigned(quad.layer);
         if (layer > 5 || quad.u > scene.atlas_width || quad.width > scene.atlas_width - quad.u ||
@@ -99,14 +105,16 @@ std::vector<std::uint32_t> rasterize_direct_scene(const DirectScenePicture &pict
         if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) continue;
         const int x0 = int(std::ceil(clipped_left - .5f)), y0 = int(std::ceil(clipped_top - .5f)),
                   x1 = int(std::ceil(clipped_right - .5f)), y1 = int(std::ceil(clipped_bottom - .5f));
-        for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x)
+            source_columns[x] = unsigned((x + .5f - left) / scale);
+        for (int y = y0; y < y1; ++y) {
+            const unsigned v = unsigned((y + .5f - top) / scale);
+            const auto source_row = (quad.v + v) * scene.atlas_width + quad.u;
             for (int x = x0; x < x1; ++x) {
-                const unsigned u = unsigned((x + .5f - left) / scale), v = unsigned((y + .5f - top) / scale);
-                const auto color = scene.atlas[(quad.v + v) * scene.atlas_width + quad.u + u];
+                const auto color = scene.atlas[source_row + source_columns[x]];
                 if (!(color >> 24)) continue;
                 const auto at = std::size_t(y) * width + x;
-                if (effects && masked(*effects, layer,
-                    std::clamp(int(std::floor((x + .5f) / scale - (scene.width - 256.f) / 2)), 0, 255), unsigned(y) / scale)) continue;
+                if (effects && masked(*effects, layer, window_columns[x], unsigned(y) / scale)) continue;
                 const auto put = [&](Pixel &to) {
                     if (quad.object) {
                         if (to.object) return;
@@ -120,15 +128,18 @@ std::vector<std::uint32_t> rasterize_direct_scene(const DirectScenePicture &pict
                 if (!effects || effects->main[layer]) put(main[at]);
                 if (effects && effects->sub[layer]) put(sub[at]);
             }
+        }
     }
     std::vector<std::uint32_t> pixels(main.size());
+    if (!effects) {
+        std::transform(main.begin(), main.end(), pixels.begin(), [](const Pixel &pixel) { return pixel.color; });
+        return pixels;
+    }
     for (unsigned y = 0; y < height; ++y)
         for (unsigned x = 0; x < width; ++x) {
             const auto at = std::size_t(y) * width + x;
             const auto &pixel = main[at];
-            if (!effects) { pixels[at] = pixel.color; continue; }
-            const bool inside = masked(*effects, 5,
-                std::clamp(int(std::floor((x + .5f) / scale - (scene.width - 256.f) / 2)), 0, 255), y / scale);
+            const bool inside = masked(*effects, 5, window_columns[x], y / scale);
             const bool clipped = affected(effects->clip, inside);
             auto color = clipped ? std::array<unsigned, 3>{} : rgb5(pixel.color);
             if (!affected(effects->prevent, inside) && pixel.math && effects->math[pixel.layer]) {

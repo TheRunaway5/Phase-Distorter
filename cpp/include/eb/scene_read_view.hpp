@@ -70,7 +70,20 @@ struct SceneReadView {
         return (palette_ram[index] | palette_ram[index + 1] << 8) & 0x7fff;
     }
     PpuPixel sample_background_pixel(unsigned layer, int x, unsigned y,
-                                     const GameSceneRenderer *scene = nullptr) const;
+                                     const GameSceneRenderer *scene = nullptr) const {
+        // Seven neighboring pixels usually hit this scanline-local row. Keep
+        // the hit small enough to inline into composition; decoding stays out
+        // of the pixel loop. Only ordinary unmosaiced rows populate the cache.
+        if (tile_rows) {
+            const auto &row = tile_rows->layers[layer];
+            const int raw_x = x + int(background_scroll_x[layer]);
+            const int cell_x = raw_x >= 0 ? raw_x / 8 : (raw_x - 7) / 8;
+            if (row.valid && row.cell_x == cell_x && row.y == y && row.scene == scene &&
+                row.native_ring == (x >= 0 && x < 256))
+                return row.pixels[unsigned(raw_x) & 7];
+        }
+        return sample_background_pixel_miss(layer, x, y, scene);
+    }
     PpuPixel sample_mode7_pixel(unsigned layer, int x, unsigned y) const;
     bool layer_window_contains(unsigned layer, unsigned x) const;
     // Returns overflow bits. Only the bus's native pass may commit them.
@@ -78,5 +91,8 @@ struct SceneReadView {
     // indicators. The native hardware pass always uses the default zero shift.
     uint8_t sample_sprite_pixels(unsigned y, std::span<PpuPixel> result, int origin,
                                  int world_shift = 0) const;
+private:
+    PpuPixel sample_background_pixel_miss(unsigned layer, int x, unsigned y,
+                                         const GameSceneRenderer *scene) const;
 };
 } // namespace eb

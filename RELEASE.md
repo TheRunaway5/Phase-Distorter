@@ -1,3 +1,72 @@
+# Phase Distorter — version 0.4 release bundle
+
+Prepared 2026-10-10 from the current checkout, including the background and
+direct-scene CPU optimizations. See the
+[v0.4 patch notes](releases/Phase-Distorter-0.4-patch-notes.md) for changes
+since the packaged v0.3.1 source snapshot.
+
+| Artifact | Layout |
+| --- | --- |
+| [Linux x86-64 ZIP](releases/Phase-Distorter-0.4-linux-x86_64.zip) | glibc 2.36 baseline, bundled SDL2, private C++ support |
+| [Windows x86-64 ZIP](releases/Phase-Distorter-0.4-windows-x86_64.zip) | Native application with SDL2.dll |
+| [Combined launcher ZIP](releases/Phase-Distorter-0.4-launchers-x86_64.zip) | Both platforms in the repository-style layout |
+| [Versioned launcher folder](releases/Phase-Distorter-0.4-launchers-x86_64/README.txt) | The combined layout, already expanded |
+
+Canonical `launchers/` binaries and `launchers/VERSION` are updated to this
+release. Linux requires glibc 2.36 or newer and desktop OpenGL. The static C++
+runtime is private to the application; no shared C++ runtime is bundled.
+The corresponding dependency and license records are under `launchers/linux/lib/`.
+
+Build the Linux release with the compatibility environment described in
+`README.md`, then refresh from that build and the Windows Release build:
+
+```sh
+cmake --build build/linux-glibc236 --target refresh_launchers
+cmake --build build-windows --target refresh_launchers
+python3 cpp/tools/package_release.py --version 0.4 \
+  --patch-notes releases/Phase-Distorter-0.4-patch-notes.md \
+  --linux-static-cxx-runtime --include-launchers
+```
+
+Run Linux build commands inside the documented Debian environment. The
+[build record](releases/Phase-Distorter-0.4-build-info.json) identifies source,
+compiler and dependency inputs, tests, package execution and reproducibility.
+Archive hashes are in [releases/SHA256SUMS](releases/SHA256SUMS). Evidence is
+under `build/verification/release-0.4/`.
+
+Measured update CPU savings do not establish uniformly paced uncapped gameplay:
+game updates still block presentation on the same thread. Windows checks use Wine;
+physical hardware, a full playthrough and complete native integration remain
+unverified. Existing imports, saves and machine snapshots keep their formats.
+This is a local bundle for manual upload; no GitHub release has been published.
+
+## v0.4 validation
+
+Both Release builds pass **261 tests, with 104 optional asset-dependent checks
+skipped and zero failures**, out of 365 registered checks per platform. Five
+packager regressions pass. Fresh archive execution covers 28 regular-session
+platform/launcher runs for both regions across native, CRT, 300 FPS, uncapped
+and VRR modes. Linux/Wine CPU state, native/presentation pixels, PCM and
+corresponding OpenGL readbacks match each other and the v0.3.1 package results.
+
+Six additional native Continue runs cover both regions in Debian glibc 2.36,
+current Linux and Windows/Wine. Native pixels, CRT readbacks and PCM match;
+compatibility CPU instructions remain zero and disposable saves stay unchanged.
+The application requires symbols through GLIBC_2.36, and bundled SDL2 through
+GLIBC_2.34, with no shared C++ runtime dependency.
+
+All three archives pass CRC, manifest/checksum, executable-mode and binary
+identity audits. The combined folder matches its ZIP. Repeat packaging produces
+identical bytes, all 15 previous release ZIPs retain their hashes, and all 2,999
+recorded build/test/resource/tool inputs remain unchanged through validation.
+Windows execution uses Wine 11.19; virtual-display checks use software OpenGL
+and dummy audio. CPU performance measurements were taken in the preceding
+optimization probes with the same application sources; they do not establish
+sustained FPS for these bundles. Uncapped gaps under workstation load remain
+an explicitly recorded limitation.
+
+## Historical v0.3.1 release
+
 # Phase Distorter — version 0.3.1 release bundle
 
 Prepared 2026-10-09 from the current checkout, including the direct-rendering

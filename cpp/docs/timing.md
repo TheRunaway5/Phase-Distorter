@@ -129,6 +129,35 @@ nearest-texel sampling stay intact; batches end before any state change. Atlas
 storage is reused when new artwork has the same dimensions. These reduce CPU
 driver work without lowering resolution or changing the CRT shader.
 
+Software capture also reuses decoded tile rows. The normal compositor inlines
+row-cache hits and avoids evaluating windows that cannot affect either screen
+or the flash-safe reference. Direct-scene capture owns separate scratch rows,
+since its world sampling policy differs from the canonical scanline. World
+rows are cached only when the map and PPU fine-scroll boundaries align. All
+scratch state expires with the synchronous capture or scanline; raster changes
+cannot reuse a preceding row's data.
+
+Native battle capture decodes each physical eight-pixel tile row once per run,
+including partial runs, flipped 16-pixel tiles and VRAM wrapping, and converts
+each used palette color once per capture. The shared software scene rasterizer
+computes texture and window coordinates once per column rather than per pixel.
+Source order, transparent pixels, priority, windows and color math are retained.
+
+A paired 600-frame Twoson walking probe with direct capture measured median
+normal-session update costs of 6.72 to 5.45 ms for US and 6.87 to 5.51 ms for JP
+on one Linux host. The 99th-percentile costs fell from 8.26 to 6.56 ms and 8.24
+to 6.92 ms respectively. Both runs accepted all 600 direct scenes and retained
+the same per-frame picture/PCM hashes and final CPU/SPC state and counters.
+These measure update CPU time, not whole-game FPS or physical scanout.
+
+In a separate native Continue walking/battle replay on NVIDIA with direct
+rendering and CRT, recurring uncapped gaps above 8.33 ms fell from about 16 per
+second to 0.1--0.5 per second. At a 240 FPS limit, the 99th-percentile interval
+fell from 12.0 to 8.5 ms. A later run with concurrent workstation activity still
+measured 14--33 such gaps per second after the change. Scene-transition gaps
+also remain. These earlier gains do not establish uniform uncapped intervals,
+or the same gains for the normal session, other scenes or hardware.
+
 The desktop still executes game updates on its presentation thread. An expensive
 update blocks extra draws, even when the GPU is fast enough. Uncapped therefore
 cannot promise uniform intervals, and a presentation cap alone cannot remove
@@ -185,6 +214,13 @@ Ghosting regressions additionally cover solid sprite edges moving in both
 directions, one-pixel artwork on odd columns, unmatched pose changes, and
 five-pixel horizontal/diagonal motion at all fifth-frame sampling phases.
 Actual SDL/ImGui clicks select 300 FPS and Uncapped and toggle interpolation.
+
+Tile-row checks compare 983,040 cached samples and 6,415,360 native published
+plane pixels/indices with the independent scalar PPU sampler. Deterministic
+VRAM, palette, scroll, distortion, map-size and tile-size changes cover flips,
+transparent holes, negative margin coordinates and physical address wrapping.
+The software effect reference additionally compares 50,577,408 pixels against
+the PPU compositor across both regions, three widths and 96 display policies.
 
 A native NVIDIA/OpenGL desktop 300-hardware-frame comparison measured approximately
 120/144/165/240/298 presentations per second at those respective limits; all runs,

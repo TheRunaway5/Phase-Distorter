@@ -39,3 +39,11 @@ PATCH-NOTES.md contains all changes since the previous release. VERSION identifi
 launcher snapshot. MANIFEST.json and SHA256SUMS record its payload and hashes.
 NOTICE.txt, licenses/ and launchers/linux/lib/ document bundled dependencies.
 This is a development release; the full native engine migration is in progress.
+
+VERSION 0.4 PERFORMANCE UPDATE
+Background tile-row and palette reuse, cheaper cached reads and reduced software
+rasterizer coordinate work lower update CPU cost. A paired Twoson replay measured
+about 19-20% less median CPU time; this is not a whole-game FPS guarantee. Game
+updates still share the presentation thread, and uncapped output can remain
+uneven under load. Rendering resolution, CRT quality and game/audio speed remain
+unchanged. See PATCH-NOTES.md for scope and validation limits.
